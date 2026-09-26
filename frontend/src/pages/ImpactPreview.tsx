@@ -15,8 +15,10 @@ import {
   schedulesApi,
   getActiveScheduleId,
   ImpactPreviewResult,
+  ScheduleActivity,
 } from '@/api';
 
+import { useProject } from '@/context/ProjectContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,35 +32,14 @@ import { ImpactTable } from '@/components/impact/ImpactTable';
 
 type ViewMode = 'network' | 'timeline' | 'table';
 
-const PRESET_ACTIVITIES = [
-  {
-    id: 'CIV-PS3-FND-001',
-    name: 'Pump P-101/P-102 Foundation Blinding (Successors: FND-002, DWP-003)',
-    delay: 5,
-  },
-  {
-    id: 'CIV-PS3-FND-002',
-    name: 'Pump P-101/P-102 Rebar & Formwork (Successor: FND-003)',
-    delay: 4,
-  },
-  {
-    id: 'CIV-PS3-TR-0180',
-    name: 'Utility Trench Excavation CH 0+180',
-    delay: 3,
-  },
-  {
-    id: 'PIP-PS3-WLD-024',
-    name: 'Utility Header Field Weld Joints',
-    delay: 5,
-  },
-];
-
 export default function ImpactPreview() {
   const { t } = useTranslation();
+  const { currentProject, currentScheduleVersion } = useProject();
 
-  const [activityId, setActivityId] = useState('CIV-PS3-FND-001');
-  const [scheduleId, setScheduleId] = useState('');
+  const [activityId, setActivityId] = useState('ACT-101');
+  const [scheduleId, setScheduleId] = useState(currentScheduleVersion.id);
   const [delayDays, setDelayDays] = useState(5);
+  const [projectActivities, setProjectActivities] = useState<ScheduleActivity[]>([]);
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationResult, setSimulationResult] =
@@ -87,7 +68,7 @@ export default function ImpactPreview() {
       const res = await schedulesApi.getImpactPreview(
         targetAct.trim(),
         targetDelay,
-        targetSched || undefined
+        targetSched || currentScheduleVersion.id
       );
 
       setSimulationResult(res);
@@ -108,19 +89,22 @@ export default function ImpactPreview() {
 
   useEffect(() => {
     let cancelled = false;
-    getActiveScheduleId()
-      .then((sid) => {
+    schedulesApi.getActivities(currentScheduleVersion.id)
+      .then((acts) => {
         if (cancelled) return;
-        setScheduleId(sid);
-        runSimulation('CIV-PS3-FND-001', 5, sid);
+        setProjectActivities(acts);
+        const firstAct = acts[0]?.activity_id || 'ACT-101';
+        setActivityId(firstAct);
+        setScheduleId(currentScheduleVersion.id);
+        runSimulation(firstAct, 5, currentScheduleVersion.id);
       })
       .catch(() => {
-        if (!cancelled) runSimulation('CIV-PS3-FND-001', 5, '');
+        if (!cancelled) runSimulation('ACT-101', 5, currentScheduleVersion.id);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentProject.id, currentScheduleVersion.id]);
 
   const kpiStats = React.useMemo(() => {
     if (!simulationResult) return null;
@@ -223,28 +207,27 @@ export default function ImpactPreview() {
                   Quick Select:
                 </span>
 
-                {PRESET_ACTIVITIES.map((act) => (
+                {projectActivities.slice(0, 4).map((act) => (
                   <button
-                    key={act.id}
+                    key={act.activity_id}
                     type="button"
                     onClick={() => {
-                      setActivityId(act.id);
-                      setDelayDays(act.delay);
-
+                      setActivityId(act.activity_id);
+                      setDelayDays(5);
                       runSimulation(
-                        act.id,
-                        act.delay,
+                        act.activity_id,
+                        5,
                         scheduleId
                       );
                     }}
                     className={cn(
-                      'px-2 py-0.5 rounded text-[10px] font-mono border transition-all',
-                      activityId === act.id
-                        ? 'bg-violet-600 text-white border-violet-600 font-semibold shadow-sm'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400'
+                      'px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer',
+                      activityId === act.activity_id
+                        ? 'bg-[#FF7A18] text-white border-[#FF7A18] font-semibold shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-[#FF7A18]/60'
                     )}
                   >
-                    {act.id}
+                    {act.activity_id}
                   </button>
                 ))}
               </div>

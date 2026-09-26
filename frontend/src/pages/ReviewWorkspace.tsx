@@ -30,7 +30,10 @@ import {
   ShieldCheck,
   Network,
   HelpCircle,
+  Building2,
+  Lock,
 } from 'lucide-react';
+import { useProject } from '@/context/ProjectContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -55,6 +58,7 @@ export default function ReviewWorkspace() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { currentProject, currentScheduleVersion } = useProject();
   const eventIdParam = searchParams.get('event_id');
 
   const [event, setEvent] = useState<ExecutionEvent | null>(null);
@@ -66,9 +70,20 @@ export default function ReviewWorkspace() {
 
   // Quick Queue State
   const [queueClaims, setQueueClaims] = useState<ExecutionEvent[]>([]);
+  const [queueFilter, setQueueFilter] = useState<'ALL' | 'UNMATCHED' | 'HIGH_PRIORITY'>('ALL');
   const [isLoadingQueue, setIsLoadingQueue] = useState<boolean>(true);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [isQueueOpen, setIsQueueOpen] = useState<boolean>(true);
+
+  const filteredQueueClaims = React.useMemo(() => {
+    if (queueFilter === 'UNMATCHED') {
+      return queueClaims.filter((c) => c.status === 'UNMATCHED' || !c.matched_activity_id);
+    }
+    if (queueFilter === 'HIGH_PRIORITY') {
+      return queueClaims.filter((c) => (c.priority_score && c.priority_score > 0.7) || c.is_escalated);
+    }
+    return queueClaims;
+  }, [queueClaims, queueFilter]);
 
   // Feature 30: Matching Mode State ('direct' vs 'split')
   const [matchMode, setMatchMode] = useState<'direct' | 'split'>('direct');
@@ -111,13 +126,13 @@ export default function ReviewWorkspace() {
     } finally {
       setIsLoadingQueue(false);
     }
-  }, []);
+  }, [currentProject.id, currentScheduleVersion.id]);
 
   useEffect(() => {
     loadQueue();
   }, [loadQueue]);
 
-  const loadData = async (id: string) => {
+  const loadData = useCallback(async (id: string) => {
     setIsLoading(true);
     setSubmitError(null);
     setDecisionSuccess(false);
@@ -127,7 +142,7 @@ export default function ReviewWorkspace() {
         claimsApi.getCandidates(id),
         claimsApi.getConflicts(id),
         claimsApi.getValidation(id),
-        schedulesApi.getActivities().catch(() => []),
+        schedulesApi.getActivities(currentScheduleVersion.id).catch(() => []),
         wbsApi.getSplits(id).catch(() => []),
       ]);
       setEvent(ev);
@@ -151,7 +166,7 @@ export default function ReviewWorkspace() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentScheduleVersion.id, t]);
 
   useEffect(() => {
     if (eventIdParam) {
@@ -159,7 +174,7 @@ export default function ReviewWorkspace() {
     } else {
       setIsLoading(false);
     }
-  }, [eventIdParam]);
+  }, [eventIdParam, loadData, currentProject.id, currentScheduleVersion.id]);
 
   const handleSelectClaim = (id: string) => {
     setSearchParams({ event_id: id });
@@ -243,11 +258,34 @@ export default function ReviewWorkspace() {
           />
         ) : (
           <div className="space-y-3">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
-              {t('review.quickQueueCount', { count: queueClaims.length })}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+                {t('review.quickQueueCount', { count: filteredQueueClaims.length })}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {(['ALL', 'HIGH_PRIORITY', 'UNMATCHED'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setQueueFilter(filter)}
+                    className={cn(
+                      'px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer border',
+                      queueFilter === filter
+                        ? 'bg-primary text-white border-primary shadow-2xs'
+                        : 'bg-card border-border text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {filter === 'ALL'
+                      ? 'All Pending'
+                      : filter === 'HIGH_PRIORITY'
+                      ? 'High Priority 🔥'
+                      : 'Unmatched / New Scope ⚠️'}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {queueClaims.map((claim) => (
+              {filteredQueueClaims.map((claim) => (
                 <div
                   key={claim.event_id}
                   onClick={() => handleSelectClaim(claim.event_id)}
@@ -332,7 +370,16 @@ export default function ReviewWorkspace() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
         <div>
-          <div className="flex items-center gap-2 text-xs font-mono text-primary font-bold flex-wrap">
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pb-1 flex-wrap">
+            <span className="flex items-center gap-1 font-bold text-primary">
+              <Building2 className="w-3.5 h-3.5 text-[#FF7A18]" />
+              {currentProject.name} ({currentProject.code})
+            </span>
+            <span>·</span>
+            <span className="text-[11px] px-2 py-0.2 rounded bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border border-slate-300 dark:border-[#214766]">
+              {currentScheduleVersion.versionNumber}
+            </span>
+            <span>·</span>
             <span>{t('review.claimIdLabel')}: {event.event_id}</span>
             <span>·</span>
             <span>{t('review.dateLabel')}: {event.event_date}</span>
@@ -388,15 +435,32 @@ export default function ReviewWorkspace() {
       {/* Quick Queue Strip / Drawer */}
       {isQueueOpen && (
         <Card className="bg-card border-border shadow-xs">
-          <CardHeader className="py-2.5 px-4 border-b border-border flex flex-row items-center justify-between">
+          <CardHeader className="py-2 px-4 border-b border-border flex flex-row items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <ListOrdered className="w-4 h-4 text-primary" />
               <CardTitle className="text-xs font-bold text-foreground">
                 {t('review.quickQueueTitle')}
               </CardTitle>
               <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-mono font-semibold">
-                {t('review.quickQueueCount', { count: queueClaims.length })}
+                {filteredQueueClaims.length}
               </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {(['ALL', 'HIGH_PRIORITY', 'UNMATCHED'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setQueueFilter(filter)}
+                  className={cn(
+                    'px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer border',
+                    queueFilter === filter
+                      ? 'bg-primary text-white border-primary shadow-2xs'
+                      : 'bg-card border-border text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {filter === 'ALL' ? 'All' : filter === 'HIGH_PRIORITY' ? 'High Priority' : 'Unmatched'}
+                </button>
+              ))}
             </div>
           </CardHeader>
           <CardContent className="p-3">
@@ -408,13 +472,13 @@ export default function ReviewWorkspace() {
               </div>
             ) : queueError ? (
               <ErrorState message={queueError} onRetry={loadQueue} retryText={t('common.retry')} />
-            ) : queueClaims.length === 0 ? (
+            ) : filteredQueueClaims.length === 0 ? (
               <div className="text-xs text-muted-foreground text-center py-2">
-                {t('review.quickQueueEmpty')}
+                No claims match the selected filter.
               </div>
             ) : (
               <div className="flex gap-3 overflow-x-auto pb-2 pt-0.5">
-                {queueClaims.map((claim) => {
+                {filteredQueueClaims.map((claim) => {
                   const isSelected = claim.event_id === eventIdParam;
                   return (
                     <button
@@ -740,6 +804,61 @@ export default function ReviewWorkspace() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4 space-y-3">
+                {/* Feature 2: Supervisor Planner-Review Function for Unmatched / New Activities */}
+                {(!event.matched_activity_id || event.status === 'UNMATCHED' || candidates.length === 0) && (
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/40 text-foreground space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-xs text-amber-800 dark:text-amber-300 block">
+                          Unmatched / New Scope — Supervisor Planner-Review Action Required
+                        </span>
+                        <span className="text-[11px] text-muted-foreground leading-relaxed block mt-0.5">
+                          This field claim could not be auto-matched to a single baseline activity with high confidence. As Supervisor, perform the planner-review function: bind an existing activity from the schedule master below, or allocate via WBS split.
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Searchable / Selectable Activity Master dropdown */}
+                    <div className="space-y-1.5 pt-1 border-t border-amber-500/20">
+                      <Label className="text-[11px] font-bold text-foreground block">
+                        Bind to Schedule Activity Master:
+                      </Label>
+                      <select
+                        value={selectedActivityId}
+                        onChange={(e) => setSelectedActivityId(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-slate-300 dark:border-[#214766] bg-white dark:bg-[#0B2742] text-xs font-mono font-bold text-foreground focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="">-- Select Schedule Activity to Bind --</option>
+                        {activities.map((act) => (
+                          <option key={act.activity_id} value={act.activity_id}>
+                            {act.activity_id} — {act.activity_name} ({act.discipline} | WBS: {act.wbs_code || 'N/A'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setMatchMode('split')}
+                        className="text-xs h-7 gap-1 font-semibold border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/40"
+                      >
+                        <Layers className="w-3 h-3" />
+                        Decompose via WBS Split
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {candidates.length > 0 && (
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-1">
+                    Machine Match Candidates ({candidates.length})
+                  </div>
+                )}
+
                 {candidates.map((cand) => {
                   const isSelected = selectedActivityId === cand.activity_id;
 
@@ -906,13 +1025,24 @@ export default function ReviewWorkspace() {
                   />
                 </div>
 
+                {currentScheduleVersion.isImmutable && (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl flex items-center gap-2 text-xs text-amber-800 dark:text-amber-200">
+                    <Lock className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span>Schedule Version <strong>{currentScheduleVersion.versionNumber}</strong> is archived (read-only). Review decisions cannot be committed.</span>
+                  </div>
+                )}
+
                 <Button
                   type="submit"
-                  disabled={isSubmitting || decisionSuccess}
+                  disabled={isSubmitting || decisionSuccess || currentScheduleVersion.isImmutable}
                   isLoading={isSubmitting}
                   className="w-full font-bold h-10 shadow-xs"
                 >
-                  {isSubmitting ? t('review.recordingDecision') : t('review.commitDecision')}
+                  {currentScheduleVersion.isImmutable
+                    ? 'Schedule Version is Read-Only'
+                    : isSubmitting
+                    ? t('review.recordingDecision')
+                    : t('review.commitDecision')}
                 </Button>
               </form>
             </CardContent>

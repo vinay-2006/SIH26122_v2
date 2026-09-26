@@ -24,6 +24,8 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorState } from '@/components/ui/error-state';
 import { claimsApi, ExecutionEvent } from '@/api';
 import { cn } from '@/lib/utils';
+import { useProject } from '@/context/ProjectContext';
+import { Building2 } from 'lucide-react';
 
 type InputTab = 'text' | 'voice' | 'file';
 
@@ -34,6 +36,7 @@ const ACCEPTED_FILE_EXTS = ['.pdf', '.xlsx', '.xls', '.csv', '.txt', '.xer', '.j
 
 export default function ClaimIntake() {
   const { t } = useTranslation();
+  const { currentProject, currentScheduleVersion } = useProject();
 
   const [activeTab, setActiveTab] = useState<InputTab>('text');
 
@@ -314,8 +317,11 @@ export default function ClaimIntake() {
     }
   };
 
+  // State for Schedule Export Progress Mode
+  const [isScheduleExport, setIsScheduleExport] = useState(false);
+
   // Submit Claim & Execute Pipeline (Intake -> Match -> Check -> Complete)
-  const runPipeline = async (claimText: string, file: File | null = null) => {
+  const runPipeline = async (claimText: string, file: File | null = null, asScheduleExport = false) => {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
     setIsProcessing(true);
@@ -328,6 +334,9 @@ export default function ClaimIntake() {
       if (file && activeTab === 'text') {
         const res = await claimsApi.submitText(claimText, file);
         events = [res.event];
+      } else if (file && (asScheduleExport || file.name.endsWith('.xer') || file.name.endsWith('.xml'))) {
+        const res = await claimsApi.submitScheduleExport(file);
+        events = res.events;
       } else if (file) {
         const res = await claimsApi.submitFile(file);
         events = res.events;
@@ -376,7 +385,12 @@ export default function ClaimIntake() {
 
   const handleSubmitFile = () => {
     if (!selectedFile) return;
-    runPipeline(`Uploaded document: ${selectedFile.name}`, selectedFile);
+    const isExport = isScheduleExport || selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml');
+    runPipeline(
+      isExport ? `P6/MSP Schedule Progress Export: ${selectedFile.name}` : `Uploaded document: ${selectedFile.name}`,
+      selectedFile,
+      isExport
+    );
   };
 
   const hasPendingClarification = createdEvents.some((ev) => ev.clarification_status === 'PENDING');
@@ -402,6 +416,16 @@ export default function ClaimIntake() {
           <PlusCircle className="w-5 h-5" />
         </div>
         <div>
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pb-0.5 flex-wrap">
+            <span className="flex items-center gap-1 font-bold text-primary">
+              <Building2 className="w-3.5 h-3.5 text-[#FF7A18]" />
+              {currentProject.name} ({currentProject.code})
+            </span>
+            <span>·</span>
+            <span className="text-[11px] px-2 py-0.2 rounded bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border border-slate-300 dark:border-[#214766]">
+              {currentScheduleVersion.versionNumber}
+            </span>
+          </div>
           <h1 className="text-2xl font-extrabold text-[#071A2D] dark:text-[#F5F7FA] tracking-tight">
             {t('intake.title')}
           </h1>
@@ -539,7 +563,7 @@ export default function ClaimIntake() {
                         </div>
                       </div>
                     ) : (
-                      <div className="p-3 rounded-xl border border-orange-500/30 bg-orange-500/5 dark:bg-orange-950/20 space-y-2">
+                      <div className="p-3 rounded-xl border border-orange-500/30 bg-orange-50/5 dark:bg-orange-950/20 space-y-2">
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2.5 truncate">
                             {evidencePreviewUrl ? (
@@ -741,21 +765,38 @@ export default function ClaimIntake() {
               </Card>
             </TabsContent>
 
-            {/* TAB 3: FILE UPLOAD */}
+            {/* TAB 3: FILE UPLOAD & P6/MSP PROGRESS EXPORT */}
             <TabsContent value="file" className="mt-0 focus-visible:outline-none">
               <Card className="border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl">
                 <CardHeader className="p-6 pb-4">
                   <CardTitle className="text-base font-extrabold text-[#071A2D] dark:text-[#F5F7FA]">{t('intake.fileCardTitle')}</CardTitle>
                   <CardDescription className="text-[#334155] dark:text-[#C5D2DE] text-xs font-semibold mt-1">
-                    {t('intake.fileCardDesc')}
+                    Ingest field progress from documents, scanned logs, or subcontractor P6/MSP schedule export files.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-6 pt-0 space-y-4">
+                  {/* File Intake Categories Guidance */}
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#0A2238] border border-slate-200/80 dark:border-[#214766] space-y-1.5 text-xs">
+                    <span className="font-bold text-[#071A2D] dark:text-[#F5F7FA] block text-[11px]">
+                      Supported Progress Input Categories:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-[#FF7A18] shrink-0" />
+                        <span>Daily Reports & Diaries (.pdf, .txt, .png)</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span>P6 / MSP Progress Exports (.xer, .xml, .csv, .xlsx)</span>
+                      </div>
+                    </div>
+                  </div>
+
                   <input
                     type="file"
                     ref={fileInputRef}
                     id="doc-file-input"
-                    accept=".pdf,.xlsx,.xls,.csv,.txt,.xer,.jpg,.jpeg,.png"
+                    accept=".pdf,.xlsx,.xls,.csv,.txt,.xer,.xml,.jpg,.jpeg,.png"
                     onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
                     className="hidden"
                   />
@@ -772,7 +813,7 @@ export default function ClaimIntake() {
                       }
                     }}
                     className={cn(
-                      'border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                      'border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                       fileError
                         ? 'border-destructive bg-destructive/5'
                         : selectedFile
@@ -780,12 +821,39 @@ export default function ClaimIntake() {
                         : 'border-slate-300 dark:border-[#214766] hover:border-[#FF7A18] bg-slate-50/50 dark:bg-[#0A2238]/60'
                     )}
                   >
-                    <Upload className={cn('w-8 h-8 mx-auto', selectedFile ? 'text-[#FF7A18]' : 'text-slate-400')} />
+                    <Upload className={cn('w-7 h-7 mx-auto', selectedFile ? 'text-[#FF7A18]' : 'text-slate-400')} />
                     <div className="text-xs text-[#071A2D] dark:text-[#F5F7FA] font-bold">
                       {selectedFile ? selectedFile.name : t('intake.clickToBrowse')}
                     </div>
-                    <div className="text-[10px] text-[#475569] dark:text-[#9FB2C3] font-medium">{t('intake.supportedFormats')}</div>
+                    <div className="text-[10px] text-[#475569] dark:text-[#9FB2C3] font-medium">
+                      PDF, XLSX, CSV, TXT, XER (Primavera P6), XML (MS Project), JPG/PNG
+                    </div>
                   </div>
+
+                  {/* Schedule Progress Export Mode Selector */}
+                  {selectedFile && (
+                    <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-between text-xs">
+                      <div className="space-y-0.5">
+                        <span className="font-bold text-[#071A2D] dark:text-[#F5F7FA] block text-[11px]">
+                          P6 / MS Project Export Mode
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml')
+                            ? 'Auto-detected P6/MSP file: Rows will be parsed directly as activity progress claims.'
+                            : 'Treat tabular rows as structured subcontractor progress claims.'}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-2 font-bold cursor-pointer text-xs shrink-0 text-primary">
+                        <input
+                          type="checkbox"
+                          checked={isScheduleExport || selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml')}
+                          onChange={(e) => setIsScheduleExport(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-300 text-[#FF7A18] focus:ring-[#FF7A18]"
+                        />
+                        <span>P6 Export Mode</span>
+                      </label>
+                    </div>
+                  )}
 
                   {fileError && (
                     <p role="alert" className="text-xs text-destructive font-semibold">
@@ -804,7 +872,11 @@ export default function ClaimIntake() {
                         : 'bg-gradient-to-r from-[#FF7A18] to-[#FF941F] hover:from-[#E06810] hover:to-[#FF7A18] cursor-pointer'
                     )}
                   >
-                    {isProcessing ? t('intake.extractingDocument') : t('intake.ingestDocument')}
+                    {isProcessing
+                      ? t('intake.extractingDocument')
+                      : isScheduleExport || selectedFile?.name.endsWith('.xer') || selectedFile?.name.endsWith('.xml')
+                      ? 'Ingest Schedule Progress Export Claims'
+                      : t('intake.ingestDocument')}
                   </Button>
                 </CardContent>
               </Card>

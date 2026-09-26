@@ -31,6 +31,7 @@ export default {
     claimIntake: 'క్లెయిమ్ ఇన్‌టేక్',
     executionSummary: 'AI ఎగ్జిక్యూషన్ సారాంశం',
     reports: 'నివేదికలు',
+    timeAgent: 'టైమ్ ఏజెంట్',
     expandSidebar: 'సైడ్‌బార్ విస్తరించండి',
     collapseSidebar: 'సైడ్‌బార్ కుదించండి',
   },

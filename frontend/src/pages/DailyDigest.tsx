@@ -19,10 +19,13 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useProject } from '@/context/ProjectContext';
+import { Building2 } from 'lucide-react';
 
 export default function DailyDigest() {
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const { currentProject, currentScheduleVersion } = useProject();
 
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
@@ -77,23 +80,24 @@ export default function DailyDigest() {
             e.created_at > latest.created_at ? e : latest
           );
           const latestDate = mostRecentlyCreated.event_date;
-          if (latestDate !== selectedDate) {
-            setSelectedDate(latestDate);
-            setCurrentMonth(new Date(latestDate));
-            setHasResolvedInitialDate(true);
-            return;
-          }
+          setSelectedDate(latestDate);
+          setCurrentMonth(new Date(latestDate));
+          setHasResolvedInitialDate(true);
+          loadDigest(latestDate);
+          return;
         }
       } catch {
-        // Fall through -- load whatever selectedDate already is (today).
+        // Fall through -- load whatever selectedDate already is
       }
-      if (!cancelled) setHasResolvedInitialDate(true);
+      if (!cancelled) {
+        setHasResolvedInitialDate(true);
+        loadDigest(selectedDate);
+      }
     })();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentProject.id]);
 
   useEffect(() => {
     if (!hasResolvedInitialDate) return;
@@ -145,6 +149,7 @@ export default function DailyDigest() {
   const totalClaims = events.length;
   const reviewRequired = events.filter((e) => e.status === 'REVIEW_REQUIRED').length;
   const validated = events.filter((e) => e.status === 'VALIDATED').length;
+  const unmatched = events.filter((e) => e.status === 'UNMATCHED' || !e.matched_activity_id).length;
   const approved = events.filter((e) => e.status === 'APPROVED').length;
   const hold = events.filter((e) => e.status === 'HOLD').length;
 
@@ -224,6 +229,16 @@ export default function DailyDigest() {
       {/* Top Header Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
         <div>
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pb-1">
+            <span className="flex items-center gap-1 font-bold text-primary">
+              <Building2 className="w-3.5 h-3.5 text-[#FF7A18]" />
+              {currentProject.name} ({currentProject.code})
+            </span>
+            <span>·</span>
+            <span className="text-[11px] px-2 py-0.2 rounded bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border border-slate-300 dark:border-[#214766]">
+              {currentScheduleVersion.versionNumber}
+            </span>
+          </div>
           <h1 className="text-2xl font-extrabold text-[#071A2D] dark:text-[#F5F7FA] tracking-tight flex items-center gap-2">
             <ClipboardList className="w-6 h-6 text-primary" />
             {t('digest.title')}
@@ -281,7 +296,7 @@ export default function DailyDigest() {
       </div>
 
       {/* Summary KPI Bar — Multi-Level Surface Elevation */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="p-4 rounded-xl bg-card border border-border shadow-xs backdrop-blur-xs">
           <span className="text-[11px] font-bold text-muted-foreground uppercase">{t('digest.totalClaims')}</span>
           <div className="text-2xl font-bold text-foreground mt-1 font-mono">{totalClaims}</div>
@@ -297,12 +312,17 @@ export default function DailyDigest() {
           <div className="text-2xl font-bold text-teal-900 dark:text-[#22D3EE] mt-1 font-mono">{validated}</div>
         </div>
 
+        <div className="p-4 rounded-xl bg-orange-50/70 dark:bg-[#0A2340]/80 border border-orange-200/80 dark:border-orange-900/50 shadow-xs backdrop-blur-xs">
+          <span className="text-[11px] font-bold text-orange-800 dark:text-orange-300 uppercase font-mono">Unmatched Scope</span>
+          <div className="text-2xl font-bold text-orange-900 dark:text-orange-200 mt-1 font-mono">{unmatched}</div>
+        </div>
+
         <div className="p-4 rounded-xl bg-emerald-50/70 dark:bg-[#0A2340]/80 border border-emerald-200/80 dark:border-emerald-900/50 shadow-xs backdrop-blur-xs">
           <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase font-mono">{t('digest.approved')}</span>
           <div className="text-2xl font-bold text-emerald-900 dark:text-emerald-200 mt-1 font-mono">{approved}</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-50/80 dark:bg-[#0A2340]/80 border border-slate-200 dark:border-[#1E3A5F] shadow-xs backdrop-blur-xs col-span-2 sm:col-span-1">
+        <div className="p-4 rounded-xl bg-slate-50/80 dark:bg-[#0A2340]/80 border border-slate-200 dark:border-[#1E3A5F] shadow-xs backdrop-blur-xs">
           <span className="text-[11px] font-bold text-muted-foreground uppercase">{t('digest.onHold')}</span>
           <div className="text-2xl font-bold text-muted-foreground mt-1 font-mono">{hold}</div>
         </div>

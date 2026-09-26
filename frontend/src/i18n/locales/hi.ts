@@ -31,6 +31,7 @@ export default {
     claimIntake: 'दावा प्रविष्टि',
     executionSummary: 'एआई निष्पादन सारांश',
     reports: 'रिपोर्ट्स',
+    timeAgent: 'टाइम एजेंट',
     expandSidebar: 'साइडबार विस्तृत करें',
     collapseSidebar: 'साइडबार संक्षिप्त करें',
   },

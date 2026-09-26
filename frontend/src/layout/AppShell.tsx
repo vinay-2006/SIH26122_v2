@@ -25,12 +25,14 @@ import {
   Flame,
   FolderTree,
   Sparkles,
+  Bot,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import GlobalIndustrialBackground from '@/components/GlobalIndustrialBackground';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { IS_MOCK_MODE } from '@/api';
+import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 
 const SIDEBAR_COLLAPSED_KEY = 'setu_sidebar_collapsed_v1';
 
@@ -74,6 +76,7 @@ export default function AppShell() {
   const supervisorNavItems = [
     { label: t('nav.dailyDigest'),     path: '/digest',    icon: ClipboardList, badge: pendingCount },
     { label: t('nav.reviewWorkspace'), path: '/review',    icon: Layers, badge: pendingCount },
+    { label: t('nav.timeAgent', { defaultValue: 'Time Agent' }), path: '/time-agent', icon: Bot },
     { label: t('nav.dashboard'),       path: '/dashboard', icon: LayoutDashboard },
     { label: t('nav.activityHistory'), path: '/history',   icon: Clock },
     { label: t('nav.impactPreview'),   path: '/impact',    icon: Activity },
@@ -83,6 +86,7 @@ export default function AppShell() {
 
   const siteEngineerNavItems = [
     { label: t('nav.claimIntake'), path: '/intake', icon: PlusCircle, badge: 0 },
+    { label: t('nav.timeAgent', { defaultValue: 'Time Agent' }), path: '/time-agent', icon: Bot },
   ];
 
   const navItems = isSupervisor ? supervisorNavItems : siteEngineerNavItems;
@@ -275,16 +279,19 @@ export default function AppShell() {
       <div className="flex-1 flex flex-col min-w-0 min-h-screen overflow-x-hidden relative z-10">
         {/* Top Header Bar */}
         <header className="h-16 px-4 lg:px-8 flex items-center justify-between sticky top-0 z-30 shadow-xs bg-white/85 dark:bg-[#071B2D]/85 backdrop-blur-md border-b border-slate-200/60 dark:border-[#1E3A5F] transition-colors duration-200">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             {/* Mobile hamburger */}
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setIsMobileOpen(true)}
-              className="lg:hidden text-foreground hover:bg-card-subtle"
+              className="lg:hidden text-foreground hover:bg-card-subtle shrink-0"
             >
               <Menu className="w-5 h-5" />
             </Button>
+
+            {/* Global Project Switcher */}
+            <ProjectSwitcher />
           </div>
 
           <div className="flex items-center gap-3">

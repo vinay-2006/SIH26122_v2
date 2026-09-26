@@ -9,6 +9,7 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import {
   FolderTree,
   ChevronDown,
@@ -18,7 +19,16 @@ import {
   Loader2,
   AlertCircle,
   Search,
+  Building2,
+  Calendar,
+  Layers,
+  Lock,
+  Sparkles,
+  Check,
+  Filter,
 } from 'lucide-react';
+import { useProject } from '@/context/ProjectContext';
+import { Button } from '@/components/ui/button';
 import {
   schedulesApi,
   type WBSTreeResponse,
@@ -125,11 +135,22 @@ export default function WBSActivityExplorer({
   className,
 }: WBSActivityExplorerProps) {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { currentProject, currentScheduleVersion, selectedStageId, setSelectedStageId } = useProject();
+
   const [wbsData, setWbsData] = useState<WBSTreeResponse | null>(null);
   const [activities, setActivities] = useState<ScheduleActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Synchronize stage filter from URL params if present
+  useEffect(() => {
+    const stageParam = searchParams.get('stage');
+    if (stageParam && stageParam !== selectedStageId) {
+      setSelectedStageId(stageParam);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,9 +159,10 @@ export default function WBSActivityExplorer({
       setLoading(true);
       setError(null);
       try {
+        const targetScheduleId = scheduleId || currentScheduleVersion.id;
         const [tree, acts] = await Promise.all([
-          schedulesApi.getWbsTree(scheduleId),
-          schedulesApi.getActivities(scheduleId),
+          schedulesApi.getWbsTree(targetScheduleId),
+          schedulesApi.getActivities(targetScheduleId),
         ]);
         if (!cancelled) {
           setWbsData(tree);
@@ -157,7 +179,7 @@ export default function WBSActivityExplorer({
 
     load();
     return () => { cancelled = true; };
-  }, [scheduleId]);
+  }, [scheduleId, currentProject.id, currentScheduleVersion.id]);
 
   // Build lookup map: activity_id → ScheduleActivity
   const activityMap = useMemo(() => {
@@ -198,11 +220,30 @@ export default function WBSActivityExplorer({
     });
   }, [wbsData, activityMap]);
 
-  // Filter groups by search term
+  // Filter groups by stage and search term
   const filteredGroups = useMemo(() => {
-    if (!searchTerm.trim()) return enrichedGroups;
+    let groups = enrichedGroups;
+
+    // Filter by selected stage if active
+    if (selectedStageId) {
+      const stage = currentProject.stages.find((s) => s.id === selectedStageId);
+      if (stage) {
+        const prefix = stage.wbsPrefix.toLowerCase();
+        const stageDiscipline = stage.discipline.toLowerCase();
+        groups = groups.filter((g) => {
+          const wbsMatch = g.wbs_code.toLowerCase().includes(prefix.replace('wbs-', ''));
+          const actMatch = g.activities.some((a) =>
+            stageDiscipline === 'general' ||
+            (a.discipline && a.discipline.toLowerCase().includes(stageDiscipline))
+          );
+          return wbsMatch || actMatch;
+        });
+      }
+    }
+
+    if (!searchTerm.trim()) return groups;
     const lc = searchTerm.toLowerCase();
-    return enrichedGroups.filter(
+    return groups.filter(
       (g) =>
         g.wbs_code.toLowerCase().includes(lc) ||
         g.activities.some(
@@ -211,7 +252,16 @@ export default function WBSActivityExplorer({
             a.activity_name.toLowerCase().includes(lc)
         )
     );
-  }, [enrichedGroups, searchTerm]);
+  }, [enrichedGroups, selectedStageId, currentProject.stages, searchTerm]);
+
+  const handleStageSelect = (stageId: string | null) => {
+    setSelectedStageId(stageId);
+    if (stageId) {
+      setSearchParams({ stage: stageId });
+    } else {
+      setSearchParams({});
+    }
+  };
 
   // ── Loading state ─────────────────────────────────────────────────────────
   if (loading) {
@@ -253,7 +303,48 @@ export default function WBSActivityExplorer({
   const totalActivities = enrichedGroups.reduce((s, g) => s + g.activities.length, 0);
 
   return (
-    <Card className={cn('border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl', className)}>
+    <Card className={cn('border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl overflow-hidden', className)}>
+      {/* V7 Project & Schedule Version Hierarchy Header */}
+      <div className="bg-gradient-to-r from-[#002266] to-[#001440] dark:from-[#061526] dark:to-[#0A2238] p-4 text-white border-b border-white/10 space-y-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          {/* Breadcrumb Hierarchy */}
+          <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
+            <span className="flex items-center gap-1 text-orange-400 font-bold">
+              <Building2 className="w-3.5 h-3.5" />
+              {currentProject.name}
+            </span>
+            <span className="text-white/40">→</span>
+            <span className="flex items-center gap-1 text-blue-300 font-bold">
+              <Calendar className="w-3.5 h-3.5" />
+              {currentScheduleVersion.name} ({currentScheduleVersion.versionNumber})
+            </span>
+            <span className="text-white/40">→</span>
+            <span className="flex items-center gap-1 text-emerald-300 font-bold">
+              <Layers className="w-3.5 h-3.5" />
+              {selectedStageId
+                ? currentProject.stages.find((s) => s.id === selectedStageId)?.name || 'Selected Stage'
+                : 'All Stages'}
+            </span>
+            <span className="text-white/40">→</span>
+            <span className="text-white/80">WBS & Activities</span>
+          </div>
+
+          {/* Schedule Immutability State */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {currentScheduleVersion.isCurrent ? (
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                ACTIVE BASELINE
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-500/20 text-slate-300 border border-slate-400/40 flex items-center gap-1">
+                <Lock className="w-3 h-3" />
+                HISTORICAL / READ-ONLY
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
       <CardHeader className="pb-4 border-b border-slate-300 dark:border-[#214766]/60">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-2">
@@ -261,15 +352,56 @@ export default function WBSActivityExplorer({
             <CardTitle className="text-base font-extrabold text-[#071A2D] dark:text-[#F5F7FA]">{t('wbs.title')}</CardTitle>
           </div>
           <div className="flex items-center gap-3 text-xs text-[#475569] dark:text-[#CBD5E1] font-semibold">
-            <span>{t('wbs.groupCount', { count: enrichedGroups.length })}</span>
+            <span>{t('wbs.groupCount', { count: filteredGroups.length })} Groups</span>
             <span>·</span>
-            <span>{t('wbs.activityTotal', { count: totalActivities })}</span>
+            <span>{filteredGroups.reduce((s, g) => s + g.activities.length, 0)} of {totalActivities} Activities</span>
           </div>
         </div>
-        <p className="text-xs text-[#334155] dark:text-[#CBD5E1] font-medium mt-1">{t('wbs.subtitle')}</p>
+        <p className="text-xs text-[#334155] dark:text-[#CBD5E1] font-medium mt-0.5">{t('wbs.subtitle')}</p>
 
-        {/* Search */}
-        <div className="relative mt-3">
+        {/* Stage Filter Tabs */}
+        <div className="pt-2 space-y-1.5">
+          <span className="text-[10px] font-mono uppercase font-bold text-muted-foreground flex items-center gap-1">
+            <Filter className="w-3 h-3 text-[#FF7A18]" />
+            Filter by Project Stage:
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => handleStageSelect(null)}
+              className={cn(
+                'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border',
+                selectedStageId === null
+                  ? 'bg-[#FF7A18] text-white border-[#FF7A18] shadow-xs font-bold'
+                  : 'bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border-slate-200 dark:border-[#214766] hover:text-foreground'
+              )}
+            >
+              All Stages ({currentProject.totalStages})
+            </button>
+            {currentProject.stages.map((stg) => {
+              const isSelected = selectedStageId === stg.id;
+              return (
+                <button
+                  key={stg.id}
+                  type="button"
+                  onClick={() => handleStageSelect(stg.id)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5',
+                    isSelected
+                      ? 'bg-primary text-white border-primary shadow-xs font-bold'
+                      : 'bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border-slate-200 dark:border-[#214766] hover:text-foreground'
+                  )}
+                >
+                  <span>Stage {stg.stageNumber}</span>
+                  <span className="opacity-75 text-[10px]">({stg.actualPct}%)</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Search Input */}
+        <div className="relative mt-2">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-[#8FA6BA]" />
           <input
             type="text"

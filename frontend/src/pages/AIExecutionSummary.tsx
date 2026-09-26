@@ -14,6 +14,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { reportsApi, ExecutionReportResponse, Discipline } from '../api';
+import { useProject } from '@/context/ProjectContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { ErrorState } from '../components/ui/error-state';
@@ -32,6 +33,7 @@ const DISCIPLINES: { label: string; value: Discipline | '' }[] = [
 
 export default function AIExecutionSummary() {
   const { t, i18n } = useTranslation();
+  const { currentProject, currentScheduleVersion } = useProject();
   const displayLang = (i18n.language || 'en').slice(0, 2);
 
   const [startDate, setStartDate] = useState(() => {
@@ -51,6 +53,7 @@ export default function AIExecutionSummary() {
       setLoading(true);
       setError(null);
       const res = await reportsApi.getExecutionSummary({
+        schedule_id: currentScheduleVersion.id,
         start: startDate,
         end: endDate,
         discipline: selectedDiscipline || undefined,
@@ -63,7 +66,7 @@ export default function AIExecutionSummary() {
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, selectedDiscipline, displayLang]);
+  }, [currentProject.id, currentScheduleVersion.id, startDate, endDate, selectedDiscipline, displayLang]);
 
   useEffect(() => {
     fetchSummary();

@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useProject } from '@/context/ProjectContext';
 import {
   Card,
   CardContent,
@@ -181,6 +182,7 @@ function TimelinePhoto({ eventId, photoPath }: { eventId: string; photoPath?: st
 export default function ActivityHistory() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { currentProject, currentScheduleVersion } = useProject();
 
   // URL Deep Link
   const activityIdFromUrl = searchParams.get('activity_id') || '';
@@ -245,6 +247,7 @@ export default function ActivityHistory() {
 
     try {
       const res = await activitiesApi.getActivities({
+        schedule_id: currentScheduleVersion.id,
         search: searchFilter || undefined,
         discipline: selectedDiscipline !== 'ALL' ? selectedDiscipline : undefined,
         location: selectedLocation !== 'ALL' ? selectedLocation : undefined,
@@ -276,6 +279,8 @@ export default function ActivityHistory() {
       setIsLoadingDirectory(false);
     }
   }, [
+    currentProject.id,
+    currentScheduleVersion.id,
     searchFilter,
     selectedDiscipline,
     selectedLocation,
@@ -468,6 +473,16 @@ export default function ActivityHistory() {
       {/* Top Header & Search Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-300 dark:border-[#214766]/60 pb-3">
         <div>
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pb-1 flex-wrap">
+            <span className="flex items-center gap-1 font-bold text-primary">
+              <Building2 className="w-3.5 h-3.5 text-[#FF7A18]" />
+              {currentProject.name} ({currentProject.code})
+            </span>
+            <span>·</span>
+            <span className="text-[11px] px-2 py-0.2 rounded bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border border-slate-300 dark:border-[#214766]">
+              {currentScheduleVersion.versionNumber}
+            </span>
+          </div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-[#071A2D] dark:text-[#F5F7FA] tracking-tight flex items-center gap-2">
             <div className="p-1.5 rounded-lg bg-[#FC4C02]/10 border border-[#FC4C02]/20">
               <Clock className="w-5 h-5 text-[#FC4C02]" />

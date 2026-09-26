@@ -23,6 +23,7 @@ const en = {
   nav: {
     dailyDigest: 'Daily Digest',
     reviewWorkspace: 'Review Workspace',
+    timeAgent: 'Time Agent',
     dashboard: 'Dashboard',
     activityHistory: 'Activity History',
     impactPreview: 'Impact Preview',

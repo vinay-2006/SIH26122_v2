@@ -12,6 +12,7 @@ import {
   DisciplineForecastItem,
   ExecutionEvent,
 } from '@/api';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   TrendingDown,
@@ -31,7 +32,18 @@ import {
   Loader2,
   Sparkles,
   Globe2,
+  Server,
+  Building2,
+  Calendar,
+  Lock,
+  Upload,
+  ArrowRight,
+  FolderTree,
 } from 'lucide-react';
+import { P6SyncStagingModal } from '@/components/P6SyncStagingModal';
+import { ScheduleImportModal } from '@/components/ScheduleImportModal';
+import { useProject } from '@/context/ProjectContext';
+import { useAuth } from '@/auth/AuthProvider';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -126,6 +138,12 @@ export default function Dashboard() {
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const [exportError, setExportError] = useState<string | null>(null);
+
+  const { currentProject, currentScheduleVersion, setSelectedStageId } = useProject();
+  const { user } = useAuth();
+  const isSupervisor = user?.role === 'SUPERVISOR';
+  const [isP6StagingOpen, setIsP6StagingOpen] = useState<boolean>(false);
+  const [isScheduleImportOpen, setIsScheduleImportOpen] = useState<boolean>(false);
 
   // Phase 7: AI Execution Summary & Dynamic Translation
   const [execSummary, setExecSummary] =
@@ -259,7 +277,7 @@ export default function Dashboard() {
   useEffect(() => {
     loadDashboardData();
     loadExecutionSummary();
-  }, []);
+  }, [currentProject.id, currentScheduleVersion.id]);
 
   const handleExportCsv = async () => {
     setIsExporting(true);
@@ -539,6 +557,15 @@ export default function Dashboard() {
           </Button>
 
           <Button
+            onClick={() => setIsP6StagingOpen(true)}
+            variant="outline"
+            className="border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 h-9 text-xs font-bold gap-1.5 shadow-2xs"
+          >
+            <Server className="w-3.5 h-3.5" />
+            P6 / PMIS Sync Staging
+          </Button>
+
+          <Button
             onClick={handleExportCsv}
             disabled={isExporting}
             className="bg-gradient-to-r from-[#FF7A18] to-[#FF941F] hover:from-[#E06810] hover:to-[#FF7A18] text-white font-semibold text-xs h-9 shadow-md shadow-orange-500/25 gap-1.5"
@@ -570,6 +597,198 @@ export default function Dashboard() {
           retryText={t('common.retry')}
         />
       )}
+
+      {/* V7 Project-Centric Context & Stage Milestone Structure Card */}
+      <Card className="border-slate-300 dark:border-[#1E3A5F] bg-white/98 dark:bg-[#071B2D]/95 shadow-md rounded-2xl overflow-hidden">
+        <div className="bg-gradient-to-r from-[#002266] via-[#003388] to-[#001D5E] dark:from-[#061526] dark:via-[#071B2D] dark:to-[#0A2238] p-5 text-white border-b border-slate-200 dark:border-[#1E3A5F]/60">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs font-mono font-bold text-orange-400">
+                <Building2 className="w-4 h-4 text-[#FF7A18]" />
+                <span>ENTERPRISE PROJECT CONTEXT</span>
+                <span>·</span>
+                <span className="bg-white/10 px-2 py-0.5 rounded text-white">{currentProject.id}</span>
+                <span>·</span>
+                <span className="text-white/80">{currentProject.region}</span>
+              </div>
+              <h2 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
+                {currentProject.name}
+              </h2>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-white/80 pt-1">
+                <span>Client: <strong className="text-white">{currentProject.client}</strong></span>
+                <span>•</span>
+                <span>Budget: <strong className="text-white font-mono">{currentProject.totalBudget}</strong></span>
+                <span>•</span>
+                <span>Active Stage: <strong className="text-amber-300">{currentProject.activeStage}</strong> ({currentProject.totalStages} Stages Total)</span>
+              </div>
+            </div>
+
+            {/* Schedule Version Pill & Import Trigger */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5 bg-black/20 dark:bg-[#04101E]/60 p-3 rounded-xl border border-white/10 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-blue-500/20 border border-blue-400/40 text-blue-300">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white font-mono">{currentScheduleVersion.versionNumber}</span>
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+                      {currentScheduleVersion.status}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-white/70 truncate max-w-[200px]">
+                    {currentScheduleVersion.name}
+                  </span>
+                </div>
+              </div>
+
+              {isSupervisor && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsScheduleImportOpen(true)}
+                  className="h-8 text-[11px] font-bold border-white/20 hover:bg-white/10 text-white gap-1.5 shrink-0"
+                >
+                  <Upload className="w-3.5 h-3.5 text-[#FF7A18]" />
+                  <span>Import Version</span>
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress & Variance Bar */}
+          <div className="mt-5 pt-4 border-t border-white/10 grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="space-y-1.5 md:col-span-2">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span>Overall Physical Progress</span>
+                <span className="font-mono font-bold text-amber-300">
+                  {currentProject.overallActual}% Actual / {currentProject.overallPlanned}% Planned
+                </span>
+              </div>
+              <div className="h-3 w-full rounded-full bg-white/20 overflow-hidden relative">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-400 to-blue-500 rounded-full transition-all absolute top-0 left-0 opacity-40"
+                  style={{ width: `${currentProject.overallPlanned}%` }}
+                  title={`Planned: ${currentProject.overallPlanned}%`}
+                />
+                <div
+                  className="h-full bg-gradient-to-r from-[#FF7A18] to-[#FF941F] rounded-full transition-all absolute top-0 left-0 shadow-sm"
+                  style={{ width: `${currentProject.overallActual}%` }}
+                  title={`Actual: ${currentProject.overallActual}%`}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-white/70 font-mono">
+                <span>0%</span>
+                <span className={cn('font-bold', currentProject.variance < 0 ? 'text-rose-300' : 'text-emerald-300')}>
+                  Variance: {currentProject.variance > 0 ? `+${currentProject.variance}` : currentProject.variance}%
+                </span>
+                <span>100% Complete</span>
+              </div>
+            </div>
+
+            <div className="bg-white/10 dark:bg-white/5 p-2.5 rounded-xl border border-white/10 flex items-center justify-between text-xs">
+              <div>
+                <span className="text-[10px] text-white/70 block uppercase font-mono">Critical Activities</span>
+                <span className="text-base font-bold font-mono text-rose-300">{currentProject.criticalActivities} Path Items</span>
+              </div>
+              <AlertTriangle className="w-5 h-5 text-rose-300 opacity-80" />
+            </div>
+
+            <div className="bg-white/10 dark:bg-white/5 p-2.5 rounded-xl border border-white/10 flex items-center justify-between text-xs">
+              <div>
+                <span className="text-[10px] text-white/70 block uppercase font-mono">Quality Holds</span>
+                <span className="text-base font-bold font-mono text-amber-300">{currentProject.qualityHolds} ITP Gates</span>
+              </div>
+              <ShieldCheck className="w-5 h-5 text-amber-300 opacity-80" />
+            </div>
+          </div>
+        </div>
+
+        {/* Project Stage / Milestone Breakdown */}
+        <CardContent className="p-5 space-y-3 bg-slate-50/50 dark:bg-[#0A2238]/40">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wider font-mono">
+              <Layers className="w-4 h-4 text-primary" />
+              Project Stage & Milestone Hierarchy
+            </span>
+            <Link to="/wbs" className="text-xs text-primary font-bold hover:underline flex items-center gap-1">
+              <span>Explore Full WBS</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {currentProject.stages.map((stage) => {
+              const isCompleted = stage.status === 'COMPLETED';
+              const isActive = stage.status === 'ACTIVE';
+              return (
+                <Link
+                  key={stage.id}
+                  to={`/wbs?stage=${stage.id}`}
+                  onClick={() => setSelectedStageId(stage.id)}
+                  className={cn(
+                    'p-3.5 rounded-xl border transition-all text-xs flex flex-col justify-between space-y-2 group cursor-pointer shadow-2xs',
+                    isActive
+                      ? 'bg-orange-50/70 dark:bg-orange-950/30 border-[#FF7A18] shadow-orange-500/10'
+                      : isCompleted
+                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-900/60'
+                      : 'bg-white dark:bg-[#071B2D] border-slate-200 dark:border-[#1E3A5F] hover:border-slate-400'
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-1.5">
+                    <span className="font-bold text-[#071A2D] dark:text-[#F5F7FA] line-clamp-1 group-hover:text-[#FF7A18] transition-colors">
+                      {stage.name}
+                    </span>
+                    <span
+                      className={cn(
+                        'text-[9px] font-mono font-bold px-1.5 py-0.2 rounded shrink-0',
+                        isCompleted
+                          ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200'
+                          : isActive
+                          ? 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200'
+                          : 'bg-slate-100 dark:bg-slate-800 text-muted-foreground'
+                      )}
+                    >
+                      {stage.status}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono">
+                      <span className="text-muted-foreground">Progress:</span>
+                      <span className="font-bold text-foreground">
+                        {stage.actualPct}% <span className="text-muted-foreground font-normal">/ {stage.plannedPct}%</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full',
+                          isCompleted ? 'bg-emerald-500' : isActive ? 'bg-[#FF7A18]' : 'bg-blue-500'
+                        )}
+                        style={{ width: `${stage.actualPct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-slate-200/60 dark:border-[#1E3A5F]/60">
+                    <span className="font-mono">{stage.activitiesCount} Activities</span>
+                    <span className="text-primary font-bold group-hover:translate-x-0.5 transition-transform">
+                      View WBS →
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Embedded Schedule Ingestion Modal */}
+      <ScheduleImportModal
+        isOpen={isScheduleImportOpen}
+        onClose={() => setIsScheduleImportOpen(false)}
+      />
 
       {/* Phase 7: AI Execution Summary & Dynamic Translation Panel */}
       <Card className="bg-gradient-to-br from-white to-blue-50/40 dark:from-[#001E60]/90 dark:to-[#001440] border-blue-200 dark:border-blue-900/60 shadow-sm">
@@ -1535,6 +1754,20 @@ export default function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Feature 26: P6 / PMIS Sync Staging Buffer Modal */}
+      <P6SyncStagingModal
+        isOpen={isP6StagingOpen}
+        onClose={() => setIsP6StagingOpen(false)}
+      />
+
+      {/* Schedule Import Modal */}
+      {isSupervisor && (
+        <ScheduleImportModal
+          isOpen={isScheduleImportOpen}
+          onClose={() => setIsScheduleImportOpen(false)}
+        />
+      )}
     </div>
   );
 }
