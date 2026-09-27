@@ -43,11 +43,11 @@ function App() {
                   {/* Landing route redirected based on role */}
                   <Route element={<ProtectedRoute />}>
                     <Route path="/" element={<RoleRedirect />} />
-                    <Route path="/time-agent" element={<TimeAgent />} />
                   </Route>
 
                   {/* Supervisor-only routes */}
                   <Route element={<ProtectedRoute allowedRoles={['SUPERVISOR']} />}>
+                    <Route path="/time-agent" element={<TimeAgent />} />
                     <Route path="/digest" element={<DailyDigest />} />
                     <Route path="/review" element={<ReviewWorkspace />} />
                     <Route path="/dashboard" element={<Dashboard />} />

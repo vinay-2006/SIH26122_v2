@@ -64,6 +64,7 @@ import {
 } from '@/components/ui/card';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ProvenanceBadge } from '@/components/ProvenanceBadge';
+import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -693,6 +694,9 @@ export default function ActivityHistory() {
                     <option value="IN_PROGRESS">{t('history.stateInProgress')}</option>
                     <option value="COMPLETED">{t('history.stateCompleted')}</option>
                     <option value="NOT_STARTED">{t('history.stateNotStarted')}</option>
+                    <option value="ON_HOLD">ON HOLD</option>
+                    <option value="REOPEN_REQUESTED">REOPEN REQUESTED</option>
+                    <option value="REOPENED">REOPENED</option>
                   </select>
                 </div>
 
@@ -835,33 +839,7 @@ export default function ActivityHistory() {
                         </span>
 
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {/* Execution State Indicator */}
-                          <span
-                            className={cn(
-                              'text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex items-center gap-1',
-                              isCompleted
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                : isInProgress
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                'w-1.5 h-1.5 rounded-full',
-                                isCompleted
-                                  ? 'bg-emerald-500'
-                                  : isInProgress
-                                  ? 'bg-amber-500'
-                                  : 'bg-slate-400'
-                              )}
-                            />
-                            {act.execution_state === 'IN_PROGRESS'
-                              ? 'IN PROGRESS'
-                              : act.execution_state === 'COMPLETED'
-                              ? 'COMPLETED'
-                              : 'NOT STARTED'}
-                          </span>
+                          <ExecutionStateBadge state={act.execution_state} size="sm" />
 
                           <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
                             {act.actual_pct_complete !== null
@@ -986,6 +964,8 @@ export default function ActivityHistory() {
                             Tag: {activityMetadata.asset_tag}
                           </span>
                         )}
+
+                        <ExecutionStateBadge state={activityMetadata.execution_state} size="sm" />
                       </div>
 
                       <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">

@@ -7,7 +7,7 @@
  *
  * Strictly read-only: no editing, no splitting, no drag-drop.
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -26,19 +26,40 @@ import {
   Sparkles,
   Check,
   Filter,
+  Unlock,
+  ShieldAlert,
+  GitFork,
 } from 'lucide-react';
+import { useAuth } from '@/auth/AuthProvider';
 import { useProject } from '@/context/ProjectContext';
 import { Button } from '@/components/ui/button';
 import {
   schedulesApi,
+  reopenApi,
+  qualityGatesApi,
+  impactApi,
   type WBSTreeResponse,
   type WBSGroup,
   type ScheduleActivity,
+  type ExecutionState,
+  type ReopenRequest,
+  type QualityGate,
+  type CompoundImpact,
 } from '@/api';
+import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
+import { ReopenRequestModal } from '@/components/ReopenRequestModal';
+import { ReopenReviewModal } from '@/components/ReopenReviewModal';
+import { QualityGateModal } from '@/components/QualityGateModal';
+import { CompoundImpactModal } from '@/components/CompoundImpactModal';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
-// ── Enriched activity with joined name ──────────────────────────────────────
+import {
+  calculateWeightedProgress,
+  deriveActivityProgress,
+} from '@/lib/progressEngine';
+
+// ── Enriched activity with joined name, progress & execution state ───────────
 
 interface EnrichedActivity {
   activity_id: string;
@@ -46,17 +67,52 @@ interface EnrichedActivity {
   planned_quantity: number | null;
   discipline: string | null;
   location: string | null;
+  execution_state?: ExecutionState;
+  baseline_pct_complete?: number;
+  actual_progress: number;
+  planned_progress: number;
+  variance: number;
+  weight: number;
+  actual_start?: string | null;
+  actual_finish?: string | null;
+  contractor_name?: string | null;
+  work_package_code?: string | null;
+  fullActivity?: ScheduleActivity;
 }
 
 interface EnrichedGroup {
   wbs_code: string;
   activities: EnrichedActivity[];
   totalQuantity: number | null;
+  total_weight: number;
+  actual_progress: number;
+  planned_progress: number;
+  variance: number;
 }
 
 // ── WBSGroupCard — collapsible group row ────────────────────────────────────
 
-function WBSGroupCard({ group }: { group: EnrichedGroup }) {
+function WBSGroupCard({
+  group,
+  onRequestReopen,
+  onReviewReopen,
+  onOpenQualityModal,
+  onInspectImpact,
+  pendingReopenMap,
+  qualityGatesMap,
+  impactsMap,
+  userRole,
+}: {
+  group: EnrichedGroup;
+  onRequestReopen: (activity: ScheduleActivity) => void;
+  onReviewReopen: (request: ReopenRequest) => void;
+  onOpenQualityModal: (activity: ScheduleActivity) => void;
+  onInspectImpact: (impact: CompoundImpact) => void;
+  pendingReopenMap: Map<string, ReopenRequest>;
+  qualityGatesMap: Map<string, QualityGate[]>;
+  impactsMap: Map<string, CompoundImpact>;
+  userRole?: string;
+}) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -66,17 +122,29 @@ function WBSGroupCard({ group }: { group: EnrichedGroup }) {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left bg-slate-50/90 dark:bg-[#0A2238] hover:bg-slate-100 dark:hover:bg-[#0D2942] transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3 text-left bg-slate-50/90 dark:bg-[#0A2238] hover:bg-slate-100 dark:hover:bg-[#0D2942] transition-colors flex-wrap"
       >
-        {isOpen ? (
-          <ChevronDown className="w-4 h-4 text-[#475569] dark:text-[#CBD5E1] shrink-0" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-[#475569] dark:text-[#CBD5E1] shrink-0" />
-        )}
-        <FolderTree className="w-4 h-4 text-[#FF7A18] dark:text-[#FF941F] shrink-0" />
-        <span className="font-mono text-sm font-bold text-[#071A2D] dark:text-[#F5F7FA]">
-          {group.wbs_code}
-        </span>
+        <div className="flex items-center gap-2">
+          {isOpen ? (
+            <ChevronDown className="w-4 h-4 text-[#475569] dark:text-[#CBD5E1] shrink-0" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-[#475569] dark:text-[#CBD5E1] shrink-0" />
+          )}
+          <FolderTree className="w-4 h-4 text-[#FF7A18] dark:text-[#FF941F] shrink-0" />
+          <span className="font-mono text-sm font-bold text-[#071A2D] dark:text-[#F5F7FA]">
+            {group.wbs_code}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60 font-semibold">
+            {group.actual_progress}% Actual <span className="text-muted-foreground font-normal">/ {group.planned_progress}% Plan</span>
+          </span>
+          <span className={cn('text-[11px] font-mono font-bold', group.variance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>
+            ({group.variance > 0 ? `+${group.variance}` : group.variance}%)
+          </span>
+        </div>
+
         <span className="ml-auto flex items-center gap-3 text-xs text-[#475569] dark:text-[#CBD5E1] font-semibold">
           <span className="flex items-center gap-1">
             <Package className="w-3.5 h-3.5" />
@@ -94,29 +162,166 @@ function WBSGroupCard({ group }: { group: EnrichedGroup }) {
       {/* Expanded Activities */}
       {isOpen && (
         <div className="divide-y divide-slate-200/70 dark:divide-[#214766]/60 bg-white/70 dark:bg-[#071A2D]/80">
-          {group.activities.map((a) => (
-            <div
-              key={a.activity_id}
-              className="px-4 py-2.5 pl-12 flex items-center gap-3 text-sm hover:bg-slate-50 dark:hover:bg-[#0D2942] transition-colors"
-            >
-              <span className="font-mono text-xs font-bold text-[#0284C7] dark:text-[#38BDF8] w-24 shrink-0 truncate" title={a.activity_id}>
-                {a.activity_id}
-              </span>
-              <span className="flex-1 truncate font-medium text-[#071A2D] dark:text-[#F5F7FA]">
-                {a.activity_name}
-              </span>
-              {a.discipline && (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-50 dark:bg-orange-950/60 text-[#FF7A18] dark:text-[#FF941F] border border-orange-300 dark:border-orange-800/60 font-semibold shrink-0">
-                  {a.discipline}
-                </span>
-              )}
-              {a.planned_quantity !== null && (
-                <span className="text-xs text-[#475569] dark:text-[#CBD5E1] font-mono font-semibold shrink-0">
-                  {t('wbs.qty', { qty: a.planned_quantity })}
-                </span>
-              )}
-            </div>
-          ))}
+          {group.activities.map((a) => {
+            const pendingReq = pendingReopenMap.get(a.activity_id);
+            const isCompleted = a.execution_state === 'COMPLETED';
+            const actGates = qualityGatesMap.get(a.activity_id) || [];
+            const hasGates = actGates.length > 0;
+            const completedGatesCount = actGates.filter((g) => g.status === 'COMPLETED' || g.status === 'WAIVED').length;
+            const hasPendingHoldPoint = actGates.some(
+              (g) => g.gateType === 'HOLD_POINT' && g.required && (g.status === 'PENDING' || g.status === 'BLOCKED')
+            );
+            const hasBlockedGate = actGates.some((g) => g.status === 'BLOCKED');
+
+            return (
+              <div
+                key={a.activity_id}
+                className="px-4 py-2.5 pl-8 sm:pl-12 flex items-center justify-between gap-3 text-sm hover:bg-slate-50 dark:hover:bg-[#0D2942] transition-colors flex-wrap"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1 flex-wrap">
+                  <span
+                    className="font-mono text-xs font-bold text-[#0284C7] dark:text-[#38BDF8] w-24 shrink-0 truncate"
+                    title={a.activity_id}
+                  >
+                    {a.activity_id}
+                  </span>
+                  <span className="truncate font-medium text-[#071A2D] dark:text-[#F5F7FA]">
+                    {a.activity_name}
+                  </span>
+                  {a.discipline && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-50 dark:bg-orange-950/60 text-[#FF7A18] dark:text-[#FF941F] border border-orange-300 dark:border-orange-800/60 font-semibold shrink-0">
+                      {a.discipline}
+                    </span>
+                  )}
+                  {a.contractor_name && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60 font-semibold shrink-0"
+                      title={`Contractor: ${a.contractor_name}`}
+                    >
+                      {a.contractor_name}
+                    </span>
+                  )}
+                  {a.work_package_code && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/60 shrink-0"
+                      title={`Work Package: ${a.work_package_code}`}
+                    >
+                      {a.work_package_code}
+                    </span>
+                  )}
+
+                  {/* Quality Gate / Hold Point Status Badges */}
+                  {hasGates && (
+                    <button
+                      type="button"
+                      onClick={() => a.fullActivity && onOpenQualityModal(a.fullActivity)}
+                      className={cn(
+                        "text-[10px] px-2 py-0.5 rounded font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0 border",
+                        hasPendingHoldPoint
+                          ? "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-300 dark:border-rose-800"
+                          : hasBlockedGate
+                          ? "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-300 dark:border-rose-800"
+                          : completedGatesCount === actGates.length
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
+                          : "bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300 border-teal-300 dark:border-teal-800"
+                      )}
+                      title={`Quality Gates & ITP: ${completedGatesCount}/${actGates.length} Cleared - Click to view/manage`}
+                    >
+                      {hasPendingHoldPoint ? (
+                        <>
+                          <Lock className="w-3 h-3 text-rose-500" />
+                          <span>Hold Point: PENDING</span>
+                        </>
+                      ) : hasBlockedGate ? (
+                        <>
+                          <AlertCircle className="w-3 h-3 text-rose-500" />
+                          <span>Quality: BLOCKED</span>
+                        </>
+                      ) : completedGatesCount === actGates.length ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-500" />
+                          <span>Quality: {completedGatesCount}/{actGates.length} Cleared</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3 h-3 text-teal-500" />
+                          <span>Quality: {completedGatesCount}/{actGates.length}</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Downstream Compound Impact Badge */}
+                  {(() => {
+                    const actImpact = impactsMap.get(a.activity_id);
+                    if (!actImpact || (actImpact.impactLevel === 'LOW' && actImpact.totalDownstreamCount === 0)) return null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onInspectImpact(actImpact)}
+                        className={cn(
+                          "text-[10px] px-2 py-0.5 rounded font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0 border",
+                          actImpact.impactLevel === 'CRITICAL'
+                            ? "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300 border-red-300 dark:border-red-800"
+                            : actImpact.impactLevel === 'HIGH'
+                            ? "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                            : actImpact.impactLevel === 'MEDIUM'
+                            ? "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-300 dark:border-blue-800"
+                            : "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                        )}
+                        title={`Downstream Impact: ${actImpact.impactLevel} (${actImpact.totalDownstreamCount} activities affected across ${actImpact.impactedStageIds.length} stages) - Click to inspect`}
+                      >
+                        <GitFork className="w-3 h-3" />
+                        <span>Impact: {actImpact.impactLevel} ({actImpact.totalDownstreamCount})</span>
+                      </button>
+                    );
+                  })()}
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right font-mono text-xs">
+                    <span className="font-bold text-foreground">{a.actual_progress}%</span>
+                    <span className="text-muted-foreground text-[10px]"> / {a.planned_progress}%</span>
+                  </div>
+
+                  <ExecutionStateBadge state={a.execution_state || 'NOT_STARTED'} size="sm" />
+
+                  {a.planned_quantity !== null && (
+                    <span className="text-xs text-[#475569] dark:text-[#CBD5E1] font-mono font-semibold">
+                      {t('wbs.qty', { qty: a.planned_quantity })}
+                    </span>
+                  )}
+
+                  {/* Reopen Workflow Triggers */}
+                  {pendingReq ? (
+                    userRole === 'SUPERVISOR' ? (
+                      <button
+                        type="button"
+                        onClick={() => onReviewReopen(pendingReq)}
+                        className="text-[10px] font-bold px-2 py-1 rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
+                      >
+                        <ShieldAlert className="w-3 h-3" />
+                        Review Reopen
+                      </button>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/50 px-2 py-0.5 rounded border border-purple-200 dark:border-purple-800">
+                        Reopen Pending
+                      </span>
+                    )
+                  ) : isCompleted ? (
+                    <button
+                      type="button"
+                      onClick={() => a.fullActivity && onRequestReopen(a.fullActivity)}
+                      className="text-[10px] font-semibold px-2 py-1 rounded-md border border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40 transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <Unlock className="w-3 h-3" />
+                      Reopen
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -137,12 +342,79 @@ export default function WBSActivityExplorer({
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { currentProject, currentScheduleVersion, selectedStageId, setSelectedStageId } = useProject();
+  const { user } = useAuth();
 
   const [wbsData, setWbsData] = useState<WBSTreeResponse | null>(null);
   const [activities, setActivities] = useState<ScheduleActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Reopen Modal States
+  const [reopenModalActivity, setReopenModalActivity] = useState<ScheduleActivity | null>(null);
+  const [reviewModalRequest, setReviewModalRequest] = useState<ReopenRequest | null>(null);
+  const [pendingReopenRequests, setPendingReopenRequests] = useState<ReopenRequest[]>([]);
+
+  // Quality Gate Modal States
+  const [qualityGates, setQualityGates] = useState<QualityGate[]>([]);
+  const [qualityModalTargetActivity, setQualityModalTargetActivity] = useState<ScheduleActivity | null>(null);
+
+  // Downstream Compound Impact States
+  const [scheduleImpacts, setScheduleImpacts] = useState<CompoundImpact[]>([]);
+  const [impactModalTarget, setImpactModalTarget] = useState<CompoundImpact | null>(null);
+
+  const loadQualityGates = useCallback(async () => {
+    try {
+      const targetScheduleId = scheduleId || currentScheduleVersion.id;
+      const list = await qualityGatesApi.getGates({ scheduleId: targetScheduleId });
+      setQualityGates(list);
+    } catch {
+      // ignore
+    }
+  }, [scheduleId, currentScheduleVersion.id]);
+
+  useEffect(() => {
+    loadQualityGates();
+  }, [loadQualityGates]);
+
+  const loadReopenRequests = useCallback(async () => {
+    try {
+      const list = await reopenApi.getRequests({ status: 'PENDING' });
+      setPendingReopenRequests(list);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    loadReopenRequests();
+  }, [loadReopenRequests, currentProject.id]);
+
+  const pendingReopenMap = useMemo(() => {
+    const map = new Map<string, ReopenRequest>();
+    for (const r of pendingReopenRequests) {
+      map.set(r.activity_id, r);
+    }
+    return map;
+  }, [pendingReopenRequests]);
+
+  const qualityGatesMap = useMemo(() => {
+    const map = new Map<string, QualityGate[]>();
+    for (const g of qualityGates) {
+      const existing = map.get(g.activityId) || [];
+      existing.push(g);
+      map.set(g.activityId, existing);
+    }
+    return map;
+  }, [qualityGates]);
+
+  const impactsMap = useMemo(() => {
+    const map = new Map<string, CompoundImpact>();
+    for (const imp of scheduleImpacts) {
+      map.set(imp.activityId, imp);
+    }
+    return map;
+  }, [scheduleImpacts]);
 
   // Synchronize stage filter from URL params if present
   useEffect(() => {
@@ -152,34 +424,47 @@ export default function WBSActivityExplorer({
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const targetScheduleId = scheduleId || currentScheduleVersion.id;
-        const [tree, acts] = await Promise.all([
-          schedulesApi.getWbsTree(targetScheduleId),
-          schedulesApi.getActivities(targetScheduleId),
-        ]);
-        if (!cancelled) {
-          setWbsData(tree);
-          setActivities(acts);
-        }
-      } catch (err: unknown) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load WBS data');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  const loadActivities = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const targetScheduleId = scheduleId || currentScheduleVersion.id;
+      const [tree, acts, impacts] = await Promise.all([
+        schedulesApi.getWbsTree(targetScheduleId),
+        schedulesApi.getActivities(targetScheduleId),
+        impactApi.getScheduleImpacts(currentProject.id, targetScheduleId).catch(() => []),
+      ]);
+      setWbsData(tree);
+      setActivities(acts);
+      setScheduleImpacts(impacts || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load WBS data');
+    } finally {
+      setLoading(false);
     }
-
-    load();
-    return () => { cancelled = true; };
   }, [scheduleId, currentProject.id, currentScheduleVersion.id]);
+
+  useEffect(() => {
+    loadActivities();
+  }, [loadActivities]);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      loadActivities();
+      loadReopenRequests();
+      loadQualityGates();
+    };
+    window.addEventListener('setu:activity-progress-changed', handleUpdate);
+    window.addEventListener('setu:activity-state-changed', handleUpdate);
+    window.addEventListener('setu:reopen-changed', handleUpdate);
+    window.addEventListener('setu:quality-gate-changed', handleUpdate);
+    return () => {
+      window.removeEventListener('setu:activity-progress-changed', handleUpdate);
+      window.removeEventListener('setu:activity-state-changed', handleUpdate);
+      window.removeEventListener('setu:reopen-changed', handleUpdate);
+      window.removeEventListener('setu:quality-gate-changed', handleUpdate);
+    };
+  }, [loadActivities, loadReopenRequests, loadQualityGates]);
 
   // Build lookup map: activity_id → ScheduleActivity
   const activityMap = useMemo(() => {
@@ -190,20 +475,50 @@ export default function WBSActivityExplorer({
     return map;
   }, [activities]);
 
-  // Enrich WBS groups with joined activity names
+  // Enrich WBS groups with joined activity names, execution state, and weighted progress
   const enrichedGroups: EnrichedGroup[] = useMemo(() => {
     if (!wbsData) return [];
     return wbsData.wbs_groups.map((g: WBSGroup) => {
+      const groupFullActivities: ScheduleActivity[] = [];
+
       const enrichedActivities: EnrichedActivity[] = g.activities.map((wa) => {
         const full = activityMap.get(wa.activity_id);
+        if (full) groupFullActivities.push(full);
+
+        const progressInfo = full
+          ? deriveActivityProgress(full)
+          : { plannedProgress: 0, actualProgress: 0, variance: 0, effectiveWeight: 10 };
+
+        const execState: ExecutionState = full?.execution_state || (
+          progressInfo.actualProgress >= 100
+            ? 'COMPLETED'
+            : progressInfo.actualProgress > 0
+            ? 'IN_PROGRESS'
+            : 'NOT_STARTED'
+        );
+
         return {
           activity_id: wa.activity_id,
           activity_name: full?.activity_name ?? wa.activity_id,
           planned_quantity: wa.planned_quantity,
           discipline: full?.discipline ?? null,
           location: full?.location ?? null,
+          execution_state: execState,
+          baseline_pct_complete: full?.baseline_pct_complete || 0,
+          actual_progress: progressInfo.actualProgress,
+          planned_progress: progressInfo.plannedProgress,
+          variance: progressInfo.variance,
+          weight: progressInfo.effectiveWeight,
+          actual_start: full?.actual_start || null,
+          actual_finish: full?.actual_finish || null,
+          contractor_name: full?.contractor_name || null,
+          work_package_code: full?.work_package_code || null,
+          fullActivity: full,
         };
       });
+
+      const { totalWeight, plannedProgress, actualProgress, variance } =
+        calculateWeightedProgress(groupFullActivities);
 
       const quantities = enrichedActivities
         .map((a) => a.planned_quantity)
@@ -216,6 +531,10 @@ export default function WBSActivityExplorer({
         wbs_code: g.wbs_code,
         activities: enrichedActivities,
         totalQuantity,
+        total_weight: totalWeight,
+        actual_progress: actualProgress,
+        planned_progress: plannedProgress,
+        variance,
       };
     });
   }, [wbsData, activityMap]);
@@ -249,7 +568,9 @@ export default function WBSActivityExplorer({
         g.activities.some(
           (a) =>
             a.activity_id.toLowerCase().includes(lc) ||
-            a.activity_name.toLowerCase().includes(lc)
+            a.activity_name.toLowerCase().includes(lc) ||
+            (a.contractor_name && a.contractor_name.toLowerCase().includes(lc)) ||
+            (a.work_package_code && a.work_package_code.toLowerCase().includes(lc))
         )
     );
   }, [enrichedGroups, selectedStageId, currentProject.stages, searchTerm]);
@@ -420,10 +741,69 @@ export default function WBSActivityExplorer({
           </p>
         ) : (
           filteredGroups.map((group) => (
-            <WBSGroupCard key={group.wbs_code} group={group} />
+            <WBSGroupCard
+              key={group.wbs_code}
+              group={group}
+              onRequestReopen={setReopenModalActivity}
+              onReviewReopen={setReviewModalRequest}
+              onOpenQualityModal={setQualityModalTargetActivity}
+              onInspectImpact={(imp) => setImpactModalTarget(imp)}
+              pendingReopenMap={pendingReopenMap}
+              qualityGatesMap={qualityGatesMap}
+              impactsMap={impactsMap}
+              userRole={user?.role}
+            />
           ))
         )}
       </CardContent>
+
+      {/* Quality Gate Modal */}
+      {qualityModalTargetActivity && (
+        <QualityGateModal
+          isOpen={!!qualityModalTargetActivity}
+          onClose={() => setQualityModalTargetActivity(null)}
+          activityId={qualityModalTargetActivity.activity_id}
+          activityName={qualityModalTargetActivity.activity_name}
+          gates={qualityGatesMap.get(qualityModalTargetActivity.activity_id) || []}
+          userRole={user?.role}
+          onGateUpdated={() => {
+            loadQualityGates();
+            loadActivities();
+          }}
+        />
+      )}
+
+      {/* Reopen Workflow Modals */}
+      {reopenModalActivity && (
+        <ReopenRequestModal
+          activity={reopenModalActivity}
+          isOpen={!!reopenModalActivity}
+          onClose={() => setReopenModalActivity(null)}
+          onSuccess={() => {
+            loadReopenRequests();
+            loadActivities();
+          }}
+        />
+      )}
+
+      {reviewModalRequest && (
+        <ReopenReviewModal
+          request={reviewModalRequest}
+          isOpen={!!reviewModalRequest}
+          onClose={() => setReviewModalRequest(null)}
+          onReviewed={() => {
+            loadReopenRequests();
+            loadActivities();
+          }}
+        />
+      )}
+
+      {/* Compound Impact Inspection Modal */}
+      <CompoundImpactModal
+        isOpen={!!impactModalTarget}
+        onClose={() => setImpactModalTarget(null)}
+        impact={impactModalTarget}
+      />
     </Card>
   );
 }

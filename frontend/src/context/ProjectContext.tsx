@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import { calculateProjectProgress } from '@/lib/progressEngine';
+import { getActivitiesForCurrentSchedule } from '@/mockData';
 
 export interface ScheduleVersion {
   id: string;
@@ -155,7 +157,7 @@ export const DEMO_PROJECTS: Project[] = [
       {
         id: 'STG-ASSAM-5',
         stageNumber: 5,
-        name: 'Stage 5 — Pre-Commissioning & Hydrotest',
+        name: 'Stage 5 — Terminal Stations & Commissioning',
         discipline: 'COMMISSIONING',
         status: 'NOT_STARTED',
         plannedPct: 0,
@@ -420,7 +422,26 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     return DEMO_PROJECTS[0].id;
   });
 
-  const currentProject =
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => setRefreshTrigger((prev) => prev + 1);
+    window.addEventListener('setu:activity-progress-changed', handleUpdate);
+    window.addEventListener('setu:activity-state-changed', handleUpdate);
+    window.addEventListener('setu:reopen-changed', handleUpdate);
+    window.addEventListener('setu-project-changed', handleUpdate);
+    window.addEventListener('setu-version-changed', handleUpdate);
+
+    return () => {
+      window.removeEventListener('setu:activity-progress-changed', handleUpdate);
+      window.removeEventListener('setu:activity-state-changed', handleUpdate);
+      window.removeEventListener('setu:reopen-changed', handleUpdate);
+      window.removeEventListener('setu-project-changed', handleUpdate);
+      window.removeEventListener('setu-version-changed', handleUpdate);
+    };
+  }, []);
+
+  const rawProject =
     projects.find((p) => p.id === currentProjectId) || projects[0];
 
   const [currentScheduleVersionId, setCurrentScheduleVersionIdState] =
@@ -428,18 +449,53 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       const saved = localStorage.getItem(SELECTED_VERSION_KEY);
       if (
         saved &&
-        currentProject.scheduleVersions.some((v) => v.id === saved)
+        rawProject.scheduleVersions.some((v) => v.id === saved)
       ) {
         return saved;
       }
-      const activeVer = currentProject.scheduleVersions.find((v) => v.isCurrent);
-      return activeVer ? activeVer.id : currentProject.scheduleVersions[0].id;
+      const activeVer = rawProject.scheduleVersions.find((v) => v.isCurrent);
+      return activeVer ? activeVer.id : rawProject.scheduleVersions[0].id;
     });
 
   const currentScheduleVersion =
-    currentProject.scheduleVersions.find(
+    rawProject.scheduleVersions.find(
       (v) => v.id === currentScheduleVersionId
-    ) || currentProject.scheduleVersions[0];
+    ) || rawProject.scheduleVersions[0];
+
+  const currentProject = useMemo(() => {
+    const pId = rawProject.id;
+    const sId = currentScheduleVersionId;
+    const acts = getActivitiesForCurrentSchedule(sId, pId);
+    const summary = calculateProjectProgress(acts, rawProject.stages, sId, pId);
+
+    const updatedStages: ProjectStage[] = rawProject.stages.map((stg) => {
+      const stageSum = summary.stages.find((s) => s.stage_id === stg.id);
+      if (!stageSum) return stg;
+      return {
+        ...stg,
+        plannedPct: stageSum.planned_progress,
+        actualPct: stageSum.actual_progress,
+        variance: stageSum.variance,
+        status: stageSum.status,
+        activitiesCount: stageSum.activities_count,
+      };
+    });
+
+    const activeStageName =
+      updatedStages.find((s) => s.status === 'ACTIVE' || s.status === 'IN_PROGRESS')?.name ||
+      updatedStages[0]?.name ||
+      rawProject.activeStage;
+
+    return {
+      ...rawProject,
+      overallPlanned: summary.overall_planned,
+      overallActual: summary.overall_actual,
+      variance: summary.variance,
+      criticalActivities: summary.critical_activities,
+      activeStage: activeStageName,
+      stages: updatedStages,
+    };
+  }, [rawProject, currentScheduleVersionId, refreshTrigger]);
 
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
 

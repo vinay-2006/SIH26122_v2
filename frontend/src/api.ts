@@ -173,6 +173,14 @@ export const DISCIPLINES: Discipline[] = [
   'HSE',
 ];
 
+export type ExecutionState =
+  | 'NOT_STARTED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'ON_HOLD'
+  | 'REOPEN_REQUESTED'
+  | 'REOPENED';
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -214,6 +222,7 @@ export interface ExecutionEvent {
   is_escalated?: boolean | null;
   priority_rank?: number | null;
   field_provenance?: Record<string, FieldProvenance | FieldProvenanceSource> | null;
+  is_completed_activity_target?: boolean;
 }
 
 export interface SourceReference {
@@ -230,9 +239,11 @@ export interface CandidateMatch {
   candidate_id: string;
   event_id: string;
   schedule_id: string;
+  project_id?: string;
   activity_id: string;
+  stage_id?: string;
   rank_order: 1 | 2 | 3;
-  match_tier: 'EXACT' | 'SEMANTIC' | 'FUZZY' | 'DISCIPLINE_LOCATION' | string | null;
+  match_tier: 'EXACT' | 'SEMANTIC' | 'FUZZY' | 'DISCIPLINE_LOCATION' | 'COMPLETED_PROTECTED' | 'STAGE_COMPLETED' | string | null;
   composite_confidence: number;
   semantic_score: number | null;
   fuzzy_score: number | null;
@@ -240,6 +251,45 @@ export interface CandidateMatch {
   discipline_score: number | null;
   supporting_signals: string | null;
   disqualifying_signals: string | null;
+  execution_state?: ExecutionState;
+  eligibility_explanation?: string;
+  eligibility_reasons?: string[];
+  stage_name?: string;
+  wbs_code?: string;
+  is_eligible?: boolean;
+  is_completed_protected?: boolean;
+  is_stage_completed?: boolean;
+}
+
+export interface ReopenRequest {
+  request_id?: string;
+  reopen_id?: string;
+  activity_id: string;
+  activity_name?: string;
+  schedule_id: string;
+  project_id: string;
+  event_id?: string | null;
+  requested_by?: string;
+  requested_by_role?: UserRole;
+  requested_by_name?: string;
+  requested_at?: string;
+  created_at?: string;
+  reason: string;
+  justification?: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  original_actual_finish?: string | null;
+  original_actual_pct?: number | null;
+  evidence_ref?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_comments?: string | null;
+  supervisor_notes?: string | null;
+  locked_actuals_summary?: {
+    actual_start: string | null;
+    actual_finish: string | null;
+    actual_pct: number;
+    actual_qty?: number | null;
+  };
 }
 
 export interface ConflictRecord {
@@ -275,6 +325,74 @@ export interface PlannerDecision {
   decided_at: string;
 }
 
+export interface Contractor {
+  id: string;
+  projectId: string;
+  name: string;
+  code: string;
+  description?: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'ON_HOLD';
+  contactName?: string;
+  contactRole?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  active: boolean;
+}
+
+export interface WorkPackage {
+  id: string;
+  projectId: string;
+  scheduleId: string;
+  contractorId: string;
+  name: string;
+  code: string;
+  description?: string;
+  discipline: Discipline | string;
+  stageId?: string;
+  wbsId?: string;
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ON_HOLD';
+  plannedStart?: string;
+  plannedFinish?: string;
+  activityIds: string[];
+}
+
+export type QualityGateType = 'HOLD_POINT' | 'WITNESS_POINT' | 'REVIEW_POINT' | 'ITP_CHECK';
+export type QualityGateStatus = 'PENDING' | 'READY' | 'COMPLETED' | 'BLOCKED' | 'WAIVED';
+
+export interface QualityGate {
+  id: string;
+  projectId: string;
+  scheduleId: string;
+  stageId?: string;
+  wbsId?: string;
+  activityId: string;
+  gateType: QualityGateType;
+  name: string;
+  description: string;
+  status: QualityGateStatus;
+  required: boolean;
+  sequence: number;
+  ownerRole?: UserRole | 'QA_QC_INSPECTOR' | string;
+  dueDate?: string;
+  completedAt?: string | null;
+  completedBy?: string | null;
+  evidenceRequired: boolean;
+  evidenceIds?: string[];
+  waiverJustification?: string | null;
+  waivedBy?: string | null;
+  waivedAt?: string | null;
+}
+
+export interface QualityGateSummary {
+  totalGates: number;
+  completedGates: number;
+  pendingRequiredHoldPoint: boolean;
+  blockedRequiredHoldPoint: boolean;
+  hasBlockingHoldPoint: boolean;
+  blockingHoldPointName?: string;
+  gates: QualityGate[];
+}
+
 export interface ScheduleActivity {
   activity_id: string;
   schedule_id: string;
@@ -290,7 +408,50 @@ export interface ScheduleActivity {
   baseline_pct_complete: number;
   total_float?: number | null;
   is_critical?: boolean | null;
+  execution_state?: ExecutionState;
+  actual_start?: string | null;
+  actual_finish?: string | null;
+  actual_pct_complete?: number | null;
+  stage_id?: string | null;
+  stage_name?: string | null;
+  is_stage_completed?: boolean;
+  weight?: number;
+  contractor_id?: string | null;
+  contractor_name?: string | null;
+  work_package_id?: string | null;
+  work_package_code?: string | null;
+  work_package_name?: string | null;
 }
+
+import type {
+  ActivityProgressSummary,
+  WBSProgressSummary,
+  StageProgressSummary,
+  ProjectProgressSummary,
+  WorkPackageProgressSummary,
+  ContractorProgressSummary,
+} from '@/lib/progressEngine';
+
+export type {
+  ActivityProgressSummary,
+  WBSProgressSummary,
+  StageProgressSummary,
+  ProjectProgressSummary,
+  WorkPackageProgressSummary,
+  ContractorProgressSummary,
+};
+
+import type {
+  ImpactLevel,
+  DownstreamImpactedActivity,
+  CompoundImpact,
+} from './lib/impactEngine';
+
+export type {
+  ImpactLevel,
+  DownstreamImpactedActivity,
+  CompoundImpact,
+};
 
 export interface ScheduleDependency {
   dependency_id: string;
@@ -627,6 +788,27 @@ import {
   MOCK_DYNAMIC_EVENTS,
   extractMockClaimFields,
   TODAY,
+  runEligibilityFirstMatching,
+  getMockReopenRequests,
+  createMockReopenRequest,
+  reviewMockReopenRequest,
+  updateActivityExecutionState,
+  recordApprovedActualProgress,
+  getMockProjectProgress,
+  getMockStageProgress,
+  getMockWBSProgress,
+  getMockActivityProgress,
+  getMockContractors,
+  getMockWorkPackages,
+  getMockContractorProgress,
+  getMockWorkPackageProgress,
+  getMockQualityGates,
+  completeMockQualityGate,
+  waiveMockQualityGate,
+  getActivityQualitySummary,
+  getMockCompoundImpacts,
+  getMockActivityImpact,
+  getMockScheduleDependencies,
 } from './mockData';
 
 const MOCK_AUDIT_LOGS: AuditLogEntry[] = [
@@ -755,6 +937,20 @@ export const claimsApi = {
       await sleep(1000);
       const extracted = extractMockClaimFields(text);
       const activeSched = getActiveScheduleVersionId();
+      const allActs = getActivitiesForCurrentSchedule(activeSched);
+      const matchedTarget = allActs.find(
+        (a) =>
+          text.toLowerCase().includes(a.activity_id.toLowerCase()) ||
+          (a.asset_tag && text.toLowerCase().includes(a.asset_tag.toLowerCase())) ||
+          (a.activity_name && text.toLowerCase().includes(a.activity_name.toLowerCase().slice(0, 15)))
+      );
+
+      const reportedActId = matchedTarget?.activity_id || extracted.activity_id || null;
+      const discipline = matchedTarget?.discipline || extracted.discipline || 'CIVIL';
+      const location = matchedTarget?.location || extracted.location || null;
+      const assetTag = matchedTarget?.asset_tag || extracted.asset_tag || null;
+      const isCompleted = matchedTarget?.execution_state === 'COMPLETED';
+
       const ev: ExecutionEvent = {
         event_id: `evt-${Date.now()}`,
         document_id: evidenceFile ? `doc-${Date.now()}` : null,
@@ -763,24 +959,47 @@ export const claimsApi = {
         raw_claim_text: text,
         input_channel: 'TYPED_TEXT',
         language_detected: 'en',
-        reported_activity_id: extracted.discipline === 'CIVIL' ? 'ACT-201' : null,
-        matched_activity_id: null,
-        discipline: extracted.discipline,
+        reported_activity_id: reportedActId,
+        matched_activity_id: matchedTarget?.activity_id || null,
+        discipline,
         action: extracted.event_type,
         event_type: extracted.event_type,
         claim_mode: extracted.claimed_quantity ? 'INCREMENTAL_QUANTITY' : 'CUMULATIVE_PCT',
-        asset_tag: null,
-        location: null,
+        asset_tag: assetTag,
+        location,
         claimed_quantity: extracted.claimed_quantity,
         claimed_uom: extracted.claimed_uom,
         claimed_pct: extracted.claimed_pct,
         delay_reason: null,
         supervisor_id: null,
         photo_path: evidenceFile ? `/uploads/${evidenceFile.name}` : null,
-        status: 'EXTRACTED',
+        status: isCompleted ? 'REVIEW_REQUIRED' : 'EXTRACTED',
         created_at: new Date().toISOString(),
         clarification_status: extracted.clarification_status,
         clarification_question: extracted.clarification_question,
+        is_completed_activity_target: isCompleted,
+        field_provenance: {
+          activity_id: {
+            field_name: 'activity_id',
+            source: 'AI_EXTRACTED',
+            source_detail: reportedActId || 'Pending Matching',
+          },
+          discipline: {
+            field_name: 'discipline',
+            source: matchedTarget ? 'SCHEDULE_AUTO_FILLED' : 'AI_EXTRACTED',
+            source_detail: discipline,
+          },
+          location: {
+            field_name: 'location',
+            source: 'SCHEDULE_AUTO_FILLED',
+            source_detail: location || 'Project Site',
+          },
+          asset_tag: {
+            field_name: 'asset_tag',
+            source: 'SCHEDULE_AUTO_FILLED',
+            source_detail: assetTag || 'Master Asset',
+          },
+        },
       };
       MOCK_DYNAMIC_EVENTS.set(ev.event_id, ev);
       return { event: ev };
@@ -898,9 +1117,15 @@ export const claimsApi = {
 
   match: async (eventId: string): Promise<{ status: ClaimStatus; matches: CandidateMatch[] }> => {
     if (USE_MOCKS) {
-      await sleep(1000);
-      const dataset = getDatasetForCurrentProject();
-      return { status: 'MATCHED', matches: dataset.candidates };
+      await sleep(600);
+      const allEvents = getAllEventsForCurrentProject();
+      const ev = MOCK_DYNAMIC_EVENTS.get(eventId) || allEvents.find((e) => e.event_id === eventId);
+      const res = runEligibilityFirstMatching(ev);
+      if (ev) {
+        ev.status = res.status;
+        MOCK_DYNAMIC_EVENTS.set(eventId, ev);
+      }
+      return res;
     }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/match`, { method: 'POST' });
     return { status: data.status, matches: data.candidates || [] };
@@ -962,9 +1187,11 @@ export const claimsApi = {
 
   getCandidates: async (eventId: string): Promise<CandidateMatch[]> => {
     if (USE_MOCKS) {
-      await sleep(300);
-      const dataset = getDatasetForCurrentProject();
-      return dataset.candidates;
+      await sleep(200);
+      const allEvents = getAllEventsForCurrentProject();
+      const ev = MOCK_DYNAMIC_EVENTS.get(eventId) || allEvents.find((e) => e.event_id === eventId);
+      const res = runEligibilityFirstMatching(ev);
+      return res.matches;
     }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/candidates`);
     return data.candidates || [];
@@ -1186,6 +1413,7 @@ export const decisionsApi = {
   }): Promise<PlannerDecision> => {
     if (USE_MOCKS) {
       await sleep(800);
+      recordApprovedActualProgress(payload.selected_activity_id, payload.approved_pct, payload.approved_qty, payload.action);
       return {
         decision_id: `dec-${Date.now()}`,
         event_id: payload.event_id,
@@ -1221,6 +1449,201 @@ export const decisionsApi = {
       return getDatasetForCurrentProject().decisions;
     }
     return apiFetch('/api/v1/decisions?limit=10');
+  },
+};
+
+export const progressApi = {
+  getProjectProgress: async (projectId?: string, scheduleId?: string): Promise<ProjectProgressSummary> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockProjectProgress(pId, sId);
+    }
+    const qs = new URLSearchParams();
+    if (projectId) qs.set('project_id', projectId);
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    return apiFetch<ProjectProgressSummary>(`/api/v1/progress/project?${qs.toString()}`);
+  },
+
+  getStageProgress: async (stageId?: string, projectId?: string, scheduleId?: string): Promise<StageProgressSummary[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockStageProgress(pId, sId, stageId);
+    }
+    const qs = new URLSearchParams();
+    if (stageId) qs.set('stage_id', stageId);
+    if (projectId) qs.set('project_id', projectId);
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    return apiFetch<StageProgressSummary[]>(`/api/v1/progress/stages?${qs.toString()}`);
+  },
+
+  getWbsProgress: async (scheduleId?: string, projectId?: string): Promise<WBSProgressSummary[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockWBSProgress(pId, sId);
+    }
+    const qs = new URLSearchParams();
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    if (projectId) qs.set('project_id', projectId);
+    return apiFetch<WBSProgressSummary[]>(`/api/v1/progress/wbs?${qs.toString()}`);
+  },
+
+  getActivityProgress: async (activityId: string, scheduleId?: string, projectId?: string): Promise<ActivityProgressSummary | null> => {
+    if (USE_MOCKS) {
+      await sleep(100);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockActivityProgress(activityId, pId, sId);
+    }
+    const qs = new URLSearchParams();
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    if (projectId) qs.set('project_id', projectId);
+    return apiFetch<ActivityProgressSummary>(`/api/v1/progress/activities/${encodeURIComponent(activityId)}?${qs.toString()}`);
+  },
+};
+
+export const contractorsApi = {
+  getContractors: async (projectId?: string): Promise<Contractor[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      return getMockContractors(pId);
+    }
+    const qs = new URLSearchParams();
+    if (projectId) qs.set('project_id', projectId);
+    return apiFetch<Contractor[]>(`/api/v1/contractors?${qs.toString()}`);
+  },
+
+  getWorkPackages: async (projectId?: string, scheduleId?: string): Promise<WorkPackage[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockWorkPackages(pId, sId);
+    }
+    const qs = new URLSearchParams();
+    if (projectId) qs.set('project_id', projectId);
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    return apiFetch<WorkPackage[]>(`/api/v1/work-packages?${qs.toString()}`);
+  },
+
+  getContractorProgress: async (projectId?: string, scheduleId?: string): Promise<ContractorProgressSummary[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockContractorProgress(pId, sId);
+    }
+    const qs = new URLSearchParams();
+    if (projectId) qs.set('project_id', projectId);
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    return apiFetch<ContractorProgressSummary[]>(`/api/v1/progress/contractors?${qs.toString()}`);
+  },
+
+  getWorkPackageProgress: async (contractorId?: string, projectId?: string, scheduleId?: string): Promise<WorkPackageProgressSummary[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getMockWorkPackageProgress(pId, sId, contractorId);
+    }
+    const qs = new URLSearchParams();
+    if (contractorId) qs.set('contractor_id', contractorId);
+    if (projectId) qs.set('project_id', projectId);
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    return apiFetch<WorkPackageProgressSummary[]>(`/api/v1/progress/work-packages?${qs.toString()}`);
+  },
+};
+
+export const qualityGatesApi = {
+  getGates: async (params?: { projectId?: string; scheduleId?: string; activityId?: string }): Promise<QualityGate[]> => {
+    if (USE_MOCKS) {
+      await sleep(100);
+      const pId = params?.projectId || getActiveProjectId();
+      const sId = params?.scheduleId || getActiveScheduleVersionId();
+      return getMockQualityGates(pId, sId, params?.activityId);
+    }
+    const qs = new URLSearchParams();
+    if (params?.projectId) qs.set('project_id', params.projectId);
+    if (params?.scheduleId) qs.set('schedule_id', params.scheduleId);
+    if (params?.activityId) qs.set('activity_id', params.activityId);
+    return apiFetch<QualityGate[]>(`/api/v1/quality-gates?${qs.toString()}`);
+  },
+
+  getQualitySummary: async (activityId: string, projectId?: string, scheduleId?: string) => {
+    if (USE_MOCKS) {
+      await sleep(80);
+      const pId = projectId || getActiveProjectId();
+      const sId = scheduleId || getActiveScheduleVersionId();
+      return getActivityQualitySummary(activityId, pId, sId);
+    }
+    const qs = new URLSearchParams();
+    if (projectId) qs.set('project_id', projectId);
+    if (scheduleId) qs.set('schedule_id', scheduleId);
+    return apiFetch<{
+      totalGates: number;
+      completedGates: number;
+      pendingRequiredHoldPoint: boolean;
+      blockedRequiredHoldPoint: boolean;
+      hasBlockingHoldPoint: boolean;
+      blockingHoldPointName?: string;
+      gates: QualityGate[];
+    }>(`/api/v1/quality-gates/summary/${encodeURIComponent(activityId)}?${qs.toString()}`);
+  },
+
+  completeGate: async (gateId: string, completedBy = 'usr-supervisor-01', evidenceId?: string): Promise<QualityGate> => {
+    if (USE_MOCKS) {
+      await sleep(250);
+      const updated = completeMockQualityGate(gateId, completedBy, evidenceId);
+      MOCK_AUDIT_LOGS.unshift({
+        log_id: Date.now(),
+        entity_type: 'quality_gate',
+        entity_id: gateId,
+        action: 'QUALITY_GATE_COMPLETED',
+        actor_id: completedBy,
+        before_state: JSON.stringify({ gate_id: gateId, status: 'PENDING' }),
+        after_state: JSON.stringify({ gate_id: gateId, status: 'COMPLETED', completed_at: updated.completedAt }),
+        payload_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+        previous_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
+        current_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
+        timestamp: new Date().toISOString(),
+      });
+      return updated;
+    }
+    return apiFetch<QualityGate>(`/api/v1/quality-gates/${encodeURIComponent(gateId)}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ completed_by: completedBy, evidence_id: evidenceId }),
+    });
+  },
+
+  waiveGate: async (gateId: string, justification: string, waivedBy = 'usr-supervisor-01'): Promise<QualityGate> => {
+    if (USE_MOCKS) {
+      await sleep(250);
+      const updated = waiveMockQualityGate(gateId, justification, waivedBy);
+      MOCK_AUDIT_LOGS.unshift({
+        log_id: Date.now(),
+        entity_type: 'quality_gate',
+        entity_id: gateId,
+        action: 'QUALITY_GATE_WAIVED',
+        actor_id: waivedBy,
+        before_state: JSON.stringify({ gate_id: gateId, status: 'PENDING' }),
+        after_state: JSON.stringify({ gate_id: gateId, status: 'WAIVED', justification, waived_at: updated.waivedAt }),
+        payload_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
+        previous_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
+        current_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+        timestamp: new Date().toISOString(),
+      });
+      return updated;
+    }
+    return apiFetch<QualityGate>(`/api/v1/quality-gates/${encodeURIComponent(gateId)}/waive`, {
+      method: 'POST',
+      body: JSON.stringify({ justification, waived_by: waivedBy }),
+    });
   },
 };
 
@@ -1347,8 +1770,6 @@ export interface ActivityTimelineItem {
   actual_quantity?: number | null;
 }
 
-export type ExecutionState = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
-
 export interface ActivitySummary {
   activity_id: string;
   activity_name: string;
@@ -1416,13 +1837,15 @@ export const activitiesApi = {
       let filtered = acts.map((a): ActivitySummary => {
         const isCrit = a.is_critical ?? null;
         const totalFloat = a.total_float ?? null;
-        const actualStart = a.baseline_pct_complete > 0 ? a.planned_start : null;
-        const actualPct = a.baseline_pct_complete > 0 ? a.baseline_pct_complete : null;
-        let execState: ExecutionState = 'NOT_STARTED';
-        if (actualPct !== null && actualPct >= 100) execState = 'COMPLETED';
-        else if (actualStart) execState = 'IN_PROGRESS';
+        const actualStart = a.actual_start || (a.baseline_pct_complete > 0 ? a.planned_start : null);
+        const actualPct = a.actual_pct_complete !== undefined ? a.actual_pct_complete : (a.baseline_pct_complete > 0 ? a.baseline_pct_complete : null);
+        let execState: ExecutionState = a.execution_state || 'NOT_STARTED';
+        if (!a.execution_state) {
+          if (actualPct !== null && actualPct >= 100) execState = 'COMPLETED';
+          else if (actualStart) execState = 'IN_PROGRESS';
+        }
 
-        const hasChg = a.baseline_pct_complete > 0;
+        const hasChg = a.baseline_pct_complete > 0 || execState !== 'NOT_STARTED';
         return {
           activity_id: a.activity_id,
           activity_name: a.activity_name,
@@ -1437,7 +1860,7 @@ export const activitiesApi = {
           uom: a.uom,
           baseline_pct_complete: a.baseline_pct_complete,
           actual_start: actualStart,
-          actual_finish: execState === 'COMPLETED' ? a.planned_finish : null,
+          actual_finish: a.actual_finish || (execState === 'COMPLETED' ? a.planned_finish : null),
           actual_pct_complete: actualPct,
           execution_state: execState,
           is_critical: isCrit,
@@ -1555,69 +1978,162 @@ export const activitiesApi = {
       const matchedEv = allEvents.find((e) => e.matched_activity_id === activityId || e.reported_activity_id === activityId) || allEvents[0];
       const schedId = scheduleIdArg || getActiveScheduleVersionId();
 
-      const mockTimeline: ActivityTimelineItem[] = [
-        {
-          type: 'execution_event',
-          event_id: matchedEv?.event_id || 'evt-101',
-          schedule_id: schedId,
-          event_date: matchedEv?.event_date || TODAY,
-          raw_claim_text: matchedEv?.raw_claim_text || 'Daily execution progress claim logged for work package.',
-          claim_mode: matchedEv?.claim_mode || 'CUMULATIVE_PCT',
-          claimed_pct: matchedEv?.claimed_pct ?? 75,
-          claimed_quantity: matchedEv?.claimed_quantity ?? null,
-          delay_reason: matchedEv?.delay_reason ?? null,
-          status: matchedEv?.status || 'REVIEW_REQUIRED',
-          timestamp: matchedEv?.created_at || new Date().toISOString(),
-          source_references: [
+      const isCompletedOrReopened =
+        activity?.execution_state === 'COMPLETED' ||
+        activity?.execution_state === 'REOPENED' ||
+        activity?.execution_state === 'REOPEN_REQUESTED' ||
+        activity?.activity_id === 'ACT-ASSAM-401';
+
+      const mockTimeline: ActivityTimelineItem[] = isCompletedOrReopened
+        ? [
             {
-              reference_id: 'REF-001',
-              file_name: `${activity?.discipline || 'Civil'}_Shift_Report.pdf`,
-              sheet_name: 'Field Execution',
-              row_cell_ref: 'Row 14',
-              message_id: null,
-              raw_snippet: `Work on ${activity?.activity_name || activityId} progressed to ${activity?.baseline_pct_complete || 50}%.`,
+              type: 'approved_actual',
+              actual_id: `actl-hist-${activityId}`,
+              decision_id: `dec-close-${activityId}`,
+              event_id: `evt-comp-${activityId}`,
+              schedule_id: schedId,
+              activity_id: activityId,
+              actual_start: activity?.actual_start || '2026-09-01',
+              actual_finish: activity?.actual_finish || '2026-09-08',
+              actual_pct_complete: 100,
+              actual_quantity: activity?.planned_quantity || null,
+              timestamp: '2026-09-08T18:00:00.000Z',
             },
-          ],
-        },
-        {
-          type: 'planner_decision',
-          decision_id: 'dec-102',
-          event_id: matchedEv?.event_id || 'evt-101',
-          selected_activity_id: activityId,
-          action: 'APPROVE',
-          approved_pct: activity?.baseline_pct_complete || 75,
-          approved_qty: null,
-          planner_id: 'usr-supervisor-01',
-          justification: 'Verified against QA/QC physical inspection sign-off certificate.',
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-        },
-        {
-          type: 'approved_actual',
-          actual_id: 'actl-102',
-          decision_id: 'dec-102',
-          event_id: matchedEv?.event_id || 'evt-101',
-          schedule_id: schedId,
-          activity_id: activityId,
-          actual_start: activity?.planned_start || '2026-09-01',
-          actual_finish: activity?.baseline_pct_complete >= 100 ? activity?.planned_finish : null,
-          actual_pct_complete: activity?.baseline_pct_complete || 75,
-          actual_quantity: null,
-          timestamp: new Date(Date.now() - 3590000).toISOString(),
-        },
-      ];
+            {
+              type: 'planner_decision',
+              decision_id: `dec-close-${activityId}`,
+              event_id: `evt-comp-${activityId}`,
+              selected_activity_id: activityId,
+              action: 'APPROVE',
+              approved_pct: 100,
+              approved_qty: activity?.planned_quantity || null,
+              planner_id: 'usr-supervisor-01',
+              justification: 'Completed SCADA RTU & Solar Power Skid Installation signed off and QA/QC inspection certificate verified. Authoritative Actual Finish locked.',
+              timestamp: '2026-09-08T17:30:00.000Z',
+            },
+            {
+              type: 'execution_event',
+              event_id: `evt-comp-${activityId}`,
+              schedule_id: schedId,
+              event_date: '2026-09-08',
+              raw_claim_text: `Installation of ${activity?.activity_name || activityId} completed to 100% on site. Solar power skid energized.`,
+              claim_mode: 'CUMULATIVE_PCT',
+              claimed_pct: 100,
+              claimed_quantity: activity?.planned_quantity || null,
+              delay_reason: null,
+              status: 'APPROVED',
+              timestamp: '2026-09-08T16:00:00.000Z',
+              source_references: [
+                {
+                  reference_id: 'REF-COMP-01',
+                  file_name: `${activity?.discipline || 'Electrical'}_Commissioning_DPR.pdf`,
+                  sheet_name: 'Completion Sign-off',
+                  row_cell_ref: 'Row 42',
+                  message_id: null,
+                  raw_snippet: `Final handover signoff for ${activity?.activity_name || activityId}. 100% complete.`,
+                },
+              ],
+            },
+            ...(activity?.execution_state === 'REOPEN_REQUESTED' || activity?.execution_state === 'REOPENED'
+              ? [
+                  {
+                    type: 'execution_event' as const,
+                    event_id: `evt-reopen-${activityId}`,
+                    schedule_id: schedId,
+                    event_date: TODAY,
+                    raw_claim_text: `Activity Reopen Request: Additional instrumentation integration required for ${activity?.activity_name || activityId}.`,
+                    claim_mode: 'CUMULATIVE_PCT',
+                    claimed_pct: activity?.actual_pct_complete ?? 100,
+                    claimed_quantity: null,
+                    delay_reason: null,
+                    status: 'REOPEN_REQUESTED',
+                    timestamp: new Date(Date.now() - 3600000).toISOString(),
+                  },
+                ]
+              : []),
+            ...(activity?.execution_state === 'REOPENED'
+              ? [
+                  {
+                    type: 'planner_decision' as const,
+                    decision_id: `dec-reopen-${activityId}`,
+                    event_id: `evt-reopen-${activityId}`,
+                    selected_activity_id: activityId,
+                    action: 'APPROVE',
+                    approved_pct: activity?.actual_pct_complete ?? 100,
+                    approved_qty: null,
+                    planner_id: 'usr-supervisor-01',
+                    justification: 'Supervisor approved Reopen Request. Previous Actual Finish (2026-09-08) & 100% completion remain traceable in history. Activity unlocked for new progress claims.',
+                    timestamp: new Date(Date.now() - 1800000).toISOString(),
+                  },
+                ]
+              : []),
+          ]
+        : [
+            {
+              type: 'execution_event',
+              event_id: matchedEv?.event_id || 'evt-101',
+              schedule_id: schedId,
+              event_date: matchedEv?.event_date || TODAY,
+              raw_claim_text: matchedEv?.raw_claim_text || 'Daily execution progress claim logged for work package.',
+              claim_mode: matchedEv?.claim_mode || 'CUMULATIVE_PCT',
+              claimed_pct: matchedEv?.claimed_pct ?? 75,
+              claimed_quantity: matchedEv?.claimed_quantity ?? null,
+              delay_reason: matchedEv?.delay_reason ?? null,
+              status: matchedEv?.status || 'REVIEW_REQUIRED',
+              timestamp: matchedEv?.created_at || new Date().toISOString(),
+              source_references: [
+                {
+                  reference_id: 'REF-001',
+                  file_name: `${activity?.discipline || 'Civil'}_Shift_Report.pdf`,
+                  sheet_name: 'Field Execution',
+                  row_cell_ref: 'Row 14',
+                  message_id: null,
+                  raw_snippet: `Work on ${activity?.activity_name || activityId} progressed to ${activity?.baseline_pct_complete || 50}%.`,
+                },
+              ],
+            },
+            {
+              type: 'planner_decision',
+              decision_id: 'dec-102',
+              event_id: matchedEv?.event_id || 'evt-101',
+              selected_activity_id: activityId,
+              action: 'APPROVE',
+              approved_pct: activity?.baseline_pct_complete || 75,
+              approved_qty: null,
+              planner_id: 'usr-supervisor-01',
+              justification: 'Verified against QA/QC physical inspection sign-off certificate.',
+              timestamp: new Date(Date.now() - 3600000).toISOString(),
+            },
+            {
+              type: 'approved_actual',
+              actual_id: 'actl-102',
+              decision_id: 'dec-102',
+              event_id: matchedEv?.event_id || 'evt-101',
+              schedule_id: schedId,
+              activity_id: activityId,
+              actual_start: activity?.planned_start || '2026-09-01',
+              actual_finish: activity?.baseline_pct_complete >= 100 ? activity?.planned_finish : null,
+              actual_pct_complete: activity?.baseline_pct_complete || 75,
+              actual_quantity: null,
+              timestamp: new Date(Date.now() - 3590000).toISOString(),
+            },
+          ];
+
       return {
         activity: activity || null,
         timeline: mockTimeline,
         history: [
           {
-            timestamp: new Date(Date.now() - 7200000).toISOString(),
-            raw_claim_text: matchedEv?.raw_claim_text || `Field report for ${activity?.activity_name || activityId}`,
-            input_channel: matchedEv?.input_channel || 'TYPED_TEXT',
-            claimed_pct: matchedEv?.claimed_pct ?? 75,
+            timestamp: '2026-09-08T16:00:00.000Z',
+            raw_claim_text: isCompletedOrReopened
+              ? `Handover sign-off for ${activity?.activity_name || activityId} (100% Complete)`
+              : matchedEv?.raw_claim_text || `Field report for ${activity?.activity_name || activityId}`,
+            input_channel: 'TYPED_TEXT' as InputChannel,
+            claimed_pct: 100,
             claimed_qty: null,
-            status: matchedEv?.status || 'REVIEW_REQUIRED',
-            supervisor_action: 'PENDING',
-            actor: 'Site Engineer (Daily Log)',
+            status: 'APPROVED' as ClaimStatus,
+            supervisor_action: 'APPROVE',
+            actor: 'Site Engineer (Commissioning Shift Log)',
           },
         ],
       };
@@ -1668,6 +2184,100 @@ export const activitiesApi = {
         actor: decisionItem?.planner_id || 'System',
       })),
     };
+  },
+
+  updateState: async (activityId: string, newState: ExecutionState): Promise<ScheduleActivity | null> => {
+    if (USE_MOCKS) {
+      await sleep(200);
+      return updateActivityExecutionState(activityId, newState);
+    }
+    return apiFetch<ScheduleActivity>(`/api/v1/activities/${encodeURIComponent(activityId)}/state`, {
+      method: 'PATCH',
+      body: JSON.stringify({ execution_state: newState }),
+    });
+  },
+};
+
+export const reopenApi = {
+  getRequests: async (params?: { activity_id?: string; status?: string }): Promise<ReopenRequest[]> => {
+    if (USE_MOCKS) {
+      await sleep(200);
+      let list = getMockReopenRequests();
+      if (params?.activity_id) {
+        list = list.filter((r) => r.activity_id === params.activity_id);
+      }
+      if (params?.status) {
+        list = list.filter((r) => r.status === params.status);
+      }
+      return list;
+    }
+    const query = new URLSearchParams();
+    if (params?.activity_id) query.set('activity_id', params.activity_id);
+    if (params?.status) query.set('status', params.status);
+    return apiFetch<ReopenRequest[]>(`/api/v1/reopen-requests?${query.toString()}`);
+  },
+
+  createRequest: async (payload: {
+    activity_id: string;
+    reason: string;
+    justification: string;
+    requested_by_role: UserRole;
+    requested_by_name: string;
+    event_id?: string;
+  }): Promise<ReopenRequest> => {
+    if (USE_MOCKS) {
+      await sleep(400);
+      return createMockReopenRequest(payload);
+    }
+    return apiFetch<ReopenRequest>('/api/v1/reopen-requests', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  reviewRequest: async (payload: {
+    reopen_id: string;
+    decision: 'APPROVED' | 'REJECTED';
+    supervisor_notes?: string;
+    reviewer_name?: string;
+  }): Promise<ReopenRequest> => {
+    if (USE_MOCKS) {
+      await sleep(400);
+      const res = reviewMockReopenRequest(payload);
+      MOCK_AUDIT_LOGS.unshift({
+        log_id: Date.now(),
+        entity_type: 'execution_event',
+        entity_id: res.event_id || res.reopen_id || 'reopen-log',
+        action: payload.decision === 'APPROVED' ? 'DECISION_APPROVE' : 'DECISION_REJECT',
+        actor_id: payload.reviewer_name || 'usr-supervisor-01',
+        before_state: JSON.stringify({
+          activity_id: res.activity_id,
+          execution_state: 'COMPLETED',
+          actual_start: res.locked_actuals_summary?.actual_start || '2026-09-01',
+          actual_finish: res.locked_actuals_summary?.actual_finish || '2026-09-08',
+          actual_pct_complete: res.original_actual_pct || 100,
+          status: 'REOPEN_REQUESTED',
+        }),
+        after_state: JSON.stringify({
+          activity_id: res.activity_id,
+          execution_state: payload.decision === 'APPROVED' ? 'REOPENED' : 'COMPLETED',
+          previous_actual_start: res.locked_actuals_summary?.actual_start || '2026-09-01',
+          previous_actual_finish: res.locked_actuals_summary?.actual_finish || '2026-09-08',
+          decision: payload.decision,
+          supervisor_notes: payload.supervisor_notes || null,
+          status: payload.decision === 'APPROVED' ? 'REOPEN_APPROVED' : 'REOPEN_REJECTED',
+        }),
+        payload_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
+        previous_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
+        current_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+        timestamp: new Date().toISOString(),
+      });
+      return res;
+    }
+    return apiFetch<ReopenRequest>(`/api/v1/reopen-requests/${payload.reopen_id}/review`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
 };
 
@@ -1840,37 +2450,46 @@ export const schedulesApi = {
   },
 };
 
+export const MOCK_SPLITS_STORE = new Map<string, WBSSplitItem[]>();
+
 export const wbsApi = {
   getSplits: async (eventId: string): Promise<WBSSplitItem[]> => {
     if (USE_MOCKS) {
       await sleep(300);
-      const activities = getActivitiesForCurrentSchedule();
-      const a1 = activities[0]?.activity_id || 'ACT-202';
-      const a2 = activities[1]?.activity_id || 'ACT-203';
-      return [
-        {
-          split_id: `spl-${eventId}-1`,
-          event_id: eventId,
-          activity_id: a1,
-          split_basis: 'WBS_WEIGHTED',
-          split_pct: 0.6,
-          allocated_quantity: 45,
-          uom: 'cu.m',
-          rationale: 'Primary work package',
-          created_at: new Date().toISOString(),
-        },
-        {
-          split_id: `spl-${eventId}-2`,
-          event_id: eventId,
-          activity_id: a2,
-          split_basis: 'MANUAL',
-          split_pct: 0.4,
-          allocated_quantity: 30,
-          uom: 'cu.m',
-          rationale: 'Secondary tie-in / handover scope',
-          created_at: new Date().toISOString(),
-        },
-      ];
+      if (MOCK_SPLITS_STORE.has(eventId)) {
+        return MOCK_SPLITS_STORE.get(eventId)!;
+      }
+      // Only the explicit demo unmatched/decomposed claim in initial dataset has default mock splits
+      if (eventId === 'evt-assam-104') {
+        const activities = getActivitiesForCurrentSchedule();
+        const a1 = activities[0]?.activity_id || 'ACT-ASSAM-101';
+        const a2 = activities[1]?.activity_id || 'ACT-ASSAM-201';
+        return [
+          {
+            split_id: `spl-${eventId}-1`,
+            event_id: eventId,
+            activity_id: a1,
+            split_basis: 'WBS_WEIGHTED',
+            split_pct: 0.6,
+            allocated_quantity: 45,
+            uom: 'cu.m',
+            rationale: 'Primary work package',
+            created_at: new Date().toISOString(),
+          },
+          {
+            split_id: `spl-${eventId}-2`,
+            event_id: eventId,
+            activity_id: a2,
+            split_basis: 'MANUAL',
+            split_pct: 0.4,
+            allocated_quantity: 30,
+            uom: 'cu.m',
+            rationale: 'Secondary tie-in / handover scope',
+            created_at: new Date().toISOString(),
+          },
+        ];
+      }
+      return [];
     }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/splits`);
     return Array.isArray(data) ? data : data.splits || [];
@@ -1879,6 +2498,18 @@ export const wbsApi = {
   updateSplits: async (eventId: string, splits: Partial<WBSSplitItem>[]): Promise<WBSSplitResponse> => {
     if (USE_MOCKS) {
       await sleep(600);
+      const items: WBSSplitItem[] = splits.map((s, i) => ({
+        split_id: s.split_id || `spl-${eventId}-${i + 1}`,
+        event_id: eventId,
+        activity_id: s.activity_id || 'ACT-ASSAM-101',
+        split_basis: s.split_basis || 'WBS_WEIGHTED',
+        split_pct: s.split_pct || 0.5,
+        allocated_quantity: s.allocated_quantity || null,
+        uom: s.uom || null,
+        rationale: s.rationale || 'Supervisor manual WBS decomposition',
+        created_at: new Date().toISOString(),
+      }));
+      MOCK_SPLITS_STORE.set(eventId, items);
       return {
         event_id: eventId,
         status: 'SPLIT_APPROVED',
@@ -2141,6 +2772,32 @@ export const mockP6Api = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+};
+
+export const impactApi = {
+  getScheduleImpacts: async (projectId: string, scheduleId: string): Promise<CompoundImpact[]> => {
+    if (USE_MOCKS) {
+      await sleep(150);
+      return getMockCompoundImpacts(projectId, scheduleId);
+    }
+    return apiFetch<CompoundImpact[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}/compound-impacts`);
+  },
+
+  getActivityImpact: async (projectId: string, scheduleId: string, activityId: string): Promise<CompoundImpact | null> => {
+    if (USE_MOCKS) {
+      await sleep(100);
+      return getMockActivityImpact(projectId, scheduleId, activityId);
+    }
+    return apiFetch<CompoundImpact | null>(`/api/v1/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}/activities/${encodeURIComponent(activityId)}/compound-impact`);
+  },
+
+  getDependencies: async (scheduleId: string): Promise<ScheduleDependency[]> => {
+    if (USE_MOCKS) {
+      await sleep(100);
+      return getMockScheduleDependencies(scheduleId);
+    }
+    return apiFetch<ScheduleDependency[]>(`/api/v1/schedules/${encodeURIComponent(scheduleId)}/dependencies`);
   },
 };
 

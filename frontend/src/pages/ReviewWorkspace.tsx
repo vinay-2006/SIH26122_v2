@@ -7,12 +7,19 @@ import {
   digestApi,
   schedulesApi,
   wbsApi,
+  reopenApi,
+  qualityGatesApi,
+  impactApi,
   ExecutionEvent,
   CandidateMatch,
   ValidationIssue,
   ConflictRecord,
   DecisionAction,
   ScheduleActivity,
+  ReopenRequest,
+  QualityGate,
+  QualityGateSummary,
+  CompoundImpact,
 } from '@/api';
 import {
   FileText,
@@ -32,7 +39,14 @@ import {
   HelpCircle,
   Building2,
   Lock,
+  Unlock,
+  AlertCircle,
+  FileCheck2,
+  FileCheck,
+  Eye,
+  GitFork,
 } from 'lucide-react';
+import { useAuth } from '@/auth/AuthProvider';
 import { useProject } from '@/context/ProjectContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -44,6 +58,11 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ProvenanceBadge } from '@/components/ProvenanceBadge';
 import { SourceReferenceCard } from '@/components/SourceReferenceCard';
 import { FieldProvenanceBadge } from '@/components/FieldProvenanceBadge';
+import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
+import { ReopenRequestModal } from '@/components/ReopenRequestModal';
+import { ReopenReviewModal } from '@/components/ReopenReviewModal';
+import { QualityGateModal } from '@/components/QualityGateModal';
+import { CompoundImpactModal } from '@/components/CompoundImpactModal';
 import { AskWhyPanel } from '@/components/AskWhyPanel';
 import { WBSSplitEditor } from '@/components/WBSSplitEditor';
 import { EvidencePanel } from '@/components/EvidencePanel';
@@ -95,7 +114,7 @@ export default function ReviewWorkspace() {
   // Feature 34: Ask Why Drawer / Panel State
   const [isAskWhyOpen, setIsAskWhyOpen] = useState<boolean>(false);
 
-  // Form State
+  const { user } = useAuth();
   const [selectedActivityId, setSelectedActivityId] = useState<string>('');
   const [action, setAction] = useState<DecisionAction>('APPROVE');
   const [approvedPct, setApprovedPct] = useState<number | ''>('');
@@ -104,6 +123,85 @@ export default function ReviewWorkspace() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [decisionSuccess, setDecisionSuccess] = useState<boolean>(false);
+
+  // Reopen Modal States
+  const [reopenModalActivity, setReopenModalActivity] = useState<ScheduleActivity | null>(null);
+  const [reviewModalRequest, setReviewModalRequest] = useState<ReopenRequest | null>(null);
+  const [pendingReopenRequests, setPendingReopenRequests] = useState<ReopenRequest[]>([]);
+
+  const loadReopenRequests = useCallback(async () => {
+    try {
+      const list = await reopenApi.getRequests({ status: 'PENDING' });
+      setPendingReopenRequests(list);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    loadReopenRequests();
+  }, [loadReopenRequests, currentProject.id]);
+
+  // Quality Gates State
+  const [scheduleQualityGates, setScheduleQualityGates] = useState<QualityGate[]>([]);
+  const [qualityModalTargetActivity, setQualityModalTargetActivity] = useState<{ id: string; name: string } | null>(null);
+
+  // Downstream Compound Impact State
+  const [scheduleImpacts, setScheduleImpacts] = useState<CompoundImpact[]>([]);
+  const [selectedImpactModal, setSelectedImpactModal] = useState<CompoundImpact | null>(null);
+
+  const loadQualityGates = useCallback(async () => {
+    try {
+      const gates = await qualityGatesApi.getGates({ scheduleId: currentScheduleVersion.id });
+      setScheduleQualityGates(gates);
+    } catch {
+      // ignore
+    }
+  }, [currentScheduleVersion.id]);
+
+  const loadScheduleImpacts = useCallback(async () => {
+    try {
+      const impacts = await impactApi.getScheduleImpacts(currentProject.id, currentScheduleVersion.id);
+      setScheduleImpacts(impacts);
+    } catch {
+      // ignore
+    }
+  }, [currentProject.id, currentScheduleVersion.id]);
+
+  useEffect(() => {
+    loadQualityGates();
+    loadScheduleImpacts();
+  }, [loadQualityGates, loadScheduleImpacts]);
+
+  useEffect(() => {
+    const handleGateUpdate = () => {
+      loadQualityGates();
+      loadScheduleImpacts();
+    };
+    window.addEventListener('setu:quality-gate-changed', handleGateUpdate);
+    return () => {
+      window.removeEventListener('setu:quality-gate-changed', handleGateUpdate);
+    };
+  }, [loadQualityGates, loadScheduleImpacts]);
+
+  const impactsMap = React.useMemo(() => {
+    const map = new Map<string, CompoundImpact>();
+    for (const imp of scheduleImpacts) {
+      map.set(imp.activityId, imp);
+    }
+    return map;
+  }, [scheduleImpacts]);
+
+  const selectedActivityGates = React.useMemo(() => {
+    if (!selectedActivityId) return [];
+    return scheduleQualityGates.filter((g) => g.activityId === selectedActivityId);
+  }, [scheduleQualityGates, selectedActivityId]);
+
+  const hasBlockingHoldPoint = React.useMemo(() => {
+    return selectedActivityGates.some(
+      (g) => g.gateType === 'HOLD_POINT' && g.required && (g.status === 'PENDING' || g.status === 'BLOCKED')
+    );
+  }, [selectedActivityGates]);
 
   const loadQueue = useCallback(async () => {
     setIsLoadingQueue(true);
@@ -152,10 +250,14 @@ export default function ReviewWorkspace() {
       setActivities(actList);
 
       // Feature 30: a decomposed claim has no single matched activity -- it has split rows.
-      const splitActive = !ev.matched_activity_id && splitRows.length > 0;
+      const isProtectedOrReopened =
+        cands.some((c) => c.is_completed_protected || c.match_tier === 'COMPLETED_PROTECTED') ||
+        ev.is_completed_activity_target;
+
+      const splitActive = !isProtectedOrReopened && !ev.matched_activity_id && splitRows.length > 0;
       setHasSplits(splitActive);
       const defaultActivity =
-        (splitActive ? splitRows[0]?.activity_id : undefined) || cands[0]?.activity_id || ev.matched_activity_id || '';
+        cands[0]?.activity_id || ev.matched_activity_id || (splitActive ? splitRows[0]?.activity_id : undefined) || '';
       setSelectedActivityId(defaultActivity);
       setApprovedPct(ev.claimed_pct ?? 100);
       setApprovedQty(ev.claimed_quantity ?? '');
@@ -190,6 +292,22 @@ export default function ReviewWorkspace() {
     }
     if (!selectedActivityId) {
       setSubmitError(t('review.errActivityRequired'));
+      return;
+    }
+
+    // Hold Point Governance: Check if attempting to finalize (100%) while required Hold Point is pending or blocked
+    const isFinalizing = action === 'APPROVE' && (
+      approvedPct === 100 ||
+      Number(approvedPct) === 100 ||
+      (approvedPct === '' && event?.claimed_pct === 100)
+    );
+
+    if (isFinalizing && hasBlockingHoldPoint) {
+      setSubmitError(
+        t('quality.holdPointPendingDesc', {
+          defaultValue: 'This activity cannot be finalized until the required hold point is completed or waived.',
+        })
+      );
       return;
     }
 
@@ -600,7 +718,11 @@ export default function ReviewWorkspace() {
                     <span className="text-[10px] uppercase font-bold text-muted-foreground block">{t('review.discipline')}</span>
                     <FieldProvenanceBadge provenance={event.field_provenance?.discipline} />
                   </div>
-                  <span className="font-mono text-foreground font-bold">{event.discipline || t('review.unassigned')}</span>
+                  <span className="font-mono text-foreground font-bold">
+                    {event.discipline ||
+                      activities.find((a) => a.activity_id === (event.matched_activity_id || candidates[0]?.activity_id))?.discipline ||
+                      t('review.unassigned')}
+                  </span>
                 </div>
                 <div>
                   <span className="text-[10px] uppercase font-bold text-muted-foreground block mb-1">{t('review.channel')}</span>
@@ -654,7 +776,7 @@ export default function ReviewWorkspace() {
                     <span className="text-[10px] uppercase font-bold text-muted-foreground block">Matched activity</span>
                     <FieldProvenanceBadge provenance={event.field_provenance?.activity_id} />
                   </div>
-                  <span className="font-mono text-foreground">{event.matched_activity_id || t('review.notAvailable')}</span>
+                  <span className="font-mono text-foreground">{event.matched_activity_id || candidates[0]?.activity_id || t('review.notAvailable')}</span>
                 </div>
               </div>
 
@@ -832,7 +954,7 @@ export default function ReviewWorkspace() {
                         <option value="">-- Select Schedule Activity to Bind --</option>
                         {activities.map((act) => (
                           <option key={act.activity_id} value={act.activity_id}>
-                            {act.activity_id} — {act.activity_name} ({act.discipline} | WBS: {act.wbs_code || 'N/A'})
+                            {act.activity_id} — {act.activity_name} ({act.discipline} | WBS: {act.wbs_code || 'N/A'}{act.contractor_name ? ` | ${act.contractor_name}` : ''}{act.work_package_code ? ` | ${act.work_package_code}` : ''})
                           </option>
                         ))}
                       </select>
@@ -861,6 +983,9 @@ export default function ReviewWorkspace() {
 
                 {candidates.map((cand) => {
                   const isSelected = selectedActivityId === cand.activity_id;
+                  const candidateAct = activities.find((a) => a.activity_id === cand.activity_id);
+                  const isCompletedTarget = cand.is_completed_protected || cand.execution_state === 'COMPLETED' || candidateAct?.execution_state === 'COMPLETED';
+                  const pendingReq = pendingReopenRequests.find((r) => r.activity_id === cand.activity_id);
 
                   return (
                     <div
@@ -873,26 +998,218 @@ export default function ReviewWorkspace() {
                           : 'bg-card border-border hover:border-primary/60'
                       )}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] font-bold bg-muted text-muted-foreground px-2 py-0.5 rounded-md font-mono">
                             #{cand.rank_order}
                           </span>
                           <span className="font-mono font-bold text-sm text-foreground">{cand.activity_id}</span>
                           {cand.match_tier && (
-                            <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-mono uppercase">
+                            <span className={cn(
+                              "text-[10px] font-bold px-1.5 py-0.5 rounded font-mono uppercase border",
+                              cand.match_tier === 'COMPLETED_PROTECTED'
+                                ? "bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800"
+                                : cand.match_tier === 'STAGE_COMPLETED'
+                                ? "bg-rose-100 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
+                                : "bg-primary/10 text-primary border-primary/30"
+                            )}>
                               {cand.match_tier}
                             </span>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <ExecutionStateBadge
+                            state={cand.execution_state || candidateAct?.execution_state || (isCompletedTarget ? 'COMPLETED' : 'IN_PROGRESS')}
+                            size="sm"
+                          />
                           {isSelected && <Check className="w-4 h-4 text-primary font-bold" />}
                         </div>
                       </div>
 
                       {/* Integrated ConfidenceBar */}
                       <ConfidenceBar score={cand.composite_confidence} />
+
+                      {/* Eligibility Explanation Card */}
+                      <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-[11px] space-y-1.5">
+                        <div className="flex items-center justify-between text-muted-foreground font-semibold">
+                          <span>Eligibility Breakdown:</span>
+                          <span className="font-mono text-[10px] text-foreground font-bold">{Math.round(cand.composite_confidence * 100)}% Match</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+                          <div>Project: <strong className="text-foreground">{cand.project_id || currentProject.id}</strong></div>
+                          <div>Schedule: <strong className="text-foreground">{cand.schedule_id || currentScheduleVersion.versionNumber}</strong></div>
+                          <div>Stage: <strong className="text-foreground">{cand.stage_id || 'Active'}</strong></div>
+                          <div>WBS: <strong className="text-foreground">{cand.wbs_code || 'Root'}</strong></div>
+                          <div>Contractor: <strong className="text-foreground">{candidateAct?.contractor_name || 'Not assigned'}</strong></div>
+                          <div>Work Package: <strong className="text-foreground">{candidateAct?.work_package_code || 'Not assigned'}</strong></div>
+                        </div>
+                        {cand.eligibility_reasons && cand.eligibility_reasons.length > 0 && (
+                          <div className="text-[10px] text-slate-600 dark:text-slate-300 pt-1 border-t border-slate-200 dark:border-slate-800 space-y-0.5">
+                            {cand.eligibility_reasons.map((r, idx) => (
+                              <div key={idx} className="flex items-start gap-1">
+                                <span className={cand.is_eligible === false ? "text-amber-500" : "text-emerald-500"}>•</span>
+                                <span>{r}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Completed Activity Protection Callout & Action */}
+                      {isCompletedTarget && (
+                        <div className="p-2.5 rounded-lg bg-purple-500/10 border border-purple-300 dark:border-purple-800/60 text-xs space-y-2">
+                          <div className="flex items-start gap-2">
+                            <Lock className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 mt-0.5 shrink-0" />
+                            <div className="text-[11px] text-purple-900 dark:text-purple-200">
+                              <strong>Completed Activity Protected:</strong> Authoritative actuals are locked. Direct updates are prohibited without approved reopen.
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            {pendingReq ? (
+                              user?.role === 'SUPERVISOR' ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setReviewModalRequest(pendingReq);
+                                  }}
+                                  className="h-7 text-[11px] bg-purple-600 hover:bg-purple-700 text-white gap-1 font-semibold"
+                                >
+                                  <ShieldAlert className="w-3 h-3" />
+                                  Review Reopen Request
+                                </Button>
+                              ) : (
+                                <span className="text-[11px] text-purple-700 dark:text-purple-300 font-medium">
+                                  Reopen Request Pending Supervisor Approval
+                                </span>
+                              )
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const act = candidateAct || {
+                                    activity_id: cand.activity_id,
+                                    schedule_id: currentScheduleVersion.id,
+                                    activity_name: cand.activity_id,
+                                    discipline: 'CIVIL',
+                                    location: 'Site',
+                                    planned_start: '',
+                                    planned_finish: '',
+                                    baseline_pct_complete: 100,
+                                    execution_state: 'COMPLETED',
+                                  } as ScheduleActivity;
+                                  setReopenModalActivity(act);
+                                }}
+                                className="h-7 text-[11px] border-purple-300 dark:border-purple-700 text-purple-800 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-950/60 gap-1 font-semibold"
+                              >
+                                <Unlock className="w-3 h-3" />
+                                Request Reopen
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Quality Gates / ITP / Hold Point Summary */}
+                      {(() => {
+                        const candGates = scheduleQualityGates.filter((g) => g.activityId === cand.activity_id);
+                        if (candGates.length === 0) return null;
+                        const completedGates = candGates.filter((g) => g.status === 'COMPLETED' || g.status === 'WAIVED').length;
+                        const hasCandHoldPoint = candGates.some(
+                          (g) => g.gateType === 'HOLD_POINT' && g.required && (g.status === 'PENDING' || g.status === 'BLOCKED')
+                        );
+                        return (
+                          <div className={cn(
+                            "p-2.5 rounded-lg border text-xs space-y-1.5",
+                            hasCandHoldPoint
+                              ? "bg-rose-500/10 border-rose-300 dark:border-rose-900/60"
+                              : "bg-teal-500/10 border-teal-300 dark:border-teal-900/60"
+                          )}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 font-bold text-[11px]">
+                                <ShieldAlert className={cn("w-3.5 h-3.5", hasCandHoldPoint ? "text-rose-500" : "text-teal-600 dark:text-teal-400")} />
+                                <span className={hasCandHoldPoint ? "text-rose-700 dark:text-rose-300" : "text-teal-700 dark:text-teal-300"}>
+                                  Quality Gates & ITP: {completedGates}/{candGates.length} Cleared
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setQualityModalTargetActivity({
+                                    id: cand.activity_id,
+                                    name: candidateAct?.activity_name || cand.activity_id,
+                                  });
+                                }}
+                                className="h-6 text-[10px] px-2 border-slate-300 dark:border-slate-700 cursor-pointer"
+                              >
+                                Inspect Gates
+                              </Button>
+                            </div>
+                            {hasCandHoldPoint && (
+                              <div className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
+                                <Lock className="w-3 h-3 text-rose-500 shrink-0" />
+                                <span>Required Hold Point Pending (100% completion blocked until cleared)</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Downstream Compound Impact Advisory */}
+                      {(() => {
+                        const candImpact = impactsMap.get(cand.activity_id);
+                        if (!candImpact || (candImpact.impactLevel === 'LOW' && candImpact.totalDownstreamCount === 0)) return null;
+                        return (
+                          <div className={cn(
+                            "p-2.5 rounded-lg border text-xs space-y-1.5",
+                            candImpact.impactLevel === 'CRITICAL'
+                              ? "bg-red-500/10 border-red-300 dark:border-red-900/60"
+                              : candImpact.impactLevel === 'HIGH'
+                              ? "bg-amber-500/10 border-amber-300 dark:border-amber-900/60"
+                              : "bg-blue-500/10 border-blue-300 dark:border-blue-900/60"
+                          )}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 font-bold text-[11px]">
+                                <GitFork className={cn(
+                                  "w-3.5 h-3.5",
+                                  candImpact.impactLevel === 'CRITICAL' ? "text-red-500" : candImpact.impactLevel === 'HIGH' ? "text-amber-500" : "text-blue-500"
+                                )} />
+                                <span className={
+                                  candImpact.impactLevel === 'CRITICAL' ? "text-red-700 dark:text-red-300" : candImpact.impactLevel === 'HIGH' ? "text-amber-700 dark:text-amber-300" : "text-blue-700 dark:text-blue-300"
+                                }>
+                                  Downstream Impact: {candImpact.impactLevel} ({candImpact.totalDownstreamCount} activities across {candImpact.impactedStageIds.length} stages)
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedImpactModal(candImpact);
+                                }}
+                                className="h-6 text-[10px] px-2 border-slate-300 dark:border-slate-700 cursor-pointer"
+                              >
+                                Inspect Impact Chain
+                              </Button>
+                            </div>
+                            {candImpact.primaryReason && (
+                              <div className="text-[10px] text-muted-foreground font-medium flex items-start gap-1">
+                                <span className="text-amber-500 font-bold">•</span>
+                                <span>{candImpact.primaryReason}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <div className="grid grid-cols-4 gap-1 text-[10px] font-mono text-muted-foreground pt-2 border-t border-border/60">
                         <div>{t('review.semShort')}: <span className="font-bold text-foreground">{Math.round((cand.semantic_score || 0) * 100)}%</span></div>
@@ -953,6 +1270,24 @@ export default function ReviewWorkspace() {
                     onChange={(e) => setSelectedActivityId(e.target.value)}
                     className="font-mono text-primary font-bold text-sm h-9 rounded-lg"
                   />
+                  {(() => {
+                    const act = activities.find((a) => a.activity_id === selectedActivityId);
+                    if (!act || (!act.contractor_name && !act.work_package_code)) return null;
+                    return (
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground pt-0.5">
+                        {act.contractor_name && (
+                          <span className="px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold border border-blue-200 dark:border-blue-900/60">
+                            {act.contractor_name}
+                          </span>
+                        )}
+                        {act.work_package_code && (
+                          <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/60">
+                            {act.work_package_code}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="space-y-1.5">
@@ -1025,6 +1360,95 @@ export default function ReviewWorkspace() {
                   />
                 </div>
 
+                {/* Completed Activity Lock Notice in Decision Form */}
+                {(() => {
+                  const selAct = activities.find((a) => a.activity_id === selectedActivityId);
+                  const isCompleted = selAct?.execution_state === 'COMPLETED';
+                  const pendingReq = pendingReopenRequests.find((r) => r.activity_id === selectedActivityId);
+
+                  if (isCompleted) {
+                    return (
+                      <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-800 rounded-xl space-y-2 text-xs text-purple-900 dark:text-purple-200">
+                        <div className="flex items-center gap-1.5 font-bold">
+                          <Lock className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                          <span>Selected Activity is COMPLETED</span>
+                        </div>
+                        <p className="text-[11px] text-purple-800 dark:text-purple-300">
+                          Authoritative actuals are locked. Direct approvals are restricted. A formal Reopen Request must be approved by Supervisor before new progress can be committed.
+                        </p>
+                        <div className="pt-1">
+                          {pendingReq ? (
+                            user?.role === 'SUPERVISOR' ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => setReviewModalRequest(pendingReq)}
+                                className="w-full text-xs bg-purple-600 hover:bg-purple-700 text-white font-semibold"
+                              >
+                                Review Pending Reopen Request
+                              </Button>
+                            ) : (
+                              <span className="text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+                                Reopen Request submitted · Awaiting Supervisor review
+                              </span>
+                            )
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setReopenModalActivity(selAct)}
+                              className="w-full text-xs border-purple-400 text-purple-800 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-950/60 font-semibold"
+                            >
+                              Request Activity Reopen
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Hold Point Governance Blocker Banner in Decision Form */}
+                {(() => {
+                  if (!hasBlockingHoldPoint) return null;
+                  const isFinalizing = action === 'APPROVE' && (
+                    approvedPct === 100 ||
+                    Number(approvedPct) === 100 ||
+                    (approvedPct === '' && event?.claimed_pct === 100)
+                  );
+
+                  return (
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-400 dark:border-rose-800 rounded-xl space-y-2 text-xs text-rose-900 dark:text-rose-200">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>{t('quality.holdPointPendingTitle', { defaultValue: 'Required Hold Point Pending' })}</span>
+                      </div>
+                      <p className="text-[11px] text-rose-800 dark:text-rose-300 leading-relaxed">
+                        {t('quality.holdPointPendingDesc', {
+                          defaultValue: 'This activity cannot be finalized until the required hold point is completed or waived.',
+                        })}
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          const act = activities.find((a) => a.activity_id === selectedActivityId);
+                          setQualityModalTargetActivity({
+                            id: selectedActivityId,
+                            name: act?.activity_name || selectedActivityId,
+                          });
+                        }}
+                        className="w-full text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold h-7.5 cursor-pointer"
+                      >
+                        <ShieldAlert className="w-3.5 h-3.5 mr-1" />
+                        Inspect Quality Gates & Hold Points
+                      </Button>
+                    </div>
+                  );
+                })()}
+
                 {currentScheduleVersion.isImmutable && (
                   <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl flex items-center gap-2 text-xs text-amber-800 dark:text-amber-200">
                     <Lock className="w-4 h-4 shrink-0 text-amber-600" />
@@ -1034,12 +1458,22 @@ export default function ReviewWorkspace() {
 
                 <Button
                   type="submit"
-                  disabled={isSubmitting || decisionSuccess || currentScheduleVersion.isImmutable}
+                  disabled={
+                    isSubmitting ||
+                    decisionSuccess ||
+                    currentScheduleVersion.isImmutable ||
+                    activities.find((a) => a.activity_id === selectedActivityId)?.execution_state === 'COMPLETED' ||
+                    (hasBlockingHoldPoint && action === 'APPROVE' && (approvedPct === 100 || Number(approvedPct) === 100 || (approvedPct === '' && event.claimed_pct === 100)))
+                  }
                   isLoading={isSubmitting}
                   className="w-full font-bold h-10 shadow-xs"
                 >
                   {currentScheduleVersion.isImmutable
                     ? 'Schedule Version is Read-Only'
+                    : activities.find((a) => a.activity_id === selectedActivityId)?.execution_state === 'COMPLETED'
+                    ? 'Activity Reopen Required Before Committing'
+                    : (hasBlockingHoldPoint && action === 'APPROVE' && (approvedPct === 100 || Number(approvedPct) === 100 || (approvedPct === '' && event.claimed_pct === 100)))
+                    ? 'Required Hold Point Pending'
                     : isSubmitting
                     ? t('review.recordingDecision')
                     : t('review.commitDecision')}
@@ -1095,6 +1529,55 @@ export default function ReviewWorkspace() {
           )}
         </ErrorBoundary>
       </div>
+
+      {/* Quality Gate Modal */}
+      {qualityModalTargetActivity && (
+        <QualityGateModal
+          isOpen={!!qualityModalTargetActivity}
+          onClose={() => setQualityModalTargetActivity(null)}
+          activityId={qualityModalTargetActivity.id}
+          activityName={qualityModalTargetActivity.name}
+          gates={scheduleQualityGates.filter((g) => g.activityId === qualityModalTargetActivity.id)}
+          userRole={user?.role}
+          onGateUpdated={() => {
+            loadQualityGates();
+            if (eventIdParam) loadData(eventIdParam);
+          }}
+        />
+      )}
+
+      {/* Reopen Workflow Modals */}
+      {reopenModalActivity && (
+        <ReopenRequestModal
+          activity={reopenModalActivity}
+          isOpen={!!reopenModalActivity}
+          onClose={() => setReopenModalActivity(null)}
+          onSuccess={() => {
+            loadReopenRequests();
+            if (eventIdParam) loadData(eventIdParam);
+          }}
+        />
+      )}
+
+      {reviewModalRequest && (
+        <ReopenReviewModal
+          request={reviewModalRequest}
+          isOpen={!!reviewModalRequest}
+          onClose={() => setReviewModalRequest(null)}
+          onReviewed={() => {
+            loadReopenRequests();
+            if (eventIdParam) loadData(eventIdParam);
+            loadQueue();
+          }}
+        />
+      )}
+
+      {/* Downstream Compound Impact Modal */}
+      <CompoundImpactModal
+        isOpen={!!selectedImpactModal}
+        onClose={() => setSelectedImpactModal(null)}
+        impact={selectedImpactModal}
+      />
     </div>
   );
 }

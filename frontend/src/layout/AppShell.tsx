@@ -26,6 +26,7 @@ import {
   FolderTree,
   Sparkles,
   Bot,
+  Briefcase,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -86,7 +87,6 @@ export default function AppShell() {
 
   const siteEngineerNavItems = [
     { label: t('nav.claimIntake'), path: '/intake', icon: PlusCircle, badge: 0 },
-    { label: t('nav.timeAgent', { defaultValue: 'Time Agent' }), path: '/time-agent', icon: Bot },
   ];
 
   const navItems = isSupervisor ? supervisorNavItems : siteEngineerNavItems;

@@ -14,6 +14,11 @@ import {
   Send,
   Paperclip,
   X,
+  Building2,
+  Lock,
+  Unlock,
+  ShieldAlert,
+  GitFork,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,10 +27,22 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorState } from '@/components/ui/error-state';
-import { claimsApi, ExecutionEvent } from '@/api';
+import {
+  claimsApi,
+  schedulesApi,
+  qualityGatesApi,
+  impactApi,
+  ExecutionEvent,
+  CandidateMatch,
+  ScheduleActivity,
+  ExecutionState,
+  QualityGate,
+  CompoundImpact,
+} from '@/api';
 import { cn } from '@/lib/utils';
 import { useProject } from '@/context/ProjectContext';
-import { Building2 } from 'lucide-react';
+import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
+import { ReopenRequestModal } from '@/components/ReopenRequestModal';
 
 type InputTab = 'text' | 'voice' | 'file';
 
@@ -77,6 +94,15 @@ export default function ClaimIntake() {
   const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
   const [clarifyingEventId, setClarifyingEventId] = useState<string | null>(null);
   const [clarifyError, setClarifyError] = useState<Record<string, string | null>>({});
+
+  // Reopen Request & Completed Activity Protection State
+  const [candidateMatches, setCandidateMatches] = useState<Record<string, CandidateMatch[]>>({});
+  const [activitiesMap, setActivitiesMap] = useState<Record<string, ScheduleActivity>>({});
+  const [scheduleQualityGates, setScheduleQualityGates] = useState<QualityGate[]>([]);
+  const [scheduleImpacts, setScheduleImpacts] = useState<CompoundImpact[]>([]);
+  const [reopenModalActivity, setReopenModalActivity] = useState<ScheduleActivity | null>(null);
+  const [reopenModalEventId, setReopenModalEventId] = useState<string | undefined>(undefined);
+  const [reopenedActivityIds, setReopenedActivityIds] = useState<Set<string>>(new Set());
 
   // Web Speech API Initialization
   useEffect(() => {
@@ -238,6 +264,8 @@ export default function ClaimIntake() {
     setClarificationAnswers({});
     setClarifyingEventId(null);
     setClarifyError({});
+    setCandidateMatches({});
+    setReopenModalActivity(null);
   };
 
   const proceedMatchingAndChecking = async (events: ExecutionEvent[]) => {
@@ -245,12 +273,35 @@ export default function ClaimIntake() {
     setPipelineError(null);
     try {
       setPipelineStep(2); // Matching
+      const matchMap: Record<string, CandidateMatch[]> = {};
       await Promise.all(
         events.map(async (ev) => {
           const matchRes = await claimsApi.match(ev.event_id);
           ev.status = matchRes.status;
+          if (matchRes.matches) {
+            matchMap[ev.event_id] = matchRes.matches;
+          }
         })
       );
+      setCandidateMatches(matchMap);
+
+      // Load activities map and quality gates for target metadata display
+      try {
+        const [acts, qgs, impacts] = await Promise.all([
+          schedulesApi.getActivities(currentScheduleVersion.id),
+          qualityGatesApi.getGates({ scheduleId: currentScheduleVersion.id }),
+          impactApi.getScheduleImpacts(currentProject.id, currentScheduleVersion.id).catch(() => []),
+        ]);
+        const map: Record<string, ScheduleActivity> = {};
+        acts.forEach((a) => {
+          map[a.activity_id] = a;
+        });
+        setActivitiesMap(map);
+        setScheduleQualityGates(qgs);
+        setScheduleImpacts(impacts || []);
+      } catch {
+        // ignore error
+      }
 
       setPipelineStep(3); // Checking
       await Promise.all(
@@ -1010,6 +1061,54 @@ export default function ClaimIntake() {
                           <StatusBadge status={ev.status} size="sm" />
                         </div>
 
+                        {/* Read-only Quality Gate / Hold Point Context */}
+                        {(() => {
+                          const targetActId = ev.matched_activity_id || ev.reported_activity_id || candidateMatches[ev.event_id]?.[0]?.activity_id;
+                          if (!targetActId) return null;
+                          const targetGates = scheduleQualityGates.filter((g) => g.activityId === targetActId);
+                          if (targetGates.length === 0) return null;
+                          const completedCount = targetGates.filter((g) => g.status === 'COMPLETED' || g.status === 'WAIVED').length;
+                          const hasHoldPoint = targetGates.some((g) => g.gateType === 'HOLD_POINT' && g.required && (g.status === 'PENDING' || g.status === 'BLOCKED'));
+
+                          return (
+                            <div className="p-2 rounded-lg bg-slate-50 dark:bg-[#0B2742] border border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-1.5">
+                                <ShieldAlert className={cn("w-3.5 h-3.5", hasHoldPoint ? "text-rose-500" : "text-teal-500")} />
+                                <span className="font-semibold text-foreground">
+                                  Quality Gates: {completedCount}/{targetGates.length} Cleared
+                                </span>
+                              </div>
+                              {hasHoldPoint && (
+                                <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
+                                  Hold Point Pending
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Read-only Downstream Impact Indicator */}
+                        {(() => {
+                          const targetActId = ev.matched_activity_id || ev.reported_activity_id || candidateMatches[ev.event_id]?.[0]?.activity_id;
+                          if (!targetActId) return null;
+                          const imp = scheduleImpacts.find((i) => i.activityId === targetActId);
+                          if (!imp || (imp.impactLevel === 'LOW' && imp.totalDownstreamCount === 0)) return null;
+
+                          return (
+                            <div className="p-2 rounded-lg bg-amber-500/5 dark:bg-[#0B2742] border border-amber-300/40 dark:border-amber-900/40 flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-1.5">
+                                <GitFork className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                <span className="font-semibold text-foreground">
+                                  Downstream Impact: {imp.impactLevel} ({imp.totalDownstreamCount} activities affected)
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {imp.directSuccessorCount} Direct Successors
+                              </span>
+                            </div>
+                          );
+                        })()}
+
                         {/* Feature 29: Adaptive Field Copilot — Clarification Prompt */}
                         {ev.clarification_status === 'PENDING' || ev.clarification_question ? (
                           <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-2.5">
@@ -1067,6 +1166,97 @@ export default function ClaimIntake() {
                             )}
                           </div>
                         ) : null}
+                        {/* Completed Activity Protection & Exception Flow */}
+                        {(() => {
+                          const matches = candidateMatches[ev.event_id] || [];
+                          const topMatch = matches[0];
+                          const isCompletedProtected =
+                            topMatch?.is_completed_protected ||
+                            topMatch?.match_tier === 'COMPLETED_PROTECTED' ||
+                            ev.is_completed_activity_target;
+                          const targetActId = topMatch?.activity_id || ev.reported_activity_id || ev.matched_activity_id;
+                          const targetAct = (targetActId ? activitiesMap[targetActId] : null) || (targetActId ? ({
+                            activity_id: targetActId,
+                            schedule_id: currentScheduleVersion.id,
+                            activity_name: topMatch?.supporting_signals?.split('.')[0] || 'Completed Milestone Package',
+                            discipline: ev.discipline || 'CIVIL',
+                            location: ev.location || 'Site Area',
+                            wbs_code: topMatch?.wbs_code || 'WBS-1.0',
+                            planned_start: '2026-09-01',
+                            planned_finish: '2026-09-08',
+                            actual_start: '2026-09-01',
+                            actual_finish: '2026-09-08',
+                            planned_quantity: null,
+                            uom: null,
+                            baseline_pct_complete: 100,
+                            actual_pct_complete: 100,
+                            execution_state: 'COMPLETED' as ExecutionState,
+                          } as ScheduleActivity) : null);
+
+                          if (!isCompletedProtected || !targetAct) return null;
+
+                          const isAlreadyRequested =
+                            reopenedActivityIds.has(targetAct.activity_id) ||
+                            targetAct.execution_state === 'REOPEN_REQUESTED';
+
+                          return (
+                            <div className="p-3.5 rounded-xl border border-purple-300 dark:border-purple-800/80 bg-purple-500/10 dark:bg-purple-950/30 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-bold text-xs">
+                                  <ShieldAlert className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                                  <span>Activity Already Completed & Protected</span>
+                                </div>
+                                <ExecutionStateBadge state={targetAct.execution_state || 'COMPLETED'} size="sm" />
+                              </div>
+
+                              <p className="text-xs text-foreground/90 font-medium leading-relaxed">
+                                This claim targets <strong className="text-purple-700 dark:text-purple-300 font-mono">{targetAct.activity_id}</strong> ({targetAct.activity_name}), which is already marked <strong>COMPLETED (100%)</strong>. To protect authoritative schedule actuals from inadvertent corruption, ordinary claims cannot overwrite completed activities without a Supervisor-approved reopen.
+                              </p>
+
+                              {/* Locked Actuals Summary Box */}
+                              <div className="p-2.5 rounded-lg bg-white/80 dark:bg-[#0B2742]/80 border border-purple-200 dark:border-purple-900/50 space-y-2 text-[11px]">
+                                <div className="flex items-center gap-1.5 text-purple-800 dark:text-purple-300 font-semibold">
+                                  <Lock className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                                  <span>Authoritative Locked Actuals Summary</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                  <div className="p-1.5 rounded bg-slate-50 dark:bg-[#081E33] border border-slate-200 dark:border-slate-800">
+                                    <span className="text-muted-foreground block text-[10px]">Actual Start</span>
+                                    <span className="font-mono font-medium text-foreground">{targetAct.actual_start || targetAct.planned_start || '2026-09-01'}</span>
+                                  </div>
+                                  <div className="p-1.5 rounded bg-slate-50 dark:bg-[#081E33] border border-slate-200 dark:border-slate-800">
+                                    <span className="text-muted-foreground block text-[10px]">Actual Finish</span>
+                                    <span className="font-mono font-medium text-foreground">{targetAct.actual_finish || targetAct.planned_finish || '2026-09-08'}</span>
+                                  </div>
+                                  <div className="p-1.5 rounded bg-slate-50 dark:bg-[#081E33] border border-slate-200 dark:border-slate-800">
+                                    <span className="text-muted-foreground block text-[10px]">Completion</span>
+                                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">100%</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {isAlreadyRequested ? (
+                                <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                  <span>Reopen request submitted for {targetAct.activity_id}. Status transitioned to REOPEN_REQUESTED pending Supervisor approval.</span>
+                                </div>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    setReopenModalActivity(targetAct);
+                                    setReopenModalEventId(ev.event_id);
+                                  }}
+                                  className="w-full text-xs font-bold h-8.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-xs gap-1.5 cursor-pointer"
+                                >
+                                  <Unlock className="w-3.5 h-3.5" />
+                                  Request Activity Reopen from Supervisor
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -1086,6 +1276,29 @@ export default function ClaimIntake() {
           </Card>
         </div>
       </div>
+
+      {/* Reopen Request Modal */}
+      {reopenModalActivity && (
+        <ReopenRequestModal
+          activity={reopenModalActivity}
+          eventId={reopenModalEventId}
+          isOpen={!!reopenModalActivity}
+          onClose={() => {
+            setReopenModalActivity(null);
+            setReopenModalEventId(undefined);
+          }}
+          onSuccess={(req) => {
+            setReopenedActivityIds((prev) => new Set(prev).add(req.activity_id));
+            setActivitiesMap((prev) => ({
+              ...prev,
+              [req.activity_id]: {
+                ...prev[req.activity_id],
+                execution_state: 'REOPEN_REQUESTED',
+              },
+            }));
+          }}
+        />
+      )}
     </div>
   );
 }

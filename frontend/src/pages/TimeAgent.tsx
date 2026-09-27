@@ -114,6 +114,18 @@ const SITE_ENGINEER_QUICK_ACTIONS = [
 // ── Quick Actions for SUPERVISOR (Monitoring & Decision Support Focus) ────────
 const SUPERVISOR_QUICK_ACTIONS = [
   {
+    icon: PlayCircle,
+    color: 'text-emerald-600 dark:text-emerald-400',
+    label: 'Log Activity Start',
+    prompt: 'Log activity start for Pump Foundation F-4 (CIV-PS3-FND-001) at 09:00 AM today.',
+  },
+  {
+    icon: Flag,
+    color: 'text-blue-600 dark:text-blue-400',
+    label: 'Log Activity Finish',
+    prompt: 'Mark ACT-401 SCADA Panel installation as 100% finished and energized today.',
+  },
+  {
     icon: ShieldCheck,
     color: 'text-amber-600 dark:text-amber-400',
     label: 'Pending Reviews',
@@ -291,15 +303,45 @@ export default function TimeAgent() {
     const lower = text.toLowerCase();
     const todayStr = new Date().toISOString().split('T')[0];
 
+    // Percentage extraction
+    let claimedPct: number | null = null;
+    const pctMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+    if (pctMatch) {
+      claimedPct = Math.min(100, Math.max(0, parseFloat(pctMatch[1])));
+    }
+
+    // Quantity extraction
+    let claimedQuantity: number | null = null;
+    let claimedUom: string | null = null;
+    const qtyMatch = text.match(/(\d+(?:\.\d+)?)\s*(cu\.m|m3|joints?|meters?|m|tons?|nos?|units?|sq\.m)/i);
+    if (qtyMatch) {
+      claimedQuantity = parseFloat(qtyMatch[1]);
+      claimedUom = qtyMatch[2];
+    }
+
     const isStart = /\b(start|started|starting|commenced|commence|began|begin)\b/i.test(lower);
-    const isFinish = /\b(finish|finished|completed|complete|done|ended|finalized|energiz)\b/i.test(lower);
+    const isExplicitFinish =
+      /\b(finish|finished|finalized|ended|energiz|handed over|commissioned)\b/i.test(lower) ||
+      (/\b(completed|complete|done)\b/i.test(lower) && (claimedPct === null || claimedPct === 100) && claimedQuantity === null);
     const isDelay = /\b(delay|delayed|blocked|hold|stuck|waiting|issue|problem|stop|stoppage)\b/i.test(lower);
     const isRemark = /\b(remark|note|weather|rain|incident|stoppage|issue)\b/i.test(lower);
 
     let eventType: EventType = 'PROGRESS_UPDATE';
-    if (isStart) eventType = 'ACTUAL_START';
-    else if (isFinish) eventType = 'ACTUAL_FINISH';
-    else if (isDelay) eventType = 'DELAY';
+    if (claimedPct !== null && claimedPct < 100) {
+      if (isDelay && !isStart && claimedPct === 0) {
+        eventType = 'DELAY';
+      } else {
+        eventType = 'PROGRESS_UPDATE';
+      }
+    } else if (isExplicitFinish || claimedPct === 100) {
+      eventType = 'ACTUAL_FINISH';
+      if (claimedPct === null) claimedPct = 100;
+    } else if (isStart) {
+      eventType = 'ACTUAL_START';
+      if (claimedPct === null) claimedPct = 10;
+    } else if (isDelay) {
+      eventType = 'DELAY';
+    }
 
     // Activity matching heuristics
     let detectedActId: string | null = null;
@@ -312,26 +354,6 @@ export default function TimeAgent() {
         (a.asset_tag && lower.includes(a.asset_tag.toLowerCase()))
       );
       if (found) detectedActId = found.activity_id;
-    }
-
-    // Percentage extraction
-    let claimedPct: number | null = null;
-    const pctMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
-    if (pctMatch) {
-      claimedPct = Math.min(100, Math.max(0, parseFloat(pctMatch[1])));
-    } else if (isFinish) {
-      claimedPct = 100;
-    } else if (isStart && !isFinish) {
-      claimedPct = 10;
-    }
-
-    // Quantity extraction
-    let claimedQuantity: number | null = null;
-    let claimedUom: string | null = null;
-    const qtyMatch = text.match(/(\d+(?:\.\d+)?)\s*(cu\.m|m3|joints?|meters?|m|tons?|nos?|units?|sq\.m)/i);
-    if (qtyMatch) {
-      claimedQuantity = parseFloat(qtyMatch[1]);
-      claimedUom = qtyMatch[2];
     }
 
     // Discipline detection
@@ -370,7 +392,7 @@ export default function TimeAgent() {
       remarks = text;
     }
 
-    const isClaimLog = isStart || isFinish || claimedPct !== null || claimedQuantity !== null || detectedActId !== null || evidenceRef !== null;
+    const isClaimLog = isStart || isExplicitFinish || claimedPct !== null || claimedQuantity !== null || detectedActId !== null || evidenceRef !== null;
 
     return {
       isClaimLog,
@@ -625,7 +647,7 @@ export default function TimeAgent() {
             {isSupervisor ? 'Role: SUPERVISOR' : 'Role: SITE_ENGINEER'}
           </span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
           {quickPrompts.map((qp, idx) => {
             const Icon = qp.icon;
             return (
