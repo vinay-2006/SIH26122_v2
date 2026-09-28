@@ -34,6 +34,15 @@ try:
 except ImportError:
     schedule_index = None
 
+from backend.services.matching_eligibility_service import (
+    MatchingEligibilityService,
+    REASON_COMPLETED,
+    REASON_ELIGIBLE,
+    REASON_WRONG_PROJECT,
+    REASON_WRONG_SCHEDULE,
+    REASON_WRONG_STAGE,
+)
+
 
 # M3 Match-Tier Constants
 EXACT_ID = "EXACT_ID"
@@ -89,6 +98,14 @@ def get_candidates_endpoint(event_id: str):
     }
 
 
+def _get_act_dict(act: Union[ScheduleActivity, dict]) -> dict:
+    if isinstance(act, dict):
+        return act
+    if hasattr(act, "model_dump"):
+        return act.model_dump()
+    return dict(act)
+
+
 def match_exact_id(
     claim: Union[ExecutionClaim, dict],
     schedule_activities: List[Union[ScheduleActivity, dict]],
@@ -96,17 +113,24 @@ def match_exact_id(
     """
     Tier 1: EXACT_ID Matching.
     If reported_activity_id is provided and exactly matches a schedule activity_id
-    within the same schedule_id, return CandidateMatch with EXACT_ID tier and 1.00 confidence.
+    within the same schedule_id, return CandidateMatch with EXACT_ID tier and 1.00 confidence,
+    ONLY IF the activity is eligible for matching (e.g. not canonically COMPLETED).
     The activity_id remains an unchanged source string.
     """
     if isinstance(claim, ExecutionClaim):
         reported_id = claim.reported_activity_id
         claim_schedule_id = claim.schedule_id
         event_id = claim.event_id
+        claim_project_id = getattr(claim, "project_id", None)
+        claim_stage_id = getattr(claim, "stage_id", None)
+        is_rework = bool(getattr(claim, "is_rework", False) or getattr(claim, "reopened_from_actual_id", None) or getattr(claim, "event_type", None) == "REWORK")
     elif isinstance(claim, dict):
         reported_id = claim.get("reported_activity_id")
         claim_schedule_id = claim.get("schedule_id")
         event_id = claim.get("event_id", "evt_unknown")
+        claim_project_id = claim.get("project_id")
+        claim_stage_id = claim.get("stage_id")
+        is_rework = bool(claim.get("is_rework") or claim.get("reopened_from_actual_id") or claim.get("event_type") == "REWORK")
     else:
         return None
 
@@ -114,16 +138,28 @@ def match_exact_id(
         return None
 
     for act in schedule_activities:
-        if isinstance(act, ScheduleActivity):
-            act_id = act.activity_id
-            act_schedule_id = act.schedule_id
-        elif isinstance(act, dict):
-            act_id = act.get("activity_id")
-            act_schedule_id = act.get("schedule_id")
-        else:
+        act_dict = _get_act_dict(act)
+        act_id = act_dict.get("activity_id")
+        act_schedule_id = act_dict.get("schedule_id")
+
+        if not act_id or not act_schedule_id:
             continue
 
         if act_schedule_id == claim_schedule_id and act_id == reported_id:
+            # Enforce Phase 6/7 Eligibility Gate: exact match must not bypass eligibility
+            eligibility = MatchingEligibilityService.get_activity_eligibility(
+                act_dict,
+                expected_project_id=claim_project_id,
+                expected_schedule_id=claim_schedule_id,
+                expected_stage_id=claim_stage_id,
+                is_rework=is_rework,
+            )
+            if not eligibility.eligible:
+                logger.info(
+                    "Exact ID candidate '%s' disqualified: %s", act_id, eligibility.reason
+                )
+                return None
+
             return CandidateMatch(
                 candidate_id=f"cand_{event_id}_{act_id}",
                 event_id=event_id,
@@ -171,20 +207,12 @@ def match_exact_asset(
     candidates: List[CandidateMatch] = []
 
     for act in schedule_activities:
-        if isinstance(act, ScheduleActivity):
-            act_asset = act.asset_tag
-            act_schedule_id = act.schedule_id
-            act_id = act.activity_id
-            act_disc = act.discipline
-            act_loc = act.location
-        elif isinstance(act, dict):
-            act_asset = act.get("asset_tag")
-            act_schedule_id = act.get("schedule_id")
-            act_id = act.get("activity_id")
-            act_disc = act.get("discipline")
-            act_loc = act.get("location")
-        else:
-            continue
+        act_dict = _get_act_dict(act)
+        act_asset = act_dict.get("asset_tag")
+        act_schedule_id = act_dict.get("schedule_id")
+        act_id = act_dict.get("activity_id")
+        act_disc = act_dict.get("discipline")
+        act_loc = act_dict.get("location")
 
         if not act_asset or not str(act_asset).strip():
             continue
@@ -193,6 +221,23 @@ def match_exact_asset(
             continue
 
         if str(act_asset).strip() != claim_asset_clean:
+            continue
+
+        # Enforce Phase 6/7 Eligibility Gate: exact asset match must not bypass eligibility
+        claim_project_id = getattr(claim, "project_id", None) if isinstance(claim, ExecutionClaim) else (claim.get("project_id") if isinstance(claim, dict) else None)
+        claim_stage_id = getattr(claim, "stage_id", None) if isinstance(claim, ExecutionClaim) else (claim.get("stage_id") if isinstance(claim, dict) else None)
+        is_rework = bool(getattr(claim, "is_rework", False) if isinstance(claim, ExecutionClaim) else (claim.get("is_rework") or claim.get("reopened_from_actual_id") or claim.get("event_type") == "REWORK"))
+        eligibility = MatchingEligibilityService.get_activity_eligibility(
+            act_dict,
+            expected_project_id=claim_project_id,
+            expected_schedule_id=claim_schedule_id,
+            expected_stage_id=claim_stage_id,
+            is_rework=is_rework,
+        )
+        if not eligibility.eligible:
+            logger.info(
+                "Exact asset candidate '%s' disqualified: %s", act_id, eligibility.reason
+            )
             continue
 
         # Asset tag matches within same schedule_id
@@ -475,14 +520,28 @@ def generate_hybrid_candidates(
     else:
         return []
 
+    claim_project_id = getattr(claim, "project_id", None) if isinstance(claim, ExecutionClaim) else (claim.get("project_id") if isinstance(claim, dict) else None)
+    claim_stage_id = getattr(claim, "stage_id", None) if isinstance(claim, ExecutionClaim) else (claim.get("stage_id") if isinstance(claim, dict) else None)
+    is_rework = bool(getattr(claim, "is_rework", False) if isinstance(claim, ExecutionClaim) else (claim.get("is_rework") or claim.get("reopened_from_actual_id") or claim.get("event_type") == "REWORK"))
+
     act_map: dict[str, Union[ScheduleActivity, dict]] = {}
     for act in schedule_activities:
-        if isinstance(act, ScheduleActivity):
-            if act.schedule_id == claim_schedule_id:
-                act_map[act.activity_id] = act
-        elif isinstance(act, dict):
-            if act.get("schedule_id") == claim_schedule_id:
-                act_map[act.get("activity_id")] = act
+        act_dict = _get_act_dict(act)
+        act_id = act_dict.get("activity_id")
+        act_sched = act_dict.get("schedule_id")
+        if not act_id or act_sched != claim_schedule_id:
+            continue
+
+        # Enforce Phase 6/7 Eligibility Gate: only eligible activities enter candidate generation
+        eligibility = MatchingEligibilityService.get_activity_eligibility(
+            act_dict,
+            expected_project_id=claim_project_id,
+            expected_schedule_id=claim_schedule_id,
+            expected_stage_id=claim_stage_id,
+            is_rework=is_rework,
+        )
+        if eligibility.eligible:
+            act_map[act_id] = act
 
     if not act_map:
         return []
@@ -795,9 +854,24 @@ def match_claim(
         if ranked_hybrid and ranked_hybrid[0].composite_confidence > 0.0:
             return ranked_hybrid
 
-    # Tier 4: HARD_MISMATCH evaluation
+    # Tier 4: HARD_MISMATCH evaluation (evaluated only for eligible activities)
+    claim_project_id = getattr(claim, "project_id", None) if isinstance(claim, ExecutionClaim) else (claim.get("project_id") if isinstance(claim, dict) else None)
+    claim_schedule_id = claim.schedule_id if isinstance(claim, ExecutionClaim) else claim.get("schedule_id")
+    claim_stage_id = getattr(claim, "stage_id", None) if isinstance(claim, ExecutionClaim) else (claim.get("stage_id") if isinstance(claim, dict) else None)
+    is_rework = bool(getattr(claim, "is_rework", False) if isinstance(claim, ExecutionClaim) else (claim.get("is_rework") or claim.get("reopened_from_actual_id") or claim.get("event_type") == "REWORK"))
+
     mismatch_cands: List[CandidateMatch] = []
     for act in schedule_activities:
+        act_dict = _get_act_dict(act)
+        eligibility = MatchingEligibilityService.get_activity_eligibility(
+            act_dict,
+            expected_project_id=claim_project_id,
+            expected_schedule_id=claim_schedule_id,
+            expected_stage_id=claim_stage_id,
+            is_rework=is_rework,
+        )
+        if not eligibility.eligible:
+            continue
         mismatch_cand = evaluate_hard_mismatch(claim, act)
         if mismatch_cand:
             mismatch_cands.append(mismatch_cand)
@@ -807,6 +881,8 @@ def match_claim(
 
     if hybrid_cands:
         return rank_and_explain_candidates(hybrid_cands)
+
+    return []
 
 # ---------------------------------------------------------------------------
 # Feature 30 -- WBS Granularity Bridge (M3 half). Decision logic lives in
@@ -982,26 +1058,70 @@ def match_claim_endpoint(
                     detail="Cannot match claim while clarification is pending. Engineer must submit clarification first.",
                 )
 
+            claim_schedule_id = event_row.get("schedule_id")
+            if not claim_schedule_id or not str(claim_schedule_id).strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="INVALID_SCHEDULE_CONTEXT: Execution event has no explicit schedule_id",
+                )
+
             claim = ExecutionClaim(**event_row)
 
-            # 2. Load schedule activities for schedule_id
+            # 2. Load schedule activities with approved actuals to capture canonical execution state
             cur.execute(
-                "SELECT * FROM schedule_activities WHERE schedule_id = %s",
+                """
+                SELECT sa.activity_id, sa.schedule_id, sa.project_id, sa.stage_id,
+                       sa.activity_name, sa.wbs_code, sa.discipline, sa.location,
+                       sa.asset_tag, sa.planned_start, sa.planned_finish,
+                       sa.planned_quantity, sa.uom, sa.baseline_pct_complete,
+                       sa.weight_factor, sa.quality_gate_required,
+                       aa.actual_pct_complete, aa.actual_start, aa.actual_finish,
+                       aa.is_reopened,
+                       (
+                           SELECT ee.reopen_status FROM execution_events ee
+                           WHERE ee.matched_activity_id = sa.activity_id AND ee.schedule_id = sa.schedule_id
+                           ORDER BY ee.event_date DESC LIMIT 1
+                       ) AS reopen_status
+                FROM schedule_activities sa
+                LEFT JOIN approved_actuals aa
+                       ON sa.schedule_id = aa.schedule_id AND sa.activity_id = aa.activity_id
+                WHERE sa.schedule_id = %s
+                ORDER BY sa.activity_id ASC
+                """,
                 (claim.schedule_id,),
             )
             act_rows = cur.fetchall()
-            schedule_activities = [ScheduleActivity(**r) for r in act_rows]
+            schedule_activities = [
+                dict(r) if isinstance(r, dict) or hasattr(r, "keys") else (r.model_dump() if hasattr(r, "model_dump") else r)
+                for r in act_rows
+            ]
+
+            # Stage-Aware scoping: if event has stage_id, prioritize or restrict to that stage
+            event_stage_id = event_row.get("stage_id")
+            if event_stage_id:
+                stage_pool = [
+                    a for a in schedule_activities
+                    if a.get("stage_id") is not None and str(a.get("stage_id")) == str(event_stage_id)
+                ]
+                candidate_pool = stage_pool if stage_pool else schedule_activities
+            else:
+                candidate_pool = schedule_activities
+
+            # Phase 6/7: Pre-filter candidate pool for eligibility (supporting authorized rework)
+            is_rework = bool(event_row.get("reopened_from_actual_id") or event_row.get("event_type") == "REWORK")
+            eligible_activities, audit_explanations = MatchingEligibilityService.filter_eligible_activities(
+                candidate_pool,
+                expected_project_id=event_row.get("project_id"),
+                expected_schedule_id=claim.schedule_id,
+                expected_stage_id=event_stage_id,
+                is_rework=is_rework,
+            )
 
             # 3. Run M3 matching cascade with optional M1 FAISS semantic retrieval.
-            #
-            # M1 owns the schedule_index lifecycle. M3 consumes its search
-            # results only; if the index is unavailable or search fails,
-            # match_claim() falls back to fuzzy/location/discipline signals.
             semantic_results = None
 
             if claim.raw_claim_text and schedule_index is not None:
                 try:
-                    # Ensure the claim's schedule is the active indexed schedule.
                     if schedule_index.get_active_schedule_id() != claim.schedule_id:
                         try:
                             schedule_index.build_index(claim.schedule_id)
@@ -1020,15 +1140,12 @@ def match_claim_endpoint(
                     print(f"[M3] FAISS search warning: {search_err}")
                     semantic_results = None
 
-            # 4. Run M3 matching cascade.
+            # 4. Run M3 matching cascade strictly on eligible candidates.
             candidates = match_claim(
                 claim,
-                schedule_activities,
+                eligible_activities,
                 semantic_results=semantic_results,
             )
-
-                
-               
 
             # 4. Determine matching status and matched_activity_id with ambiguity protection
             unmatched_reason = None
@@ -1064,11 +1181,7 @@ def match_claim_endpoint(
                 top_confidence = candidates[0].composite_confidence
             else:
                 status = "UNMATCHED"
-                # Per spec: matched_activity_id is set unconditionally to the
-                # rank-1 candidate on every /match and /rematch call, even
-                # when the claim ends up UNMATCHED, so there's always a
-                # best-guess fallback for the UI and for M4's checks to
-                # validate against.
+                # A completed activity is NEVER eligible, so matched_activity_id is None when 0 eligible candidates
                 matched_activity_id = candidates[0].activity_id if candidates else None
                 top_tier = (
                     candidates[0].match_tier if candidates else HARD_MISMATCH
@@ -1086,7 +1199,17 @@ def match_claim_endpoint(
                 elif candidates:
                     unmatched_reason = f"Low confidence match ({candidates[0].composite_confidence:.2f})"
                 else:
-                    unmatched_reason = "No matching schedule activities found"
+                    # Deterministic explainability for empty candidate set (Phase 6)
+                    reported_id = claim.reported_activity_id
+                    if reported_id and reported_id in audit_explanations:
+                        exp = audit_explanations[reported_id]
+                        unmatched_reason = f"NO_ELIGIBLE_CANDIDATE: Reported activity '{reported_id}' is {exp.reason}"
+                    elif event_stage_id and candidate_pool and not eligible_activities:
+                        unmatched_reason = "NO_ELIGIBLE_CANDIDATE: All activities in stage are COMPLETED"
+                    elif candidate_pool and not eligible_activities:
+                        unmatched_reason = "NO_ELIGIBLE_CANDIDATE: All activities in schedule are COMPLETED"
+                    else:
+                        unmatched_reason = "NO_ELIGIBLE_CANDIDATE: No matching schedule activities found"
 
             # 5. Feature 30: broad claims are decomposed across WBS siblings instead of
             #    forcing one leaf. Normal match and split are mutually exclusive (XOR).

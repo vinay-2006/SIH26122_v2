@@ -20,6 +20,7 @@ class Permission(str, Enum):
     REVIEW_CLAIM = "REVIEW_CLAIM"
     APPROVE_ACTUAL = "APPROVE_ACTUAL"
     REQUEST_REOPEN = "REQUEST_REOPEN"
+    APPROVE_REOPEN = "APPROVE_REOPEN"
     MANAGE_QUALITY = "MANAGE_QUALITY"
     VIEW_AUDIT = "VIEW_AUDIT"
 
@@ -42,6 +43,7 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.REVIEW_CLAIM,
         Permission.APPROVE_ACTUAL,
         Permission.REQUEST_REOPEN,
+        Permission.APPROVE_REOPEN,
         Permission.MANAGE_QUALITY,
         Permission.VIEW_AUDIT,
     },

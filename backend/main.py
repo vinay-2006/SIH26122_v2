@@ -31,6 +31,10 @@ from backend.routers import (
     reports,
     claim_graph,
     projects,
+    stages,
+    reopen,
+    progress,
+    impact,
 )
 from backend.shared.db import init_db
 
@@ -147,4 +151,9 @@ app.include_router(investigation.router)
 app.include_router(summary.router)
 app.include_router(reports.router)
 app.include_router(claim_graph.router)
-app.include_router(projects.router)
+app.include_router(projects.router)
+app.include_router(stages.router)
+app.include_router(reopen.router)
+app.include_router(progress.router)
+app.include_router(impact.router)
+
