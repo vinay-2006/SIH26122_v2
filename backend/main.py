@@ -30,6 +30,7 @@ from backend.routers import (
     summary,
     reports,
     claim_graph,
+    projects,
 )
 from backend.shared.db import init_db
 
@@ -66,10 +67,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+from fastapi.responses import JSONResponse
+from backend.shared.config import settings
+from backend.shared.db import get_connection
+from backend.shared.rule_extraction import fallback_enabled
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in _cors_origins.split(",") if origin.strip()],
+    allow_origins=settings.get_cors_origins_list(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -93,6 +98,39 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/health/db")
+def health_db():
+    """
+    Isolated infrastructure connectivity check executing SELECT 1 against PostgreSQL.
+    Returns HTTP 200 with status healthy on success, or HTTP 503 without exposing credentials.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+                cur.fetchone()
+        return {"database": "healthy"}
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"database": "unhealthy", "status": "connection_failed"},
+        )
+
+
+@app.get("/health/ai")
+def health_ai():
+    """
+    Isolated AI provider configuration check.
+    Safely reports provider status without performing network LLM calls or exposing keys.
+    """
+    return {
+        "provider": settings.LLM_PROVIDER,
+        "configured": settings.is_llm_configured(),
+        "fallback_available": True,
+        "deterministic_fallback_enabled": fallback_enabled(),
+    }
+
+
 app.include_router(schedules.router)
 app.include_router(intake.router)
 app.include_router(matching.router)
@@ -109,3 +147,4 @@ app.include_router(investigation.router)
 app.include_router(summary.router)
 app.include_router(reports.router)
 app.include_router(claim_graph.router)
+app.include_router(projects.router)
