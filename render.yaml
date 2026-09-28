@@ -1,0 +1,41 @@
+# Render Infrastructure-as-Code Blueprint for SETUAI V7 Backend
+services:
+  - type: web
+    name: setuai-v7-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.1
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: AUTH_DEV_MODE
+        value: "false"
+      - key: LLM_PROVIDER
+        value: "groq"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EXTRACTION_FALLBACK
+        value: "rules"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: STORAGE_EVIDENCE_BUCKET
+        value: "evidence"
+      - key: STORAGE_DOCUMENTS_BUCKET
+        value: "documents"

@@ -2,7 +2,7 @@ from pathlib import Path
 from backend.shared.db import get_connection
 
 def apply_migration():
-    sql_path = Path(__file__).parent / "models" / "migrations" / "001_security_rls_and_foreign_keys.sql"
+    sql_path = Path(__file__).parent / "models" / "migrations" / "legacy" / "001_security_rls_and_foreign_keys.sql"
     with open(sql_path, "r", encoding="utf-8") as f:
         sql = f.read()
 

@@ -46,14 +46,15 @@ def get_connection():
 
     Rows are returned as dictionaries.
     """
-    if not DATABASE_URL:
+    db_url = os.getenv("DATABASE_URL") or DATABASE_URL
+    if not db_url:
         raise RuntimeError(
             "DATABASE_URL is not configured. "
             "Add it to the project .env file."
         )
 
     return psycopg.connect(
-        DATABASE_URL,
+        db_url,
         row_factory=psycopg.rows.dict_row,
     )
 

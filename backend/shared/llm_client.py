@@ -68,6 +68,12 @@ def _load_env_if_needed() -> None:
     if "LLM_API_KEY" not in os.environ:
         env_path = pathlib.Path(__file__).resolve().parents[2] / ".env"
         load_dotenv(dotenv_path=env_path, override=False)
+        provider = os.environ.get("LLM_PROVIDER", "groq").lower()
+        if not os.environ.get("LLM_API_KEY"):
+            if provider == "groq" and os.environ.get("GROQ_API_KEY"):
+                os.environ["LLM_API_KEY"] = os.environ["GROQ_API_KEY"]
+            elif provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
+                os.environ["LLM_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 
 def get_llm_provider() -> str:
@@ -84,12 +90,12 @@ def get_default_model(provider: Optional[str] = None) -> str:
 def _get_client() -> Optional[OpenAI]:
     global _client
     _load_env_if_needed()
+    provider = get_llm_provider()
     api_key = os.environ.get("LLM_API_KEY")
     if not api_key:
         return None
 
     if _client is None:
-        provider = get_llm_provider()
         base_url = _PROVIDER_BASE_URLS.get(provider)
         if base_url is None:
             raise ValueError(f"Unknown LLM_PROVIDER '{provider}' — expected 'groq' or 'gemini'")
