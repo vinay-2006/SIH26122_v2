@@ -33,6 +33,7 @@ from backend.routers import (
     projects,
     contractors,
     work_packages,
+    quality,
 )
 from backend.shared.db import init_db
 
@@ -151,4 +152,5 @@ app.include_router(reports.router)
 app.include_router(claim_graph.router)
 app.include_router(projects.router)
 app.include_router(contractors.router)
-app.include_router(work_packages.router)
+app.include_router(work_packages.router)
+app.include_router(quality.router)

@@ -34,7 +34,7 @@ class ProjectAuditRepository(BaseRepository):
             "old_state": old_state or {},
             "new_state": new_state or {},
         }
-        payload_bytes = json.dumps(context_payload, sort_keys=True).encode("utf-8")
+        payload_bytes = json.dumps(context_payload, sort_keys=True, default=str).encode("utf-8")
         payload_hash = hashlib.sha256(payload_bytes).hexdigest()
         prev_hash = "GENESIS"
         current_hash = hashlib.sha256(f"{prev_hash}:{payload_hash}".encode("utf-8")).hexdigest()
@@ -58,12 +58,12 @@ class ProjectAuditRepository(BaseRepository):
                         action,
                         entity_type,
                         entity_id,
-                        json.dumps(old_state or {}),
-                        json.dumps(new_state or {}),
+                        json.dumps(old_state or {}, default=str),
+                        json.dumps(new_state or {}, default=str),
                         payload_hash,
                         prev_hash,
                         current_hash,
-                        json.dumps(context_payload),
+                        json.dumps(context_payload, default=str),
                     ),
                 )
                 conn.commit()
