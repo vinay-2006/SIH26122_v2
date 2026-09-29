@@ -109,16 +109,28 @@ class ProjectScheduleRepository(BaseRepository):
         Persists schedule metadata, activities, and dependencies atomically.
         """
         schedule_id = str(uuid.uuid4())
-        source_hash = hashlib.sha256(csv_content.encode("utf-8")).hexdigest()
+        if isinstance(csv_content, bytes):
+            bytes_content = csv_content
+            source_hash = hashlib.sha256(bytes_content).hexdigest()
+        else:
+            bytes_content = csv_content.encode("utf-8")
+            source_hash = hashlib.sha256(bytes_content).hexdigest()
+
         meta = version_metadata or {}
 
-        # Parse CSV content using established parser
-        parse_result = parse_schedule_csv(csv_content, schedule_id=schedule_id)
+        fmt = (source_format or "csv").lower()
+        if fmt in ("xer", "p6_xer", "p6") or bytes_content.startswith(b"ERMHDR"):
+            from backend.shared.xer_parser import parse_schedule_xer
+            parse_result = parse_schedule_xer(bytes_content, schedule_id=schedule_id)
+        else:
+            text_content = bytes_content.decode("utf-8", errors="replace")
+            parse_result = parse_schedule_csv(text_content, schedule_id=schedule_id)
+
         if not parse_result.is_valid:
             errors_str = "; ".join([e.message for e in parse_result.errors[:5]])
-            raise ValueError(f"Schedule CSV failed validation: {errors_str}")
+            raise ValueError(f"Schedule file failed validation: {errors_str}")
         if not parse_result.activities:
-            raise ValueError("Schedule CSV contains zero activities")
+            raise ValueError("Schedule file contains zero activities")
 
         # Validate supersedes_schedule_id belongs to same project if supplied
         if supersedes_schedule_id:

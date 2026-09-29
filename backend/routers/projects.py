@@ -5,9 +5,11 @@ Provides endpoints for project lifecycle and schedule version management.
 
 from __future__ import annotations
 
+from datetime import date
 import uuid
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel
 
 from backend.auth.dependencies import get_current_user
 from backend.auth.models import CurrentUser
@@ -212,3 +214,70 @@ def supersede_schedule_version(
         context, schedule_id, payload.supersedes_schedule_id
     )
     return ScheduleVersionResponse(**updated)
+
+
+class XERImportRequest(BaseModel):
+    version_code: str
+    xer_content: str
+    data_date: Optional[date] = None
+    supersedes_schedule_id: Optional[str] = None
+    activate_immediately: bool = False
+
+
+@router.post(
+    "/{project_id}/schedules/xer",
+    response_model=ScheduleVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def import_xer_schedule_version(
+    project_id: uuid.UUID,
+    payload: XERImportRequest,
+    context: ProjectContext = Depends(require_project_context),
+) -> ScheduleVersionResponse:
+    """
+    Imports a Primavera P6 .xer baseline schedule version into the authorized project context.
+    """
+    sv_payload = ScheduleVersionCreate(
+        version_code=payload.version_code,
+        csv_content=payload.xer_content,
+        data_date=payload.data_date,
+        source_format="xer",
+        supersedes_schedule_id=payload.supersedes_schedule_id,
+        activate_immediately=payload.activate_immediately,
+    )
+    created = ScheduleVersionService.create_schedule_version(context, sv_payload)
+    return ScheduleVersionResponse(**created)
+
+
+class ActivityAttributionRequest(BaseModel):
+    contractor_id: Optional[uuid.UUID] = None
+    work_package_id: Optional[uuid.UUID] = None
+    stage_id: Optional[uuid.UUID] = None
+
+
+@router.patch(
+    "/{project_id}/activities/{activity_id}/attribution",
+)
+def update_activity_attribution(
+    project_id: uuid.UUID,
+    activity_id: str,
+    payload: ActivityAttributionRequest,
+    context: ProjectContext = Depends(require_project_context),
+):
+    """
+    Associates an activity with contractor_id, work_package_id, and/or stage_id within the project.
+    """
+    from backend.repositories.activity_repo import ProjectActivityRepository
+    from backend.context.errors import raise_resource_not_found
+
+    updated = ProjectActivityRepository.update_attribution(
+        context=context,
+        activity_id=activity_id,
+        contractor_id=str(payload.contractor_id) if payload.contractor_id else None,
+        work_package_id=str(payload.work_package_id) if payload.work_package_id else None,
+        stage_id=str(payload.stage_id) if payload.stage_id else None,
+    )
+    if not updated:
+        raise_resource_not_found("Activity", activity_id)
+    return updated
+

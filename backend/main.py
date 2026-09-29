@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 # Must run before any backend module import below, since shared/db.py and
 # others read DATABASE_URL/SUPABASE_*/LLM_* from the environment at import
-# time (module-level `os.getenv(...)` calls) — loading .env after those
+# time (module-level os.getenv(...) calls). Loading .env after those
 # imports would leave them permanently unset for the life of the process.
 load_dotenv()
 
@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routers import (
+    # Existing V6/V7 routers
     schedules,
     intake,
     matching,
@@ -31,6 +32,13 @@ from backend.routers import (
     reports,
     claim_graph,
     projects,
+
+    # Operations Intelligence
+    contractors,
+    work_packages,
+    quality,
+
+    # Execution Intelligence / V7
     stages,
     reopen,
     progress,
@@ -38,32 +46,58 @@ from backend.routers import (
     memory,
     dossier,
 )
+
 from backend.shared.db import init_db
 
 
 def _warm_active_index() -> None:
-    """Rebuild the in-memory FAISS index for the active schedule and load the embedding
-    model off the request path (the index does not survive a restart), so the first
-    /match after startup is not slow."""
+    """
+    Rebuild the in-memory FAISS index for the active schedule and load the
+    embedding model off the request path.
+
+    The index does not survive a restart, so warming it during startup avoids
+    making the first /match request pay the model/index initialization cost.
+
+    Startup must never fail because FAISS/model warm-up failed.
+    """
     try:
         from backend.shared import schedule_index
         from backend.shared.schedule_repository import get_active_schedule
 
         active = get_active_schedule()
+
         if active is not None:
             schedule_index.build_index(active.schedule_id)
-            print(f"FAISS index warmed for active schedule {active.schedule_id}")
-    except Exception as e:  # never block startup
+            print(
+                f"FAISS index warmed for active schedule "
+                f"{active.schedule_id}"
+            )
+
+    except Exception as e:
+        # Never block application startup because index warm-up failed.
         print(f"Warning: FAISS warm-up skipped ({e})")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Application lifespan handler.
+
+    Performs lightweight database initialization and starts FAISS warm-up
+    asynchronously so application startup is not blocked.
+    """
     try:
         init_db()
     except Exception as e:
-        print(f"Warning: Database initialization skipped on startup ({e})")
-    threading.Thread(target=_warm_active_index, daemon=True).start()
+        print(
+            f"Warning: Database initialization skipped on startup ({e})"
+        )
+
+    threading.Thread(
+        target=_warm_active_index,
+        daemon=True,
+    ).start()
+
     yield
 
 
@@ -73,10 +107,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# ---------------------------------------------------------------------------
+# Application dependencies
+# ---------------------------------------------------------------------------
+
 from fastapi.responses import JSONResponse
+
 from backend.shared.config import settings
 from backend.shared.db import get_connection
 from backend.shared.rule_extraction import fallback_enabled
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,6 +131,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---------------------------------------------------------------------------
+# Root / Health
+# ---------------------------------------------------------------------------
 
 @app.get("/")
 def root():
@@ -101,25 +150,40 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+    }
 
 
 @app.get("/health/db")
 def health_db():
     """
-    Isolated infrastructure connectivity check executing SELECT 1 against PostgreSQL.
-    Returns HTTP 200 with status healthy on success, or HTTP 503 without exposing credentials.
+    Isolated infrastructure connectivity check executing SELECT 1 against
+    PostgreSQL.
+
+    Returns:
+        200 when the database is reachable.
+        503 when the database connection fails.
+
+    Credentials and connection details are never exposed.
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1;")
                 cur.fetchone()
-        return {"database": "healthy"}
+
+        return {
+            "database": "healthy",
+        }
+
     except Exception:
         return JSONResponse(
             status_code=503,
-            content={"database": "unhealthy", "status": "connection_failed"},
+            content={
+                "database": "unhealthy",
+                "status": "connection_failed",
+            },
         )
 
 
@@ -127,7 +191,9 @@ def health_db():
 def health_ai():
     """
     Isolated AI provider configuration check.
-    Safely reports provider status without performing network LLM calls or exposing keys.
+
+    This endpoint does not perform a network LLM call and never exposes
+    provider credentials.
     """
     return {
         "provider": settings.LLM_PROVIDER,
@@ -136,6 +202,10 @@ def health_ai():
         "deterministic_fallback_enabled": fallback_enabled(),
     }
 
+
+# ===========================================================================
+# Existing V6/V7 routers
+# ===========================================================================
 
 app.include_router(schedules.router)
 app.include_router(intake.router)
@@ -154,10 +224,44 @@ app.include_router(summary.router)
 app.include_router(reports.router)
 app.include_router(claim_graph.router)
 app.include_router(projects.router)
+
+
+# ===========================================================================
+# Operations Intelligence
+# ===========================================================================
+#
+# Owned/introduced by the operations-intelligence branch.
+#
+# These routers cover:
+#   - Contractors
+#   - Work Packages
+#   - Quality / ITP / Hold Points
+#
+# They are intentionally retained alongside the execution-intelligence
+# routers below. They are independent router registrations.
+# ===========================================================================
+
+app.include_router(contractors.router)
+app.include_router(work_packages.router)
+app.include_router(quality.router)
+
+
+# ===========================================================================
+# Execution Intelligence / V7
+# ===========================================================================
+#
+# These routers cover:
+#   - Stages / execution state
+#   - Reopen / rework
+#   - Weighted progress
+#   - Compound impact
+#   - Institutional memory
+#   - Audit dossier
+# ===========================================================================
+
 app.include_router(stages.router)
 app.include_router(reopen.router)
 app.include_router(progress.router)
 app.include_router(impact.router)
 app.include_router(memory.router)
 app.include_router(dossier.router)
-
