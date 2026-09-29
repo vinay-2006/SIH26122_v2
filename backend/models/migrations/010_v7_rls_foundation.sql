@@ -97,9 +97,31 @@ BEGIN
         CREATE POLICY "v7_contractors_select" ON contractors FOR SELECT TO authenticated 
         USING (is_project_member(project_id));
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_contractors_insert') THEN
+        CREATE POLICY "v7_contractors_insert" ON contractors FOR INSERT TO authenticated 
+        WITH CHECK (is_project_member(project_id));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_contractors_update') THEN
+        CREATE POLICY "v7_contractors_update" ON contractors FOR UPDATE TO authenticated 
+        USING (is_project_member(project_id));
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_work_packages_select') THEN
         CREATE POLICY "v7_work_packages_select" ON work_packages FOR SELECT TO authenticated 
         USING (is_project_member(project_id));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_work_packages_insert') THEN
+        CREATE POLICY "v7_work_packages_insert" ON work_packages FOR INSERT TO authenticated 
+        WITH CHECK (is_project_member(project_id));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_work_packages_update') THEN
+        CREATE POLICY "v7_work_packages_update" ON work_packages FOR UPDATE TO authenticated 
+        USING (is_project_member(project_id));
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_activities_update') THEN
+        CREATE POLICY "v7_activities_update" ON schedule_activities FOR UPDATE TO authenticated 
+        USING (project_id IS NULL OR is_project_member(project_id));
     END IF;
 
     -- Quality Gates & Evidence: project member access

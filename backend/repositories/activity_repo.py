@@ -90,3 +90,54 @@ class ProjectActivityRepository(BaseRepository):
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
+
+    @classmethod
+    def update_attribution(
+        cls,
+        context: Union[ScheduleContext, ProjectContext],
+        activity_id: str,
+        contractor_id: Optional[str] = None,
+        work_package_id: Optional[str] = None,
+        stage_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        existing = cls.get(context, activity_id)
+        if not existing:
+            return None
+
+        fields = []
+        params = []
+        if contractor_id is not None:
+            fields.append("contractor_id = %s")
+            params.append(contractor_id if contractor_id else None)
+        if work_package_id is not None:
+            fields.append("work_package_id = %s")
+            params.append(work_package_id if work_package_id else None)
+        if stage_id is not None:
+            fields.append("stage_id = %s")
+            params.append(stage_id if stage_id else None)
+
+        if not fields:
+            return existing
+
+        params.extend([activity_id, context.project_id])
+        schedule_id = getattr(context, "schedule_id", None)
+        where_clause = "WHERE activity_id = %s AND project_id = %s"
+        if schedule_id:
+            where_clause += " AND schedule_id = %s"
+            params.append(schedule_id)
+
+        query = f"""
+            UPDATE schedule_activities
+            SET {', '.join(fields)}
+            {where_clause}
+            RETURNING activity_id, schedule_id, project_id, stage_id, contractor_id,
+                      work_package_id, activity_name, wbs_code, discipline, location;
+        """
+
+        with cls.rls_connection(context.user_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                row = cur.fetchone()
+                conn.commit()
+                return dict(row) if row else None
+

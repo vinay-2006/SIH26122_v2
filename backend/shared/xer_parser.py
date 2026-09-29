@@ -291,3 +291,164 @@ def build_claim_from_activity(
         f"{activity.activity_name} — {status_label}"
     ).strip(" —")
     return raw_text, extracted
+
+
+def parse_schedule_xer(contents: bytes, schedule_id: str):
+    """
+    Parses a Primavera P6 .xer file into a ScheduleParseResult (ScheduleActivity + ScheduleDependency).
+    Extracts activities (%T TASK), dependencies (%T TASKPRED), WBS (%T PROJWBS), float, and dates.
+    """
+    import uuid
+    from backend.shared.schedule import ScheduleParseResult, ScheduleValidationError
+    from backend.shared.schemas import ScheduleActivity, ScheduleDependency
+
+    if not schedule_id or not schedule_id.strip():
+        raise ValueError("schedule_id is required to parse a schedule")
+
+    try:
+        tables = parse_xer_tables(contents)
+    except XERParseError as e:
+        return ScheduleParseResult(
+            schedule_id=schedule_id,
+            errors=[ScheduleValidationError(row_number=1, field_name="xer_header", message=str(e))],
+        )
+
+    task_table = tables.get("TASK")
+    if not task_table or not task_table.rows:
+        return ScheduleParseResult(
+            schedule_id=schedule_id,
+            errors=[ScheduleValidationError(row_number=1, field_name="TASK", message="XER file has no TASK table or rows")],
+        )
+
+    projwbs = tables.get("PROJWBS")
+    wbs_map = {}
+    wbs_discipline_map = _build_wbs_discipline_map(projwbs)
+    if projwbs:
+        for row in projwbs.rows:
+            wid = row.get("wbs_id")
+            wcode = row.get("wbs_short_name") or row.get("wbs_code") or row.get("wbs_name")
+            if wid:
+                wbs_map[wid] = wcode
+
+    activities: list[ScheduleActivity] = []
+    errors: list[ScheduleValidationError] = []
+    task_id_to_activity_id: dict[str, str] = {}
+    seen_activity_ids: set[str] = set()
+
+    for idx, row in enumerate(task_table.rows, start=2):
+        activity_id = (row.get("task_code") or "").strip()
+        internal_task_id = (row.get("task_id") or "").strip()
+
+        if not activity_id:
+            continue
+
+        if activity_id in seen_activity_ids:
+            errors.append(
+                ScheduleValidationError(
+                    row_number=idx,
+                    field_name="activity_id",
+                    message=f"Duplicate activity_id {activity_id!r} in XER",
+                    activity_id=activity_id,
+                )
+            )
+            continue
+        seen_activity_ids.add(activity_id)
+        if internal_task_id:
+            task_id_to_activity_id[internal_task_id] = activity_id
+
+        activity_name = (row.get("task_name") or "").strip() or f"Activity {activity_id}"
+        wbs_id = row.get("wbs_id")
+        wbs_code = wbs_map.get(wbs_id) or "WBS-MAIN"
+        discipline = wbs_discipline_map.get(wbs_id) or "CIVIL"
+
+        p_start = _parse_xer_date(row.get("target_start_date") or row.get("early_start_date") or row.get("act_start_date"))
+        p_finish = _parse_xer_date(row.get("target_end_date") or row.get("early_end_date") or row.get("act_end_date"))
+
+        if not p_start:
+            p_start = date_type(2026, 1, 1)
+        if not p_finish:
+            p_finish = p_start
+
+        planned_qty = _to_float(row.get("target_qty_cnt"))
+        total_float_hrs = _to_float(row.get("total_float_hr_cnt"))
+        total_float = round(total_float_hrs / 8.0, 2) if total_float_hrs is not None else None
+        is_critical = (total_float <= 0.0) if total_float is not None else None
+
+        try:
+            act = ScheduleActivity(
+                schedule_id=schedule_id,
+                activity_id=activity_id,
+                activity_name=activity_name,
+                wbs_code=wbs_code,
+                discipline=discipline,
+                location="Site",
+                asset_tag=None,
+                planned_start=p_start,
+                planned_finish=p_finish,
+                planned_quantity=planned_qty,
+                uom=None,
+                baseline_pct_complete=0.0,
+                total_float=total_float,
+                is_critical=is_critical,
+            )
+            activities.append(act)
+        except Exception as exc:
+            errors.append(
+                ScheduleValidationError(
+                    row_number=idx,
+                    field_name="activity",
+                    message=str(exc),
+                    activity_id=activity_id,
+                )
+            )
+
+    dependencies: list[ScheduleDependency] = []
+    taskpred = tables.get("TASKPRED")
+    if taskpred:
+        rel_map = {
+            "PR_FS": "FS",
+            "PR_SS": "SS",
+            "PR_FF": "FF",
+            "PR_SF": "SF",
+        }
+        for idx, row in enumerate(taskpred.rows, start=2):
+            pred_tid = row.get("pred_task_id")
+            succ_tid = row.get("task_id")
+            pred_aid = task_id_to_activity_id.get(pred_tid)
+            succ_aid = task_id_to_activity_id.get(succ_tid)
+
+            if not pred_aid or not succ_aid:
+                continue
+            if pred_aid == succ_aid:
+                errors.append(
+                    ScheduleValidationError(
+                        row_number=idx,
+                        field_name="predecessor_activity_id",
+                        message="Activity cannot depend on itself in XER TASKPRED",
+                        activity_id=succ_aid,
+                    )
+                )
+                continue
+
+            raw_rel = row.get("pred_type", "PR_FS")
+            rel_type = rel_map.get(raw_rel, "FS")
+            lag_hrs = _to_float(row.get("lag_hr_cnt")) or 0.0
+            lag_days = round(lag_hrs / 8.0, 2)
+
+            dep = ScheduleDependency(
+                dependency_id=str(uuid.uuid4()),
+                schedule_id=schedule_id,
+                predecessor_activity_id=pred_aid,
+                successor_activity_id=succ_aid,
+                relationship_type=rel_type,
+                lag_days=lag_days,
+            )
+            dependencies.append(dep)
+
+    return ScheduleParseResult(
+        schedule_id=schedule_id,
+        activities=activities,
+        dependencies=dependencies,
+        errors=errors,
+    )
+

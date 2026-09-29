@@ -22,6 +22,9 @@ class Permission(str, Enum):
     REQUEST_REOPEN = "REQUEST_REOPEN"
     APPROVE_REOPEN = "APPROVE_REOPEN"
     MANAGE_QUALITY = "MANAGE_QUALITY"
+    VIEW_QUALITY = "VIEW_QUALITY"
+    APPROVE_QUALITY = "APPROVE_QUALITY"
+    WAIVE_QUALITY = "WAIVE_QUALITY"
     VIEW_AUDIT = "VIEW_AUDIT"
 
 
@@ -34,6 +37,7 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.MANAGE_SCHEDULE,
         Permission.VIEW_EXECUTION_EVENTS,
         Permission.REVIEW_CLAIM,
+        Permission.VIEW_QUALITY,
         Permission.VIEW_AUDIT,
     },
     ProjectRole.SUPERVISOR.value: {
@@ -45,6 +49,9 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.REQUEST_REOPEN,
         Permission.APPROVE_REOPEN,
         Permission.MANAGE_QUALITY,
+        Permission.VIEW_QUALITY,
+        Permission.APPROVE_QUALITY,
+        Permission.WAIVE_QUALITY,
         Permission.VIEW_AUDIT,
     },
     ProjectRole.SITE_ENGINEER.value: {
@@ -52,6 +59,7 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.VIEW_SCHEDULE,
         Permission.CREATE_EXECUTION_EVENT,
         Permission.VIEW_EXECUTION_EVENTS,
+        Permission.VIEW_QUALITY,
         Permission.REQUEST_REOPEN,
     },
     ProjectRole.QUALITY_INSPECTOR.value: {
@@ -59,12 +67,15 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.VIEW_SCHEDULE,
         Permission.VIEW_EXECUTION_EVENTS,
         Permission.MANAGE_QUALITY,
+        Permission.VIEW_QUALITY,
+        Permission.APPROVE_QUALITY,
         Permission.VIEW_AUDIT,
     },
     ProjectRole.AUDITOR.value: {
         Permission.VIEW_PROJECT,
         Permission.VIEW_SCHEDULE,
         Permission.VIEW_EXECUTION_EVENTS,
+        Permission.VIEW_QUALITY,
         Permission.VIEW_AUDIT,
     },
 }
