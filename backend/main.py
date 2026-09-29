@@ -35,6 +35,8 @@ from backend.routers import (
     reopen,
     progress,
     impact,
+    memory,
+    dossier,
 )
 from backend.shared.db import init_db
 
@@ -156,4 +158,6 @@ app.include_router(stages.router)
 app.include_router(reopen.router)
 app.include_router(progress.router)
 app.include_router(impact.router)
+app.include_router(memory.router)
+app.include_router(dossier.router)
 
