@@ -14,6 +14,11 @@ import {
   Send,
   Paperclip,
   X,
+  Building2,
+  Lock,
+  Unlock,
+  ShieldAlert,
+  GitFork,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,8 +27,22 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorState } from '@/components/ui/error-state';
-import { claimsApi, ExecutionEvent } from '@/api';
+import {
+  claimsApi,
+  schedulesApi,
+  qualityGatesApi,
+  impactApi,
+  ExecutionEvent,
+  CandidateMatch,
+  ScheduleActivity,
+  ExecutionState,
+  QualityGate,
+  CompoundImpact,
+} from '@/api';
 import { cn } from '@/lib/utils';
+import { useProject } from '@/context/ProjectContext';
+import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
+import { ReopenRequestModal } from '@/components/ReopenRequestModal';
 
 type InputTab = 'text' | 'voice' | 'file';
 
@@ -34,6 +53,7 @@ const ACCEPTED_FILE_EXTS = ['.pdf', '.xlsx', '.xls', '.csv', '.txt', '.xer', '.j
 
 export default function ClaimIntake() {
   const { t } = useTranslation();
+  const { currentProject, currentScheduleVersion } = useProject();
 
   const [activeTab, setActiveTab] = useState<InputTab>('text');
 
@@ -74,6 +94,15 @@ export default function ClaimIntake() {
   const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
   const [clarifyingEventId, setClarifyingEventId] = useState<string | null>(null);
   const [clarifyError, setClarifyError] = useState<Record<string, string | null>>({});
+
+  // Reopen Request & Completed Activity Protection State
+  const [candidateMatches, setCandidateMatches] = useState<Record<string, CandidateMatch[]>>({});
+  const [activitiesMap, setActivitiesMap] = useState<Record<string, ScheduleActivity>>({});
+  const [scheduleQualityGates, setScheduleQualityGates] = useState<QualityGate[]>([]);
+  const [scheduleImpacts, setScheduleImpacts] = useState<CompoundImpact[]>([]);
+  const [reopenModalActivity, setReopenModalActivity] = useState<ScheduleActivity | null>(null);
+  const [reopenModalEventId, setReopenModalEventId] = useState<string | undefined>(undefined);
+  const [reopenedActivityIds, setReopenedActivityIds] = useState<Set<string>>(new Set());
 
   // Web Speech API Initialization
   useEffect(() => {
@@ -235,6 +264,8 @@ export default function ClaimIntake() {
     setClarificationAnswers({});
     setClarifyingEventId(null);
     setClarifyError({});
+    setCandidateMatches({});
+    setReopenModalActivity(null);
   };
 
   const proceedMatchingAndChecking = async (events: ExecutionEvent[]) => {
@@ -242,12 +273,35 @@ export default function ClaimIntake() {
     setPipelineError(null);
     try {
       setPipelineStep(2); // Matching
+      const matchMap: Record<string, CandidateMatch[]> = {};
       await Promise.all(
         events.map(async (ev) => {
           const matchRes = await claimsApi.match(ev.event_id);
           ev.status = matchRes.status;
+          if (matchRes.matches) {
+            matchMap[ev.event_id] = matchRes.matches;
+          }
         })
       );
+      setCandidateMatches(matchMap);
+
+      // Load activities map and quality gates for target metadata display
+      try {
+        const [acts, qgs, impacts] = await Promise.all([
+          schedulesApi.getActivities(currentScheduleVersion.id),
+          qualityGatesApi.getGates({ scheduleId: currentScheduleVersion.id }),
+          impactApi.getScheduleImpacts(currentProject.id, currentScheduleVersion.id).catch(() => []),
+        ]);
+        const map: Record<string, ScheduleActivity> = {};
+        acts.forEach((a) => {
+          map[a.activity_id] = a;
+        });
+        setActivitiesMap(map);
+        setScheduleQualityGates(qgs);
+        setScheduleImpacts(impacts || []);
+      } catch {
+        // ignore error
+      }
 
       setPipelineStep(3); // Checking
       await Promise.all(
@@ -314,8 +368,11 @@ export default function ClaimIntake() {
     }
   };
 
+  // State for Schedule Export Progress Mode
+  const [isScheduleExport, setIsScheduleExport] = useState(false);
+
   // Submit Claim & Execute Pipeline (Intake -> Match -> Check -> Complete)
-  const runPipeline = async (claimText: string, file: File | null = null) => {
+  const runPipeline = async (claimText: string, file: File | null = null, asScheduleExport = false) => {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
     setIsProcessing(true);
@@ -328,6 +385,9 @@ export default function ClaimIntake() {
       if (file && activeTab === 'text') {
         const res = await claimsApi.submitText(claimText, file);
         events = [res.event];
+      } else if (file && (asScheduleExport || file.name.endsWith('.xer') || file.name.endsWith('.xml'))) {
+        const res = await claimsApi.submitScheduleExport(file);
+        events = res.events;
       } else if (file) {
         const res = await claimsApi.submitFile(file);
         events = res.events;
@@ -376,7 +436,12 @@ export default function ClaimIntake() {
 
   const handleSubmitFile = () => {
     if (!selectedFile) return;
-    runPipeline(`Uploaded document: ${selectedFile.name}`, selectedFile);
+    const isExport = isScheduleExport || selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml');
+    runPipeline(
+      isExport ? `P6/MSP Schedule Progress Export: ${selectedFile.name}` : `Uploaded document: ${selectedFile.name}`,
+      selectedFile,
+      isExport
+    );
   };
 
   const hasPendingClarification = createdEvents.some((ev) => ev.clarification_status === 'PENDING');
@@ -402,6 +467,16 @@ export default function ClaimIntake() {
           <PlusCircle className="w-5 h-5" />
         </div>
         <div>
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pb-0.5 flex-wrap">
+            <span className="flex items-center gap-1 font-bold text-primary">
+              <Building2 className="w-3.5 h-3.5 text-[#FF7A18]" />
+              {currentProject.name} ({currentProject.code})
+            </span>
+            <span>·</span>
+            <span className="text-[11px] px-2 py-0.2 rounded bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border border-slate-300 dark:border-[#214766]">
+              {currentScheduleVersion.versionNumber}
+            </span>
+          </div>
           <h1 className="text-2xl font-extrabold text-[#071A2D] dark:text-[#F5F7FA] tracking-tight">
             {t('intake.title')}
           </h1>
@@ -539,7 +614,7 @@ export default function ClaimIntake() {
                         </div>
                       </div>
                     ) : (
-                      <div className="p-3 rounded-xl border border-orange-500/30 bg-orange-500/5 dark:bg-orange-950/20 space-y-2">
+                      <div className="p-3 rounded-xl border border-orange-500/30 bg-orange-50/5 dark:bg-orange-950/20 space-y-2">
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2.5 truncate">
                             {evidencePreviewUrl ? (
@@ -741,21 +816,38 @@ export default function ClaimIntake() {
               </Card>
             </TabsContent>
 
-            {/* TAB 3: FILE UPLOAD */}
+            {/* TAB 3: FILE UPLOAD & P6/MSP PROGRESS EXPORT */}
             <TabsContent value="file" className="mt-0 focus-visible:outline-none">
               <Card className="border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl">
                 <CardHeader className="p-6 pb-4">
                   <CardTitle className="text-base font-extrabold text-[#071A2D] dark:text-[#F5F7FA]">{t('intake.fileCardTitle')}</CardTitle>
                   <CardDescription className="text-[#334155] dark:text-[#C5D2DE] text-xs font-semibold mt-1">
-                    {t('intake.fileCardDesc')}
+                    Ingest field progress from documents, scanned logs, or subcontractor P6/MSP schedule export files.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-6 pt-0 space-y-4">
+                  {/* File Intake Categories Guidance */}
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#0A2238] border border-slate-200/80 dark:border-[#214766] space-y-1.5 text-xs">
+                    <span className="font-bold text-[#071A2D] dark:text-[#F5F7FA] block text-[11px]">
+                      Supported Progress Input Categories:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-[#FF7A18] shrink-0" />
+                        <span>Daily Reports & Diaries (.pdf, .txt, .png)</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span>P6 / MSP Progress Exports (.xer, .xml, .csv, .xlsx)</span>
+                      </div>
+                    </div>
+                  </div>
+
                   <input
                     type="file"
                     ref={fileInputRef}
                     id="doc-file-input"
-                    accept=".pdf,.xlsx,.xls,.csv,.txt,.xer,.jpg,.jpeg,.png"
+                    accept=".pdf,.xlsx,.xls,.csv,.txt,.xer,.xml,.jpg,.jpeg,.png"
                     onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
                     className="hidden"
                   />
@@ -772,7 +864,7 @@ export default function ClaimIntake() {
                       }
                     }}
                     className={cn(
-                      'border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                      'border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                       fileError
                         ? 'border-destructive bg-destructive/5'
                         : selectedFile
@@ -780,12 +872,39 @@ export default function ClaimIntake() {
                         : 'border-slate-300 dark:border-[#214766] hover:border-[#FF7A18] bg-slate-50/50 dark:bg-[#0A2238]/60'
                     )}
                   >
-                    <Upload className={cn('w-8 h-8 mx-auto', selectedFile ? 'text-[#FF7A18]' : 'text-slate-400')} />
+                    <Upload className={cn('w-7 h-7 mx-auto', selectedFile ? 'text-[#FF7A18]' : 'text-slate-400')} />
                     <div className="text-xs text-[#071A2D] dark:text-[#F5F7FA] font-bold">
                       {selectedFile ? selectedFile.name : t('intake.clickToBrowse')}
                     </div>
-                    <div className="text-[10px] text-[#475569] dark:text-[#9FB2C3] font-medium">{t('intake.supportedFormats')}</div>
+                    <div className="text-[10px] text-[#475569] dark:text-[#9FB2C3] font-medium">
+                      PDF, XLSX, CSV, TXT, XER (Primavera P6), XML (MS Project), JPG/PNG
+                    </div>
                   </div>
+
+                  {/* Schedule Progress Export Mode Selector */}
+                  {selectedFile && (
+                    <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-between text-xs">
+                      <div className="space-y-0.5">
+                        <span className="font-bold text-[#071A2D] dark:text-[#F5F7FA] block text-[11px]">
+                          P6 / MS Project Export Mode
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml')
+                            ? 'Auto-detected P6/MSP file: Rows will be parsed directly as activity progress claims.'
+                            : 'Treat tabular rows as structured subcontractor progress claims.'}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-2 font-bold cursor-pointer text-xs shrink-0 text-primary">
+                        <input
+                          type="checkbox"
+                          checked={isScheduleExport || selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml')}
+                          onChange={(e) => setIsScheduleExport(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-300 text-[#FF7A18] focus:ring-[#FF7A18]"
+                        />
+                        <span>P6 Export Mode</span>
+                      </label>
+                    </div>
+                  )}
 
                   {fileError && (
                     <p role="alert" className="text-xs text-destructive font-semibold">
@@ -804,7 +923,11 @@ export default function ClaimIntake() {
                         : 'bg-gradient-to-r from-[#FF7A18] to-[#FF941F] hover:from-[#E06810] hover:to-[#FF7A18] cursor-pointer'
                     )}
                   >
-                    {isProcessing ? t('intake.extractingDocument') : t('intake.ingestDocument')}
+                    {isProcessing
+                      ? t('intake.extractingDocument')
+                      : isScheduleExport || selectedFile?.name.endsWith('.xer') || selectedFile?.name.endsWith('.xml')
+                      ? 'Ingest Schedule Progress Export Claims'
+                      : t('intake.ingestDocument')}
                   </Button>
                 </CardContent>
               </Card>
@@ -938,6 +1061,54 @@ export default function ClaimIntake() {
                           <StatusBadge status={ev.status} size="sm" />
                         </div>
 
+                        {/* Read-only Quality Gate / Hold Point Context */}
+                        {(() => {
+                          const targetActId = ev.matched_activity_id || ev.reported_activity_id || candidateMatches[ev.event_id]?.[0]?.activity_id;
+                          if (!targetActId) return null;
+                          const targetGates = scheduleQualityGates.filter((g) => g.activityId === targetActId);
+                          if (targetGates.length === 0) return null;
+                          const completedCount = targetGates.filter((g) => g.status === 'COMPLETED' || g.status === 'WAIVED').length;
+                          const hasHoldPoint = targetGates.some((g) => g.gateType === 'HOLD_POINT' && g.required && (g.status === 'PENDING' || g.status === 'BLOCKED'));
+
+                          return (
+                            <div className="p-2 rounded-lg bg-slate-50 dark:bg-[#0B2742] border border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-1.5">
+                                <ShieldAlert className={cn("w-3.5 h-3.5", hasHoldPoint ? "text-rose-500" : "text-teal-500")} />
+                                <span className="font-semibold text-foreground">
+                                  Quality Gates: {completedCount}/{targetGates.length} Cleared
+                                </span>
+                              </div>
+                              {hasHoldPoint && (
+                                <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
+                                  Hold Point Pending
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Read-only Downstream Impact Indicator */}
+                        {(() => {
+                          const targetActId = ev.matched_activity_id || ev.reported_activity_id || candidateMatches[ev.event_id]?.[0]?.activity_id;
+                          if (!targetActId) return null;
+                          const imp = scheduleImpacts.find((i) => i.activityId === targetActId);
+                          if (!imp || (imp.impactLevel === 'LOW' && imp.totalDownstreamCount === 0)) return null;
+
+                          return (
+                            <div className="p-2 rounded-lg bg-amber-500/5 dark:bg-[#0B2742] border border-amber-300/40 dark:border-amber-900/40 flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-1.5">
+                                <GitFork className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                <span className="font-semibold text-foreground">
+                                  Downstream Impact: {imp.impactLevel} ({imp.totalDownstreamCount} activities affected)
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {imp.directSuccessorCount} Direct Successors
+                              </span>
+                            </div>
+                          );
+                        })()}
+
                         {/* Feature 29: Adaptive Field Copilot — Clarification Prompt */}
                         {ev.clarification_status === 'PENDING' || ev.clarification_question ? (
                           <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-2.5">
@@ -995,6 +1166,97 @@ export default function ClaimIntake() {
                             )}
                           </div>
                         ) : null}
+                        {/* Completed Activity Protection & Exception Flow */}
+                        {(() => {
+                          const matches = candidateMatches[ev.event_id] || [];
+                          const topMatch = matches[0];
+                          const isCompletedProtected =
+                            topMatch?.is_completed_protected ||
+                            topMatch?.match_tier === 'COMPLETED_PROTECTED' ||
+                            ev.is_completed_activity_target;
+                          const targetActId = topMatch?.activity_id || ev.reported_activity_id || ev.matched_activity_id;
+                          const targetAct = (targetActId ? activitiesMap[targetActId] : null) || (targetActId ? ({
+                            activity_id: targetActId,
+                            schedule_id: currentScheduleVersion.id,
+                            activity_name: topMatch?.supporting_signals?.split('.')[0] || 'Completed Milestone Package',
+                            discipline: ev.discipline || 'CIVIL',
+                            location: ev.location || 'Site Area',
+                            wbs_code: topMatch?.wbs_code || 'WBS-1.0',
+                            planned_start: '2026-09-01',
+                            planned_finish: '2026-09-08',
+                            actual_start: '2026-09-01',
+                            actual_finish: '2026-09-08',
+                            planned_quantity: null,
+                            uom: null,
+                            baseline_pct_complete: 100,
+                            actual_pct_complete: 100,
+                            execution_state: 'COMPLETED' as ExecutionState,
+                          } as ScheduleActivity) : null);
+
+                          if (!isCompletedProtected || !targetAct) return null;
+
+                          const isAlreadyRequested =
+                            reopenedActivityIds.has(targetAct.activity_id) ||
+                            targetAct.execution_state === 'REOPEN_REQUESTED';
+
+                          return (
+                            <div className="p-3.5 rounded-xl border border-purple-300 dark:border-purple-800/80 bg-purple-500/10 dark:bg-purple-950/30 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-bold text-xs">
+                                  <ShieldAlert className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                                  <span>Activity Already Completed & Protected</span>
+                                </div>
+                                <ExecutionStateBadge state={targetAct.execution_state || 'COMPLETED'} size="sm" />
+                              </div>
+
+                              <p className="text-xs text-foreground/90 font-medium leading-relaxed">
+                                This claim targets <strong className="text-purple-700 dark:text-purple-300 font-mono">{targetAct.activity_id}</strong> ({targetAct.activity_name}), which is already marked <strong>COMPLETED (100%)</strong>. To protect authoritative schedule actuals from inadvertent corruption, ordinary claims cannot overwrite completed activities without a Supervisor-approved reopen.
+                              </p>
+
+                              {/* Locked Actuals Summary Box */}
+                              <div className="p-2.5 rounded-lg bg-white/80 dark:bg-[#0B2742]/80 border border-purple-200 dark:border-purple-900/50 space-y-2 text-[11px]">
+                                <div className="flex items-center gap-1.5 text-purple-800 dark:text-purple-300 font-semibold">
+                                  <Lock className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                                  <span>Authoritative Locked Actuals Summary</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                  <div className="p-1.5 rounded bg-slate-50 dark:bg-[#081E33] border border-slate-200 dark:border-slate-800">
+                                    <span className="text-muted-foreground block text-[10px]">Actual Start</span>
+                                    <span className="font-mono font-medium text-foreground">{targetAct.actual_start || targetAct.planned_start || '2026-09-01'}</span>
+                                  </div>
+                                  <div className="p-1.5 rounded bg-slate-50 dark:bg-[#081E33] border border-slate-200 dark:border-slate-800">
+                                    <span className="text-muted-foreground block text-[10px]">Actual Finish</span>
+                                    <span className="font-mono font-medium text-foreground">{targetAct.actual_finish || targetAct.planned_finish || '2026-09-08'}</span>
+                                  </div>
+                                  <div className="p-1.5 rounded bg-slate-50 dark:bg-[#081E33] border border-slate-200 dark:border-slate-800">
+                                    <span className="text-muted-foreground block text-[10px]">Completion</span>
+                                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">100%</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {isAlreadyRequested ? (
+                                <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                  <span>Reopen request submitted for {targetAct.activity_id}. Status transitioned to REOPEN_REQUESTED pending Supervisor approval.</span>
+                                </div>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    setReopenModalActivity(targetAct);
+                                    setReopenModalEventId(ev.event_id);
+                                  }}
+                                  className="w-full text-xs font-bold h-8.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-xs gap-1.5 cursor-pointer"
+                                >
+                                  <Unlock className="w-3.5 h-3.5" />
+                                  Request Activity Reopen from Supervisor
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -1014,6 +1276,29 @@ export default function ClaimIntake() {
           </Card>
         </div>
       </div>
+
+      {/* Reopen Request Modal */}
+      {reopenModalActivity && (
+        <ReopenRequestModal
+          activity={reopenModalActivity}
+          eventId={reopenModalEventId}
+          isOpen={!!reopenModalActivity}
+          onClose={() => {
+            setReopenModalActivity(null);
+            setReopenModalEventId(undefined);
+          }}
+          onSuccess={(req) => {
+            setReopenedActivityIds((prev) => new Set(prev).add(req.activity_id));
+            setActivitiesMap((prev) => ({
+              ...prev,
+              [req.activity_id]: {
+                ...prev[req.activity_id],
+                execution_state: 'REOPEN_REQUESTED',
+              },
+            }));
+          }}
+        />
+      )}
     </div>
   );
 }

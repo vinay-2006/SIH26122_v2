@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useProject } from '@/context/ProjectContext';
 import {
   Card,
   CardContent,
@@ -63,6 +64,7 @@ import {
 } from '@/components/ui/card';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ProvenanceBadge } from '@/components/ProvenanceBadge';
+import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -181,6 +183,7 @@ function TimelinePhoto({ eventId, photoPath }: { eventId: string; photoPath?: st
 export default function ActivityHistory() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { currentProject, currentScheduleVersion } = useProject();
 
   // URL Deep Link
   const activityIdFromUrl = searchParams.get('activity_id') || '';
@@ -245,6 +248,7 @@ export default function ActivityHistory() {
 
     try {
       const res = await activitiesApi.getActivities({
+        schedule_id: currentScheduleVersion.id,
         search: searchFilter || undefined,
         discipline: selectedDiscipline !== 'ALL' ? selectedDiscipline : undefined,
         location: selectedLocation !== 'ALL' ? selectedLocation : undefined,
@@ -276,6 +280,8 @@ export default function ActivityHistory() {
       setIsLoadingDirectory(false);
     }
   }, [
+    currentProject.id,
+    currentScheduleVersion.id,
     searchFilter,
     selectedDiscipline,
     selectedLocation,
@@ -468,6 +474,16 @@ export default function ActivityHistory() {
       {/* Top Header & Search Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-300 dark:border-[#214766]/60 pb-3">
         <div>
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pb-1 flex-wrap">
+            <span className="flex items-center gap-1 font-bold text-primary">
+              <Building2 className="w-3.5 h-3.5 text-[#FF7A18]" />
+              {currentProject.name} ({currentProject.code})
+            </span>
+            <span>·</span>
+            <span className="text-[11px] px-2 py-0.2 rounded bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border border-slate-300 dark:border-[#214766]">
+              {currentScheduleVersion.versionNumber}
+            </span>
+          </div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-[#071A2D] dark:text-[#F5F7FA] tracking-tight flex items-center gap-2">
             <div className="p-1.5 rounded-lg bg-[#FC4C02]/10 border border-[#FC4C02]/20">
               <Clock className="w-5 h-5 text-[#FC4C02]" />
@@ -678,6 +694,9 @@ export default function ActivityHistory() {
                     <option value="IN_PROGRESS">{t('history.stateInProgress')}</option>
                     <option value="COMPLETED">{t('history.stateCompleted')}</option>
                     <option value="NOT_STARTED">{t('history.stateNotStarted')}</option>
+                    <option value="ON_HOLD">ON HOLD</option>
+                    <option value="REOPEN_REQUESTED">REOPEN REQUESTED</option>
+                    <option value="REOPENED">REOPENED</option>
                   </select>
                 </div>
 
@@ -820,33 +839,7 @@ export default function ActivityHistory() {
                         </span>
 
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {/* Execution State Indicator */}
-                          <span
-                            className={cn(
-                              'text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex items-center gap-1',
-                              isCompleted
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                : isInProgress
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                'w-1.5 h-1.5 rounded-full',
-                                isCompleted
-                                  ? 'bg-emerald-500'
-                                  : isInProgress
-                                  ? 'bg-amber-500'
-                                  : 'bg-slate-400'
-                              )}
-                            />
-                            {act.execution_state === 'IN_PROGRESS'
-                              ? 'IN PROGRESS'
-                              : act.execution_state === 'COMPLETED'
-                              ? 'COMPLETED'
-                              : 'NOT STARTED'}
-                          </span>
+                          <ExecutionStateBadge state={act.execution_state} size="sm" />
 
                           <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
                             {act.actual_pct_complete !== null
@@ -971,6 +964,8 @@ export default function ActivityHistory() {
                             Tag: {activityMetadata.asset_tag}
                           </span>
                         )}
+
+                        <ExecutionStateBadge state={activityMetadata.execution_state} size="sm" />
                       </div>
 
                       <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">
