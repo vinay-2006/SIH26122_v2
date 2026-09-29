@@ -328,4 +328,21 @@ BEGIN
               AND is_project_member(ee.project_id)
           ));
     END IF;
+
+    -- Stages Write Policies
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_stages_insert') THEN
+        CREATE POLICY "v7_stages_insert" ON stages FOR INSERT TO authenticated
+        WITH CHECK (project_id IS NOT NULL AND is_project_member(project_id));
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_stages_update') THEN
+        CREATE POLICY "v7_stages_update" ON stages FOR UPDATE TO authenticated
+        USING (project_id IS NOT NULL AND is_project_member(project_id))
+        WITH CHECK (project_id IS NOT NULL AND is_project_member(project_id));
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'v7_stages_delete') THEN
+        CREATE POLICY "v7_stages_delete" ON stages FOR DELETE TO authenticated
+        USING (project_id IS NOT NULL AND is_project_member(project_id));
+    END IF;
 END $$;
