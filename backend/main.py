@@ -45,6 +45,7 @@ from backend.routers import (
     impact,
     memory,
     dossier,
+    agent,
 )
 
 from backend.shared.db import init_db
@@ -257,6 +258,7 @@ app.include_router(quality.router)
 #   - Compound impact
 #   - Institutional memory
 #   - Audit dossier
+#   - Supervising agent
 # ===========================================================================
 
 app.include_router(stages.router)
@@ -265,3 +267,4 @@ app.include_router(progress.router)
 app.include_router(impact.router)
 app.include_router(memory.router)
 app.include_router(dossier.router)
+app.include_router(agent.router)
