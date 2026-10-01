@@ -134,3 +134,20 @@ def get_single_activity_impact_preview(
     """
     res_dict = ImpactService.get_single_activity_preview(context, activity_id=activity_id, delay_days=delay_days)
     return ImpactScenarioResult(**res_dict)
+
+
+# ============================================================================
+# 4. IMPACT WATCH LIST (activities in a problem state, ranked by downstream reach)
+# ============================================================================
+
+@router.get(
+    "/api/v1/projects/{project_id}/schedules/{schedule_id}/impact/watchlist",
+    summary="Blocked / held / reopened activities ranked by real downstream reach (read-only)",
+)
+def get_impact_watchlist(
+    project_id: uuid.UUID = Path(...),
+    schedule_id: str = Path(...),
+    sensitivity_days: int = Query(1, ge=1, le=30, description="Slip probed for each problem activity (a probe, not a forecast)"),
+    context: ScheduleContext = Depends(require_schedule_context),
+):
+    return ImpactService.get_watchlist(context, sensitivity_days=sensitivity_days)

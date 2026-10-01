@@ -4,8 +4,22 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.shared.auth import UserProfile, get_current_user, require_role
+from backend.context import gates
+from backend.shared.workflow_flags import with_workflow_flags
+from backend.context.event import EventContext
+from backend.shared.auth import UserProfile
 from backend.shared.schemas import CandidateMatch, ExecutionClaim, ScheduleActivity
+from backend.shared.discipline_normalize import normalize_discipline as _shared_normalize_discipline
+from backend.shared.match_signals import (
+    MIN_POOL_FOR_IDF,
+    BatchContext,
+    build_idf,
+    capped_text_score,
+    distinctive_coverage,
+    extension_adjustment,
+    find_activity_ids_in_text,
+    location_token_score,
+)
 from backend.shared.wbs_split import (
     SplitEditError,
     allocate_split,
@@ -59,11 +73,15 @@ def health():
 
 
 @router.get("/{event_id}/candidates")
-def get_candidates_endpoint(event_id: str):
+def get_candidates_endpoint(
+    event_id: str,
+    _event_context: EventContext = Depends(gates.event_view),
+):
     """
     GET /api/v1/claims/{event_id}/candidates
     Fetches the stored top-3 candidate_matches rows for a claim, as written
     by the most recent /match or /rematch call.
+    Requires authentication and active membership (VIEW_EXECUTION_EVENTS) in the claim's project.
     """
     if get_connection is None:
         raise HTTPException(
@@ -316,10 +334,10 @@ DISCIPLINE_MAP = {
 
 
 def normalize_discipline(disc: Optional[str]) -> Optional[str]:
+    """Canonical discipline code; delegates to the one shared normaliser (same vocabulary as intake and the database)."""
     if not disc or not str(disc).strip():
         return None
-    clean = str(disc).strip().lower()
-    return DISCIPLINE_MAP.get(clean, str(disc).strip().upper())
+    return _shared_normalize_discipline(str(disc))
 
 
 try:
@@ -422,6 +440,7 @@ def calculate_hybrid_score(
     location_score: float,
     discipline_score: float,
     has_semantic_results: bool = True,
+    semantic_scale_for_all: bool = False,
 ) -> float:
     """
     Calculates the composite confidence score for HYBRID_FALLBACK.
@@ -434,7 +453,9 @@ def calculate_hybrid_score(
     loc = max(0.0, min(1.0, float(location_score)))
     disc = max(0.0, min(1.0, float(discipline_score)))
 
-    if not has_semantic_results or sem == 0.0:
+    # semantic_scale_for_all: the pool was semantically searched, so EVERY candidate is scored on the same weights (a
+    # candidate the index did not return simply has semantic 0), instead of a fuzzy-heavy formula only for those.
+    if not has_semantic_results or (sem == 0.0 and not semantic_scale_for_all):
         composite = 0.50 * fuz + 0.30 * loc + 0.20 * disc
     else:
         composite = 0.50 * sem + 0.25 * fuz + 0.15 * loc + 0.10 * disc
@@ -497,6 +518,7 @@ def generate_hybrid_candidates(
     claim: Union[ExecutionClaim, dict],
     schedule_activities: List[Union[ScheduleActivity, dict]],
     semantic_results: Optional[List[Union[dict, object]]] = None,
+    batch_context: Optional[BatchContext] = None,
 ) -> List[CandidateMatch]:
     """
     Tier 3: HYBRID_FALLBACK Candidate Generation.
@@ -504,6 +526,12 @@ def generate_hybrid_candidates(
     When semantic_results is missing or empty, generates candidates for schedule activities using semantic_score = 0.0.
     Calculates 4 component scores: semantic_score, fuzzy_score, location_score, discipline_score,
     and combines them with formula: 0.50*sem + 0.25*fuz + 0.15*loc + 0.10*disc.
+
+    On top of that base score (unchanged), activities that carry the data add explainable adjustments
+    (see backend/shared/match_signals.py): stage name, planned-window date, quantity+unit, cited WBS code and the stage
+    prior from the other claims of the same upload batch. The activity description joins the text comparison, and a
+    location is "matched" on a graded token overlap, not only on exact substring. Activities that carry none of these
+    (no description / stage / dates) score exactly as before.
     """
     if isinstance(claim, ExecutionClaim):
         claim_schedule_id = claim.schedule_id
@@ -511,12 +539,18 @@ def generate_hybrid_candidates(
         claim_text = claim.raw_claim_text
         claim_loc = claim.location
         claim_disc = claim.discipline
+        claim_date = claim.event_date
+        claim_qty = claim.claimed_quantity
+        claim_uom = claim.claimed_uom
     elif isinstance(claim, dict):
         claim_schedule_id = claim.get("schedule_id")
         event_id = claim.get("event_id", "evt_unknown")
         claim_text = claim.get("raw_claim_text", "")
         claim_loc = claim.get("location")
         claim_disc = claim.get("discipline")
+        claim_date = claim.get("event_date")
+        claim_qty = claim.get("claimed_quantity")
+        claim_uom = claim.get("claimed_uom")
     else:
         return []
 
@@ -563,6 +597,13 @@ def generate_hybrid_candidates(
 
     candidates: List[CandidateMatch] = []
 
+    # distinctive-word weights from this schedule's own activity texts (only meaningful for a real schedule, not a 3-row fixture)
+    idf = None
+    if len(act_map) >= MIN_POOL_FOR_IDF:
+        idf = build_idf(
+            f"{_get_act_dict(a).get('activity_name') or ''} {_get_act_dict(a).get('description') or ''}" for a in act_map.values()
+        )
+
     for item in targets:
         act_id = item["activity_id"]
         sem_score = item["semantic_score"]
@@ -581,9 +622,26 @@ def generate_hybrid_candidates(
             act_loc = act.get("location")
             act_disc = act.get("discipline")
             act_schedule_id = act.get("schedule_id")
+        act_extra = _get_act_dict(act)
+        act_desc = act_extra.get("description")
 
         fuz_score = calculate_fuzzy_score(claim_text, act_name)
+        if act_desc:  # the description is extra evidence about what the activity is; it can raise, never lower, the score
+            fuz_score = max(fuz_score, round(0.95 * calculate_fuzzy_score(claim_text, f"{act_name}. {act_desc}"), 6))
+        generic_overlap = None
+        if idf is not None:
+            # the activity NAME defines the activity; the description can only add recall, never dilute a name that is fully present
+            coverage = max(distinctive_coverage(claim_text, act_name, idf),
+                           distinctive_coverage(claim_text, f"{act_name} {act_desc or ''}", idf))
+            capped = capped_text_score(fuz_score, coverage)
+            if capped < fuz_score - 0.02:
+                generic_overlap = (fuz_score, capped, coverage)
+            fuz_score = capped
         loc_score = calculate_location_score(claim_loc, act_loc)
+        if loc_score == 0.0:
+            graded = location_token_score(claim_loc, act_loc)
+            if graded >= 0.6:
+                loc_score = graded
         disc_score = calculate_discipline_score(claim_disc, act_disc)
 
         comp_confidence = calculate_hybrid_score(
@@ -592,6 +650,7 @@ def generate_hybrid_candidates(
             loc_score,
             disc_score,
             has_semantic_results=bool(semantic_results),
+            semantic_scale_for_all=bool(semantic_results) and idf is not None,
         )
 
         supporting: List[str] = [
@@ -599,6 +658,11 @@ def generate_hybrid_candidates(
             f"fuzzy score: {fuz_score:.2f}",
         ]
         disqualifying: List[str] = []
+        if generic_overlap:
+            disqualifying.append(
+                f"overlap is mostly generic words (text similarity {generic_overlap[0]:.2f} limited to {generic_overlap[1]:.2f}; "
+                f"distinctive-word coverage {generic_overlap[2]:.2f})"
+            )
 
         has_disc_mismatch = False
         if claim_disc and act_disc:
@@ -619,6 +683,17 @@ def generate_hybrid_candidates(
                 disqualifying.append(
                     f"location mismatch: claim={claim_loc}, activity={act_loc}"
                 )
+
+        # Additional explainable signals (stage / date / quantity / WBS / batch prior); never past the conflict cap below
+        delta, extra_support, extra_disq = extension_adjustment(
+            claim_text=claim_text, claim_date=claim_date, claim_qty=claim_qty, claim_uom=claim_uom,
+            activity=act_extra, stage_name=act_extra.get("stage_name"), batch=batch_context,
+            text_score=max(fuz_score, sem_score),
+        )
+        if delta:
+            comp_confidence = max(0.0, min(1.0, round(comp_confidence + delta, 6)))
+        supporting.extend(extra_support)
+        disqualifying.extend(extra_disq)
 
         # Contextual Matching Gates / Confidence Caps for HYBRID_FALLBACK:
         # Prevent high semantic or fuzzy text similarity from overriding explicit context conflicts
@@ -658,12 +733,13 @@ def rank_and_explain_candidates(
     if not candidates:
         return []
 
-    # Sort candidates by text/semantic relevance descending, then composite_confidence descending, then activity_id ascending
+    # Rank by composite confidence (it carries every signal, including the stage/date/quantity/batch adjustments),
+    # then by text/semantic relevance, then activity_id ascending (deterministic)
     sorted_cands = sorted(
         candidates,
         key=lambda c: (
+            -round(c.composite_confidence, 4),
             -max(c.fuzzy_score or 0.0, c.semantic_score or 0.0),
-            -c.composite_confidence,
             str(c.activity_id),
         ),
     )
@@ -820,21 +896,42 @@ def evaluate_hard_mismatch(
     )
 
 
+def _text_cited_activity(claim, schedule_activities) -> Optional[CandidateMatch]:
+    """
+    Deterministic fallback for a claim whose extraction produced no activity id (LLM unavailable / report phrased freely):
+    if the report text itself cites exactly one schedule activity id, that is an exact-ID match (0.97, not 1.0, because
+    the id was found by scanning rather than extracted). Several different ids in one snippet is ambiguous: no match here.
+    """
+    text = claim.raw_claim_text if isinstance(claim, ExecutionClaim) else (claim.get("raw_claim_text") if isinstance(claim, dict) else None)
+    reported = claim.reported_activity_id if isinstance(claim, ExecutionClaim) else (claim.get("reported_activity_id") if isinstance(claim, dict) else None)
+    if reported or not text:
+        return None
+    cited = find_activity_ids_in_text(text, [_get_act_dict(a) for a in schedule_activities])
+    if len(cited) != 1:
+        return None
+    probe = claim.model_copy(update={"reported_activity_id": cited[0]}) if isinstance(claim, ExecutionClaim) else {**claim, "reported_activity_id": cited[0]}
+    cand = match_exact_id(probe, schedule_activities)
+    if cand is None:
+        return None
+    return cand.model_copy(update={"composite_confidence": 0.97, "supporting_signals": "Activity ID found in the report text"})
+
+
 def match_claim(
     claim: Union[ExecutionClaim, dict],
     schedule_activities: List[Union[ScheduleActivity, dict]],
     semantic_results: Optional[List[Union[dict, object]]] = None,
+    batch_context: Optional[BatchContext] = None,
 ) -> List[CandidateMatch]:
     """
     M3 4-Tier Matching Cascade:
-    1. EXACT_ID
+    1. EXACT_ID (extracted id, else an id cited verbatim in the report text)
     2. EXACT_ASSET
-    3. HYBRID_FALLBACK
+    3. HYBRID_FALLBACK (+ explainable stage/date/quantity/WBS signals and the upload-batch stage prior)
     4. HARD_MISMATCH
     Returns a ranked list of up to 3 CandidateMatch objects.
     """
     # Tier 1: EXACT_ID
-    exact_cand = match_exact_id(claim, schedule_activities)
+    exact_cand = match_exact_id(claim, schedule_activities) or _text_cited_activity(claim, schedule_activities)
     if exact_cand:
         return [exact_cand]
 
@@ -847,7 +944,7 @@ def match_claim(
 
     # Tier 3: HYBRID_FALLBACK (uses semantic_results if present, else fallback mode with semantic_score = 0.0)
     hybrid_cands = generate_hybrid_candidates(
-        claim, schedule_activities, semantic_results
+        claim, schedule_activities, semantic_results, batch_context=batch_context
     )
     if hybrid_cands:
         ranked_hybrid = rank_and_explain_candidates(hybrid_cands)
@@ -1025,7 +1122,7 @@ def read_claim_splits(cur, event_id: str) -> List[dict]:
 def match_claim_endpoint(
     event_id: str,
     action: str = "MATCH_CLAIM",
-    current_user: UserProfile = Depends(get_current_user),
+    event_context: EventContext = Depends(gates.event_process),
 ):
     """
     POST /api/v1/claims/{event_id}/match
@@ -1033,6 +1130,16 @@ def match_claim_endpoint(
     persists candidate_matches and updates execution_events status/matched_activity_id,
     and returns matching summary JSON.
     """
+    return run_claim_match(event_id, action, event_context)
+
+
+def run_claim_match(
+    event_id: str,
+    action: str,
+    event_context: EventContext,
+    batch_context: Optional[BatchContext] = None,
+):
+    """The matching pipeline behind POST /claims/{id}/match, callable by the batch intake with an upload-batch context."""
     if get_connection is None:
         raise HTTPException(
             status_code=500, detail="Database connection module unavailable."
@@ -1069,12 +1176,14 @@ def match_claim_endpoint(
 
             # 2. Load schedule activities with approved actuals to capture canonical execution state
             cur.execute(
-                """
+                with_workflow_flags("""
                 SELECT sa.activity_id, sa.schedule_id, sa.project_id, sa.stage_id,
                        sa.activity_name, sa.wbs_code, sa.discipline, sa.location,
                        sa.asset_tag, sa.planned_start, sa.planned_finish,
                        sa.planned_quantity, sa.uom, sa.baseline_pct_complete,
                        sa.weight_factor, sa.quality_gate_required,
+                       sa.contractor_id, sa.work_package_id,
+                       sa.description, st.stage_name,
                        aa.actual_pct_complete, aa.actual_start, aa.actual_finish,
                        aa.is_reopened,
                        (
@@ -1085,10 +1194,11 @@ def match_claim_endpoint(
                 FROM schedule_activities sa
                 LEFT JOIN approved_actuals aa
                        ON sa.schedule_id = aa.schedule_id AND sa.activity_id = aa.activity_id
-                WHERE sa.schedule_id = %s
+                LEFT JOIN stages st ON st.stage_id = sa.stage_id
+                WHERE sa.schedule_id = %s AND sa.project_id = %s
                 ORDER BY sa.activity_id ASC
-                """,
-                (claim.schedule_id,),
+                """),
+                (claim.schedule_id, str(event_context.project_id)),
             )
             act_rows = cur.fetchall()
             schedule_activities = [
@@ -1145,6 +1255,7 @@ def match_claim_endpoint(
                 claim,
                 eligible_activities,
                 semantic_results=semantic_results,
+                batch_context=batch_context,
             )
 
             # 4. Determine matching status and matched_activity_id with ambiguity protection
@@ -1269,6 +1380,16 @@ def match_claim_endpoint(
                 (status, matched_activity_id, event_id),
             )
 
+            # V7 attribution: a single matched activity fixes the event's stage / contractor / work package
+            # (derived from the schedule, never from claim text).
+            if matched_activity_id and status == "MATCHED":
+                matched_row = next((a for a in schedule_activities if a.get("activity_id") == matched_activity_id), None)
+                if matched_row is not None:
+                    cur.execute(
+                        "UPDATE execution_events SET stage_id = %s, contractor_id = %s, work_package_id = %s WHERE event_id = %s",
+                        (matched_row.get("stage_id"), matched_row.get("contractor_id"), matched_row.get("work_package_id"), event_id),
+                    )
+
             # Feature 33: an activity_id resolved by schedule matching is SCHEDULE_AUTO_FILLED;
             # a split/unmatched claim has no single resolved activity, so drop a stale tag.
             if matched_activity_id and status == "MATCHED":
@@ -1300,7 +1421,10 @@ def match_claim_endpoint(
                         entity_type="execution_event",
                         entity_id=event_id,
                         action=action,
-                        actor_id="SYSTEM:M3",
+                        actor_id=str(event_context.project_context.user.id),
+                        project_id=event_context.project_id,
+                        schedule_id=claim.schedule_id,
+                        role=event_context.role,
                         before_state={"status": event_row.get("status")},
                         after_state={
                             "status": status,
@@ -1308,6 +1432,7 @@ def match_claim_endpoint(
                             "split_activity_ids": [r["activity_id"] for r in split_rows],
                         },
                         payload={
+                            "performed_by": "SYSTEM:M3 (deterministic matching cascade)",
                             "match_tier": top_tier,
                             "composite_confidence": top_confidence,
                             "unmatched_reason": unmatched_reason,
@@ -1348,7 +1473,7 @@ def match_claim_endpoint(
 @router.post("/{event_id}/rematch")
 def rematch_claim_endpoint(
     event_id: str,
-    current_user: UserProfile = Depends(get_current_user),
+    event_context: EventContext = Depends(gates.event_process),
 ):
     """
     POST /api/v1/claims/{event_id}/rematch
@@ -1356,14 +1481,14 @@ def rematch_claim_endpoint(
     Updates candidate_matches and status/matched_activity_id accordingly.
     """
     return match_claim_endpoint(
-        event_id, action="REMATCH_CLAIM", current_user=current_user
+        event_id, action="REMATCH_CLAIM", event_context=event_context
     )
 
 
 @router.get("/{event_id}/splits")
 def get_claim_splits_endpoint(
     event_id: str,
-    current_user: UserProfile = Depends(get_current_user),
+    _event_context: EventContext = Depends(gates.event_view),
 ):
     """
     GET /api/v1/claims/{event_id}/splits
@@ -1397,7 +1522,7 @@ class PatchSplitsRequest(BaseModel):
 def patch_claim_splits_endpoint(
     event_id: str,
     payload: PatchSplitsRequest,
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    event_context: EventContext = Depends(gates.event_review),
 ):
     """
     PATCH /api/v1/claims/{event_id}/splits  (Supervisor only)
@@ -1429,7 +1554,10 @@ def patch_claim_splits_endpoint(
                 entity_type="claim_splits",
                 entity_id=event_id,
                 action="SPLIT_EDIT",
-                actor_id=str(current_user.id),
+                actor_id=str(event_context.project_context.user.id),
+                project_id=event_context.project_id,
+                schedule_id=ev["schedule_id"],
+                role=event_context.role,
                 before_state={r["activity_id"]: r["split_pct"] for r in before},
                 after_state={r["activity_id"]: r["split_pct"] for r in after},
                 payload={"bases": {r["activity_id"]: r["split_basis"] for r in after}},

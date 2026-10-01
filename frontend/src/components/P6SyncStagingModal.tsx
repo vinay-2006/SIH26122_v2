@@ -32,7 +32,6 @@ import {
   mockP6Api,
   activitiesApi,
   ScheduleActivity,
-  IS_MOCK_MODE,
 } from '@/api';
 import { cn } from '@/lib/utils';
 

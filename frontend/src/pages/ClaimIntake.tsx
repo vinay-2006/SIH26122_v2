@@ -4,6 +4,7 @@ import {
   Mic,
   MicOff,
   FileText,
+  Files,
   Upload,
   CheckCircle2,
   AlertTriangle,
@@ -25,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { BatchUploadPanel } from '@/components/BatchUploadPanel';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorState } from '@/components/ui/error-state';
 import {
@@ -44,7 +46,7 @@ import { useProject } from '@/context/ProjectContext';
 import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
 import { ReopenRequestModal } from '@/components/ReopenRequestModal';
 
-type InputTab = 'text' | 'voice' | 'file';
+type InputTab = 'batch' | 'text' | 'voice' | 'file';
 
 const MAX_TEXT_LENGTH = 2000;
 const MIN_TEXT_LENGTH = 10;
@@ -55,7 +57,7 @@ export default function ClaimIntake() {
   const { t } = useTranslation();
   const { currentProject, currentScheduleVersion } = useProject();
 
-  const [activeTab, setActiveTab] = useState<InputTab>('text');
+  const [activeTab, setActiveTab] = useState<InputTab>('batch');
 
   // Text Tab State
   const [textValue, setTextValue] = useState('');
@@ -488,14 +490,20 @@ export default function ClaimIntake() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* LEFT COLUMN: Input Form (7 Cols) */}
-        <div className="lg:col-span-7 space-y-6">
+        <div className={cn(activeTab === 'batch' ? 'lg:col-span-12' : 'lg:col-span-7', 'space-y-6')}>
           <Tabs
             value={activeTab}
             onValueChange={(val) => setActiveTab(val as InputTab)}
             className="w-full space-y-6"
           >
             {/* Tab Selector */}
-            <TabsList className="grid grid-cols-3 w-full h-12 p-1.5 bg-white/95 dark:bg-[#071A2D]/95 border border-slate-200/80 dark:border-[#214766] rounded-2xl shadow-md backdrop-blur-md">
+            <TabsList className="grid grid-cols-4 w-full h-12 p-1.5 bg-white/95 dark:bg-[#071A2D]/95 border border-slate-200/80 dark:border-[#214766] rounded-2xl shadow-md backdrop-blur-md">
+              <TabsTrigger
+                value="batch"
+                className="text-xs font-bold gap-2 text-[#071A2D] dark:text-[#C5D2DE] data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#FF7A18] data-[state=active]:to-[#FF941F] data-[state=active]:text-white transition-all rounded-xl h-9 shadow-xs hover:text-[#FF7A18] dark:hover:text-[#F5F7FA]"
+              >
+                <Files className="w-4 h-4" /> Batch upload
+              </TabsTrigger>
               <TabsTrigger
                 value="text"
                 className="text-xs font-bold gap-2 text-[#071A2D] dark:text-[#C5D2DE] data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#FF7A18] data-[state=active]:to-[#FF941F] data-[state=active]:text-white transition-all rounded-xl h-9 shadow-xs hover:text-[#FF7A18] dark:hover:text-[#F5F7FA]"
@@ -515,6 +523,11 @@ export default function ClaimIntake() {
                 <Upload className="w-4 h-4" /> {t('intake.tabFile')}
               </TabsTrigger>
             </TabsList>
+
+            {/* TAB 0: MULTI-FILE BATCH (several reports / files / photos in one operation) */}
+            <TabsContent value="batch" className="mt-0 focus-visible:outline-none">
+              <BatchUploadPanel />
+            </TabsContent>
 
             {/* TAB 1: TEXT UPDATE */}
             <TabsContent value="text" className="mt-0 focus-visible:outline-none">
@@ -935,8 +948,8 @@ export default function ClaimIntake() {
           </Tabs>
         </div>
 
-        {/* RIGHT COLUMN: Pipeline Stepper & Result (5 Cols) */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* RIGHT COLUMN: Pipeline Stepper & Result (5 Cols); the batch tab shows its own full-width result */}
+        <div className={cn('lg:col-span-5 space-y-6', activeTab === 'batch' && 'hidden')}>
           <Card className="border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl">
             <CardHeader className="p-6 pb-4 border-b border-slate-300 dark:border-[#214766]/60">
               <CardTitle className="text-base font-extrabold text-[#071A2D] dark:text-[#F5F7FA] flex items-center justify-between">

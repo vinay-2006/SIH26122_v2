@@ -54,3 +54,17 @@ def require_project_role(
         return project_context
 
     return role_dependency
+
+
+def require_any_permission(*permissions: Permission) -> Callable[[ProjectContext], ProjectContext]:
+    """Project context whose role holds AT LEAST ONE of the permissions (e.g. a claim may be clarified by
+    the engineer who filed it or by a reviewer)."""
+    def dependency(project_context: ProjectContext = Depends(require_project_context)) -> ProjectContext:
+        if not any(has_permission(project_context.role, p) for p in permissions):
+            raise_permission_denied(
+                permission=" | ".join(p.value for p in permissions),
+                role=project_context.role,
+            )
+        return project_context
+
+    return dependency

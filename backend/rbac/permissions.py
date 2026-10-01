@@ -26,6 +26,8 @@ class Permission(str, Enum):
     APPROVE_QUALITY = "APPROVE_QUALITY"
     WAIVE_QUALITY = "WAIVE_QUALITY"
     VIEW_AUDIT = "VIEW_AUDIT"
+    MANAGE_BLOCKERS = "MANAGE_BLOCKERS"   # resolve issues, group them under root causes, promote them to memory
+    REPORT_ISSUE = "REPORT_ISSUE"         # raise an issue / delay from the field
 
 
 ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
@@ -35,12 +37,15 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.VIEW_PROJECT,
         Permission.VIEW_SCHEDULE,
         Permission.MANAGE_SCHEDULE,
+        Permission.MANAGE_BLOCKERS,
         Permission.VIEW_EXECUTION_EVENTS,
         Permission.REVIEW_CLAIM,
         Permission.VIEW_QUALITY,
         Permission.VIEW_AUDIT,
     },
     ProjectRole.SUPERVISOR.value: {
+        Permission.MANAGE_BLOCKERS,
+        Permission.REPORT_ISSUE,
         Permission.VIEW_PROJECT,
         Permission.VIEW_SCHEDULE,
         Permission.VIEW_EXECUTION_EVENTS,
@@ -61,6 +66,7 @@ ROLE_PERMISSIONS: Dict[str, Set[Permission]] = {
         Permission.VIEW_EXECUTION_EVENTS,
         Permission.VIEW_QUALITY,
         Permission.REQUEST_REOPEN,
+        Permission.REPORT_ISSUE,
     },
     ProjectRole.QUALITY_INSPECTOR.value: {
         Permission.VIEW_PROJECT,

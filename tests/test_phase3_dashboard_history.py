@@ -346,7 +346,7 @@ def test_hist_01_multiple_historical_records_returned():
         """
     )
 
-    data = query_activity_history("ACT-M", conn=db)
+    data = query_activity_history("ACT-M", schedule_id="SCH-1", conn=db)
     assert data["activity_id"] == "ACT-M"
     assert len(data["timeline"]) == 4
 
@@ -377,7 +377,7 @@ def test_hist_02_chronological_ordering():
         """
     )
 
-    data = query_activity_history("ACT-ORDER", conn=db)
+    data = query_activity_history("ACT-ORDER", schedule_id="SCH-1", conn=db)
     timeline = data["timeline"]
     assert len(timeline) == 3
 
@@ -403,7 +403,7 @@ def test_hist_03_execution_events_included():
         """
     )
 
-    data = query_activity_history("ACT-DETAIL", conn=db)
+    data = query_activity_history("ACT-DETAIL", schedule_id="SCH-1", conn=db)
     assert len(data["timeline"]) == 1
     ev = data["timeline"][0]
 
@@ -436,7 +436,7 @@ def test_hist_04_decisions_included():
         """
     )
 
-    data = query_activity_history("ACT-DEC", conn=db)
+    data = query_activity_history("ACT-DEC", schedule_id="SCH-1", conn=db)
     decisions = [t for t in data["timeline"] if t["type"] == "planner_decision"]
 
     assert len(decisions) == 2
@@ -475,7 +475,7 @@ def test_hist_05_approved_actual_included():
         """
     )
 
-    data = query_activity_history("ACT-ACTUAL", conn=db)
+    data = query_activity_history("ACT-ACTUAL", schedule_id="SCH-1", conn=db)
     actuals = [t for t in data["timeline"] if t["type"] == "approved_actual"]
 
     assert len(actuals) == 1
@@ -506,7 +506,7 @@ def test_hist_06_source_references_preserved():
         """
     )
 
-    data = query_activity_history("ACT-SRC", conn=db)
+    data = query_activity_history("ACT-SRC", schedule_id="SCH-1", conn=db)
     ev = data["timeline"][0]
 
     assert len(ev["source_references"]) == 1
@@ -523,23 +523,20 @@ def test_hist_06_source_references_preserved():
 # ==============================================================================
 
 def test_dashboard_summary_endpoint_rbac():
-    supervisor = UserProfile(id="sup-uuid", email="sup@oil.in", role="SUPERVISOR", full_name="Supervisor Test")
-    site_eng = UserProfile(id="eng-uuid", email="eng@oil.in", role="SITE_ENGINEER", full_name="Engineer Test")
-
+    from tests.v7ctx import act_as
 
     # Anonymous -> 401
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/api/v1/dashboard/summary")
     assert resp.status_code == 401
 
-    # Site Engineer -> 403
-    app.dependency_overrides[get_current_user] = lambda: site_eng
-    resp_eng = client.get("/api/v1/dashboard/summary")
-    assert resp_eng.status_code == 403
+    # Site Engineer (no REVIEW_CLAIM) -> 403
+    with act_as("SITE_ENGINEER", schedule_id="SCH-1"):
+        assert client.get("/api/v1/dashboard/summary").status_code == 403
 
-    # Supervisor -> 200
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    resp_sup = client.get("/api/v1/dashboard/summary")
+    # Supervisor on an explicit schedule -> 200
+    with act_as("SUPERVISOR", schedule_id="SCH-1"):
+        resp_sup = client.get("/api/v1/dashboard/summary")
     assert resp_sup.status_code == 200
     body = resp_sup.json()
     assert "total_claims" in body
@@ -547,4 +544,3 @@ def test_dashboard_summary_endpoint_rbac():
     assert "actuals" in body
     assert "conflicts" in body
     assert "discipline_breakdown" in body
-    app.dependency_overrides.clear()

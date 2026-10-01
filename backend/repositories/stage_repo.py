@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Union
 import psycopg
 
+from backend.shared.workflow_flags import with_workflow_flags
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.repositories.base import BaseRepository
@@ -341,7 +342,7 @@ class ProjectStageRepository(BaseRepository):
 
         with cls.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:
-                cur.execute(query, params)
+                cur.execute(with_workflow_flags(query), params)
                 return [dict(r) for r in cur.fetchall()]
 
     @classmethod
@@ -420,6 +421,6 @@ class ProjectStageRepository(BaseRepository):
 
         with cls.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:
-                cur.execute(query, params)
+                cur.execute(with_workflow_flags(query), params)
                 row = cur.fetchone()
                 return dict(row) if row else None

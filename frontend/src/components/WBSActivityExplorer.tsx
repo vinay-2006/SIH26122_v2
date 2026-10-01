@@ -31,21 +31,20 @@ import {
   GitFork,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
-import { useProject } from '@/context/ProjectContext';
+import { useProject, useProjectState } from '@/context/ProjectContext';
 import { Button } from '@/components/ui/button';
 import {
   schedulesApi,
   reopenApi,
   qualityGatesApi,
-  impactApi,
   type WBSTreeResponse,
   type WBSGroup,
   type ScheduleActivity,
   type ExecutionState,
   type ReopenRequest,
   type QualityGate,
-  type CompoundImpact,
 } from '@/api';
+import type { ActivityProgressItem } from '@/api/projects';
 import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
 import { ReopenRequestModal } from '@/components/ReopenRequestModal';
 import { ReopenReviewModal } from '@/components/ReopenReviewModal';
@@ -53,11 +52,6 @@ import { QualityGateModal } from '@/components/QualityGateModal';
 import { CompoundImpactModal } from '@/components/CompoundImpactModal';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-
-import {
-  calculateWeightedProgress,
-  deriveActivityProgress,
-} from '@/lib/progressEngine';
 
 // ── Enriched activity with joined name, progress & execution state ───────────
 
@@ -69,10 +63,10 @@ interface EnrichedActivity {
   location: string | null;
   execution_state?: ExecutionState;
   baseline_pct_complete?: number;
+  /** Authoritative approved progress from the backend (never computed in the browser). */
   actual_progress: number;
-  planned_progress: number;
-  variance: number;
   weight: number;
+  stage_id: string | null;
   actual_start?: string | null;
   actual_finish?: string | null;
   contractor_name?: string | null;
@@ -86,8 +80,6 @@ interface EnrichedGroup {
   totalQuantity: number | null;
   total_weight: number;
   actual_progress: number;
-  planned_progress: number;
-  variance: number;
 }
 
 // ── WBSGroupCard — collapsible group row ────────────────────────────────────
@@ -100,20 +92,19 @@ function WBSGroupCard({
   onInspectImpact,
   pendingReopenMap,
   qualityGatesMap,
-  impactsMap,
   userRole,
 }: {
   group: EnrichedGroup;
   onRequestReopen: (activity: ScheduleActivity) => void;
   onReviewReopen: (request: ReopenRequest) => void;
   onOpenQualityModal: (activity: ScheduleActivity) => void;
-  onInspectImpact: (impact: CompoundImpact) => void;
+  onInspectImpact: (target: { activityId: string; activityName: string }) => void;
   pendingReopenMap: Map<string, ReopenRequest>;
   qualityGatesMap: Map<string, QualityGate[]>;
-  impactsMap: Map<string, CompoundImpact>;
   userRole?: string;
 }) {
   const { t } = useTranslation();
+  const { can } = useProjectState();
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -138,10 +129,7 @@ function WBSGroupCard({
 
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60 font-semibold">
-            {group.actual_progress}% Actual <span className="text-muted-foreground font-normal">/ {group.planned_progress}% Plan</span>
-          </span>
-          <span className={cn('text-[11px] font-mono font-bold', group.variance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>
-            ({group.variance > 0 ? `+${group.variance}` : group.variance}%)
+            {group.actual_progress}% Actual
           </span>
         </div>
 
@@ -251,37 +239,21 @@ function WBSGroupCard({
                     </button>
                   )}
 
-                  {/* Downstream Compound Impact Badge */}
-                  {(() => {
-                    const actImpact = impactsMap.get(a.activity_id);
-                    if (!actImpact || (actImpact.impactLevel === 'LOW' && actImpact.totalDownstreamCount === 0)) return null;
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => onInspectImpact(actImpact)}
-                        className={cn(
-                          "text-[10px] px-2 py-0.5 rounded font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0 border",
-                          actImpact.impactLevel === 'CRITICAL'
-                            ? "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300 border-red-300 dark:border-red-800"
-                            : actImpact.impactLevel === 'HIGH'
-                            ? "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800"
-                            : actImpact.impactLevel === 'MEDIUM'
-                            ? "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-300 dark:border-blue-800"
-                            : "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700"
-                        )}
-                        title={`Downstream Impact: ${actImpact.impactLevel} (${actImpact.totalDownstreamCount} activities affected across ${actImpact.impactedStageIds.length} stages) - Click to inspect`}
-                      >
-                        <GitFork className="w-3 h-3" />
-                        <span>Impact: {actImpact.impactLevel} ({actImpact.totalDownstreamCount})</span>
-                      </button>
-                    );
-                  })()}
+                  {/* Downstream impact (server-computed, what-if delay) */}
+                  <button
+                    type="button"
+                    onClick={() => onInspectImpact({ activityId: a.activity_id, activityName: a.activity_name })}
+                    className="text-[10px] px-2 py-0.5 rounded font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0 border bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100"
+                    title="Preview downstream schedule impact of a delay to this activity"
+                  >
+                    <GitFork className="w-3 h-3" />
+                    <span>Impact</span>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="text-right font-mono text-xs">
                     <span className="font-bold text-foreground">{a.actual_progress}%</span>
-                    <span className="text-muted-foreground text-[10px]"> / {a.planned_progress}%</span>
                   </div>
 
                   <ExecutionStateBadge state={a.execution_state || 'NOT_STARTED'} size="sm" />
@@ -294,7 +266,7 @@ function WBSGroupCard({
 
                   {/* Reopen Workflow Triggers */}
                   {pendingReq ? (
-                    userRole === 'SUPERVISOR' ? (
+                    can('APPROVE_REOPEN') ? (
                       <button
                         type="button"
                         onClick={() => onReviewReopen(pendingReq)}
@@ -308,7 +280,7 @@ function WBSGroupCard({
                         Reopen Pending
                       </span>
                     )
-                  ) : isCompleted ? (
+                  ) : isCompleted && can('REQUEST_REOPEN') ? (
                     <button
                       type="button"
                       onClick={() => a.fullActivity && onRequestReopen(a.fullActivity)}
@@ -341,7 +313,7 @@ export default function WBSActivityExplorer({
 }: WBSActivityExplorerProps) {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { currentProject, currentScheduleVersion, selectedStageId, setSelectedStageId } = useProject();
+  const { currentProject, currentScheduleVersion, selectedStageId, setSelectedStageId, progress } = useProject();
   const { user } = useAuth();
 
   const [wbsData, setWbsData] = useState<WBSTreeResponse | null>(null);
@@ -360,8 +332,7 @@ export default function WBSActivityExplorer({
   const [qualityModalTargetActivity, setQualityModalTargetActivity] = useState<ScheduleActivity | null>(null);
 
   // Downstream Compound Impact States
-  const [scheduleImpacts, setScheduleImpacts] = useState<CompoundImpact[]>([]);
-  const [impactModalTarget, setImpactModalTarget] = useState<CompoundImpact | null>(null);
+  const [impactModalTarget, setImpactModalTarget] = useState<{ activityId: string; activityName: string } | null>(null);
 
   const loadQualityGates = useCallback(async () => {
     try {
@@ -408,14 +379,6 @@ export default function WBSActivityExplorer({
     return map;
   }, [qualityGates]);
 
-  const impactsMap = useMemo(() => {
-    const map = new Map<string, CompoundImpact>();
-    for (const imp of scheduleImpacts) {
-      map.set(imp.activityId, imp);
-    }
-    return map;
-  }, [scheduleImpacts]);
-
   // Synchronize stage filter from URL params if present
   useEffect(() => {
     const stageParam = searchParams.get('stage');
@@ -429,14 +392,12 @@ export default function WBSActivityExplorer({
     setError(null);
     try {
       const targetScheduleId = scheduleId || currentScheduleVersion.id;
-      const [tree, acts, impacts] = await Promise.all([
+      const [tree, acts] = await Promise.all([
         schedulesApi.getWbsTree(targetScheduleId),
         schedulesApi.getActivities(targetScheduleId),
-        impactApi.getScheduleImpacts(currentProject.id, targetScheduleId).catch(() => []),
       ]);
       setWbsData(tree);
       setActivities(acts);
-      setScheduleImpacts(impacts || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load WBS data');
     } finally {
@@ -475,27 +436,26 @@ export default function WBSActivityExplorer({
     return map;
   }, [activities]);
 
+  // Server-computed progress per activity (ProgressService); the browser never derives progress.
+  const progressItems = useMemo(() => {
+    const map = new Map<string, ActivityProgressItem>();
+    for (const st of progress?.stages ?? []) for (const it of st.activities) map.set(it.activity_id, it);
+    for (const it of progress?.unassigned_activities ?? []) map.set(it.activity_id, it);
+    return map;
+  }, [progress]);
+
   // Enrich WBS groups with joined activity names, execution state, and weighted progress
   const enrichedGroups: EnrichedGroup[] = useMemo(() => {
     if (!wbsData) return [];
     return wbsData.wbs_groups.map((g: WBSGroup) => {
-      const groupFullActivities: ScheduleActivity[] = [];
+      const groupItems: ActivityProgressItem[] = [];
 
       const enrichedActivities: EnrichedActivity[] = g.activities.map((wa) => {
         const full = activityMap.get(wa.activity_id);
-        if (full) groupFullActivities.push(full);
+        const item = progressItems.get(wa.activity_id);
+        if (item) groupItems.push(item);
 
-        const progressInfo = full
-          ? deriveActivityProgress(full)
-          : { plannedProgress: 0, actualProgress: 0, variance: 0, effectiveWeight: 10 };
-
-        const execState: ExecutionState = full?.execution_state || (
-          progressInfo.actualProgress >= 100
-            ? 'COMPLETED'
-            : progressInfo.actualProgress > 0
-            ? 'IN_PROGRESS'
-            : 'NOT_STARTED'
-        );
+        const execState: ExecutionState = (full?.execution_state || item?.canonical_state || 'NOT_STARTED') as ExecutionState;
 
         return {
           activity_id: wa.activity_id,
@@ -505,10 +465,9 @@ export default function WBSActivityExplorer({
           location: full?.location ?? null,
           execution_state: execState,
           baseline_pct_complete: full?.baseline_pct_complete || 0,
-          actual_progress: progressInfo.actualProgress,
-          planned_progress: progressInfo.plannedProgress,
-          variance: progressInfo.variance,
-          weight: progressInfo.effectiveWeight,
+          actual_progress: item?.progress_pct ?? 0,
+          weight: item?.weight_factor ?? 1,
+          stage_id: item?.stage_id ?? null,
           actual_start: full?.actual_start || null,
           actual_finish: full?.actual_finish || null,
           contractor_name: full?.contractor_name || null,
@@ -517,8 +476,10 @@ export default function WBSActivityExplorer({
         };
       });
 
-      const { totalWeight, plannedProgress, actualProgress, variance } =
-        calculateWeightedProgress(groupFullActivities);
+      const totalWeight = groupItems.reduce((sum, it) => sum + (it.weight_factor || 0), 0);
+      const actualProgress = totalWeight > 0
+        ? Math.round((groupItems.reduce((sum, it) => sum + it.progress_pct * (it.weight_factor || 0), 0) / totalWeight) * 10) / 10
+        : 0;
 
       const quantities = enrichedActivities
         .map((a) => a.planned_quantity)
@@ -533,11 +494,9 @@ export default function WBSActivityExplorer({
         totalQuantity,
         total_weight: totalWeight,
         actual_progress: actualProgress,
-        planned_progress: plannedProgress,
-        variance,
       };
     });
-  }, [wbsData, activityMap]);
+  }, [wbsData, activityMap, progressItems]);
 
   // Filter groups by stage and search term
   const filteredGroups = useMemo(() => {
@@ -545,19 +504,8 @@ export default function WBSActivityExplorer({
 
     // Filter by selected stage if active
     if (selectedStageId) {
-      const stage = currentProject.stages.find((s) => s.id === selectedStageId);
-      if (stage) {
-        const prefix = stage.wbsPrefix.toLowerCase();
-        const stageDiscipline = stage.discipline.toLowerCase();
-        groups = groups.filter((g) => {
-          const wbsMatch = g.wbs_code.toLowerCase().includes(prefix.replace('wbs-', ''));
-          const actMatch = g.activities.some((a) =>
-            stageDiscipline === 'general' ||
-            (a.discipline && a.discipline.toLowerCase().includes(stageDiscipline))
-          );
-          return wbsMatch || actMatch;
-        });
-      }
+      // A stage is a real server-side entity: keep the WBS groups that contain activities attributed to it.
+      groups = groups.filter((g) => g.activities.some((a) => a.stage_id === selectedStageId));
     }
 
     if (!searchTerm.trim()) return groups;
@@ -713,7 +661,7 @@ export default function WBSActivityExplorer({
                       : 'bg-slate-100 dark:bg-[#0B2742] text-muted-foreground border-slate-200 dark:border-[#214766] hover:text-foreground'
                   )}
                 >
-                  <span>Stage {stg.stageNumber}</span>
+                  <span>{stg.name}</span>
                   <span className="opacity-75 text-[10px]">({stg.actualPct}%)</span>
                 </button>
               );
@@ -750,7 +698,6 @@ export default function WBSActivityExplorer({
               onInspectImpact={(imp) => setImpactModalTarget(imp)}
               pendingReopenMap={pendingReopenMap}
               qualityGatesMap={qualityGatesMap}
-              impactsMap={impactsMap}
               userRole={user?.role}
             />
           ))
@@ -802,7 +749,7 @@ export default function WBSActivityExplorer({
       <CompoundImpactModal
         isOpen={!!impactModalTarget}
         onClose={() => setImpactModalTarget(null)}
-        impact={impactModalTarget}
+        target={impactModalTarget}
       />
     </Card>
   );

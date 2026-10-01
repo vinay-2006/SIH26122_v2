@@ -436,6 +436,24 @@ def _execute_upsert(
             ),
         ).fetchone()
 
+    # V7 ownership stamp: the approved actual belongs to the activity's project/stage. Only executed
+    # when the caller (the project-scoped decisions router) supplies it; V6 callers are unchanged.
+    if saved_row is not None and fields.get("project_id") is not None:
+        stamped = conn.execute(
+            """
+            UPDATE approved_actuals
+            SET project_id = COALESCE(project_id, %s), stage_id = COALESCE(stage_id, %s)
+            WHERE schedule_id = %s AND activity_id = %s
+            RETURNING project_id, stage_id
+            """,
+            (fields["project_id"], fields.get("stage_id"), schedule_id, activity_id),
+        ).fetchone()
+        result = dict(saved_row)
+        if stamped:
+            result["project_id"] = stamped["project_id"]
+            result["stage_id"] = stamped["stage_id"]
+        return result
+
     result = dict(saved_row) if saved_row else None
     return result
 

@@ -7,7 +7,7 @@ rework actual revisions, and reconstructible audit timeline retrieval.
 from __future__ import annotations
 
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, Path, Query, status
 
 from backend.context.project import ProjectContext, require_project_context
@@ -178,3 +178,18 @@ def get_activity_history(
     """
     res = ReopenService.get_actual_history(context, activity_id)
     return ActivityExecutionHistoryResponse(**res)
+
+
+@router.get(
+    "/api/v1/projects/{project_id}/schedules/{schedule_id}/reopen-requests",
+    response_model=List[ReopenStatusResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List reopen requests of a schedule version (latest state per activity)",
+)
+def list_reopen_requests(
+    project_id: uuid.UUID,
+    schedule_id: str,
+    status_filter: Optional[str] = Query(None, alias="status", pattern="^(REQUESTED|APPROVED|REJECTED)$"),
+    context: ScheduleContext = Depends(require_schedule_context),
+) -> List[ReopenStatusResponse]:
+    return [ReopenStatusResponse(**r) for r in ReopenService.list_reopen_requests(context, status_filter)]

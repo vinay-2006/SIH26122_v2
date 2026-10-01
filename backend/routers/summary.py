@@ -38,10 +38,10 @@ from backend.routers.dashboard import (
     _calculate_historical_ratio_for_discipline,
 )
 from backend.shared.actuals import get_execution_state
-from backend.shared.auth import UserProfile, require_role
 from backend.shared.db import get_connection
 from backend.shared.discipline_normalize import normalize_discipline
-from backend.shared.schedule_context import resolve_schedule_id
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 from backend.shared.llm_extraction import (
     LLMExtractionError,
     _create_completion,
@@ -341,14 +341,14 @@ def build_deterministic_aggregate(
           ON aa.schedule_id = sa.schedule_id AND aa.activity_id = sa.activity_id
         WHERE sa.schedule_id = %s
     """
-    act_schedule_id = schedule_id
-    if act_schedule_id is None:
-        _latest = _execute("SELECT schedule_id FROM schedules ORDER BY created_at DESC LIMIT 1").fetchone()
-        act_schedule_id = (
-            _latest["schedule_id"] if _latest and (isinstance(_latest, dict) or hasattr(_latest, "keys"))
-            else (_latest[0] if _latest else None)
-        )
-    act_params = [act_schedule_id]
+    # No "latest schedule" guess: with an explicit schedule_id the section is scoped to it; without one
+    # (internal/unit-test use only, never reachable from an operational route) it is unscoped.
+    act_params: list = []
+    if schedule_id is not None:
+        act_query = act_query.replace("WHERE sa.schedule_id = %s", "WHERE sa.schedule_id = %s")
+        act_params.append(schedule_id)
+    else:
+        act_query = act_query.replace("WHERE sa.schedule_id = %s", "WHERE 1 = 1")
     if disc_norm != "ALL":
         act_query += " AND UPPER(TRIM(sa.discipline)) = %s"
         act_params.append(disc_norm)
@@ -629,8 +629,8 @@ def get_execution_summary(
         default="en",
         description="Target language: 'en', 'hi', or 'te'",
     ),
-    schedule_id: Optional[str] = Query(default=None, description="Defaults to the active schedule"),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     Phase 7 AI Execution Summary & Dynamic Translation. Superseded by
@@ -648,7 +648,7 @@ def get_execution_summary(
     if target_lang not in SUPPORTED_LANGUAGES:
         target_lang = "en"
 
-    resolved_schedule_id = resolve_schedule_id(schedule_id)
+    resolved_schedule_id = schedule_context.schedule_id
 
     # Step 1: Deterministic aggregate
     aggregate = build_deterministic_aggregate(

@@ -426,9 +426,10 @@ def test_12_activity_attribution(phase9_fixture):
     )
     wp_id = resp_wp.json()["work_package_id"]
 
-    # Update activity attribution for ACT-X1
+    # Update activity attribution for ACT-X1 (schedule-scoped: the imported version is the one being attributed)
+    sched_id = resp_sch.json()["schedule_id"]
     resp_attr = client.patch(
-        f"/api/v1/projects/{f['proj_a']}/activities/ACT-X1/attribution",
+        f"/api/v1/projects/{f['proj_a']}/schedules/{sched_id}/activities/ACT-X1/attribution",
         json={"contractor_id": c_id, "work_package_id": wp_id},
         headers={"Authorization": f"Bearer {token}", "X-Project-ID": str(f["proj_a"])},
     )
@@ -491,15 +492,15 @@ def test_15_cross_project_activity_attribution_denied(phase9_fixture):
     client = TestClient(app)
 
     # Import schedule in Project A
-    client.post(
+    sched_id = client.post(
         f"/api/v1/projects/{f['proj_a']}/schedules/xer",
         json={"version_code": "XER-CROSS", "xer_content": VALID_XER_CONTENT, "activate_immediately": True},
         headers={"Authorization": f"Bearer {token_a}", "X-Project-ID": str(f["proj_a"])},
-    )
+    ).json()["schedule_id"]
 
     # User B tries to update attribution on Project A's activity
     resp_denied = client.patch(
-        f"/api/v1/projects/{f['proj_a']}/activities/ACT-X1/attribution",
+        f"/api/v1/projects/{f['proj_a']}/schedules/{sched_id}/activities/ACT-X1/attribution",
         json={"stage_id": str(uuid.uuid4())},
         headers={"Authorization": f"Bearer {token_b}", "X-Project-ID": str(f["proj_a"])},
     )

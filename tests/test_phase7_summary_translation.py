@@ -547,34 +547,29 @@ def test_trans_04_translation_failure():
 
 
 def test_auth_01_supervisor_only():
+    """Review-level access (REVIEW_CLAIM: supervisor/planner/PM/owner) on an explicit schedule of the caller's project."""
+    from tests.v7ctx import act_as
+
     client = TestClient(app)
 
     # 1. Unauthenticated -> 401
     resp_unauth = client.get("/api/v1/execution-summary")
     assert resp_unauth.status_code == 401
 
-    # 2. Non-Supervisor (e.g. SITE_ENGINEER) -> 403
-    engineer_user = UserProfile(
-        id="eng-uuid",
-        role="SITE_ENGINEER",
-        full_name="Site Engineer Test",
-    )
-    app.dependency_overrides[get_current_user] = lambda: engineer_user
-    resp_forbidden = client.get("/api/v1/execution-summary")
+    # 2. Site engineer (no REVIEW_CLAIM) -> 403
+    with act_as("SITE_ENGINEER", schedule_id="SCH-1"):
+        resp_forbidden = client.get("/api/v1/execution-summary")
     assert resp_forbidden.status_code == 403
 
-    # 3. Supervisor -> 200 (mocking DB & LLM for clean test)
-    supervisor_user = UserProfile(
-        id="sup-uuid",
-        role="SUPERVISOR",
-        full_name="Supervisor Test",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor_user
+    # 3. No explicit schedule -> 400, never the "active" one
+    with act_as("SUPERVISOR", schedule_id=None):
+        assert client.get("/api/v1/execution-summary").status_code == 400
 
+    # 4. Supervisor with explicit schedule -> 200 (mocking DB & LLM for clean test)
     mock_db = create_test_db()
     populate_standard_fixtures(mock_db, date.today())
 
-    with patch("backend.routers.summary.get_connection") as mock_conn:
+    with act_as("SUPERVISOR", schedule_id="SCH-1"), patch("backend.routers.summary.get_connection") as mock_conn:
         mock_conn.return_value.__enter__.return_value = mock_db
         resp_ok = client.get("/api/v1/execution-summary?period=last_7_days")
         assert resp_ok.status_code == 200
@@ -582,8 +577,6 @@ def test_auth_01_supervisor_only():
         assert "canonical_summary" in data
         assert "summary" in data
         assert data["language"] == "en"
-
-    app.dependency_overrides.clear()
 
 
 # =========================================================================

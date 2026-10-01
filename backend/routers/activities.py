@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from backend.shared.auth import UserProfile, require_role
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -26,38 +27,26 @@ def _resolve_activity(activity_id: str, schedule_id: Optional[str], conn: Option
     from schedule_activities, never inferred only from execution_events -- an
     activity with zero events must still 200 with its real metadata, and a
     genuinely nonexistent activity_id must 404 rather than a silent empty
-    timeline. Ambiguity (the same activity_id in more than one schedule, no
-    schedule_id given) resolves to the active schedule if present, or 409 if truly ambiguous.
+    timeline.
+
+    The schedule is ALWAYS explicit: there is no active/latest fallback and no cross-schedule lookup
+    by activity_id alone (that would resolve an activity belonging to another project's schedule).
     """
     if not schedule_id:
-        try:
-            from backend.shared.schedule_repository import get_active_schedule
-            active = get_active_schedule()
-            if active:
-                schedule_id = active.schedule_id
-        except Exception:
-            pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="schedule_id is required; implicit active/latest schedule selection is not allowed.",
+        )
 
-    query = "SELECT * FROM schedule_activities WHERE activity_id = %s"
-    params: List[Any] = [activity_id]
-    if schedule_id:
-        query += " AND schedule_id = %s"
-        params.append(schedule_id)
-
-    rows = _execute(conn, query, tuple(params)).fetchall()
-    if not rows and schedule_id:
-        fallback_rows = _execute(conn, "SELECT * FROM schedule_activities WHERE activity_id = %s", (activity_id,)).fetchall()
-        if len(fallback_rows) == 1:
-            return dict(fallback_rows[0])
+    rows = _execute(
+        conn,
+        "SELECT * FROM schedule_activities WHERE activity_id = %s AND schedule_id = %s",
+        (activity_id, schedule_id),
+    ).fetchall()
     if not rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Activity '{activity_id}' not found",
-        )
-    if not schedule_id and len(rows) > 1:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Activity '{activity_id}' exists in multiple schedules; provide schedule_id.",
         )
     return dict(rows[0])
 
@@ -251,8 +240,8 @@ def query_activity_history(
                 "claimed_quantity": float(event["claimed_quantity"]) if event["claimed_quantity"] is not None else None,
                 "delay_reason": str(event["delay_reason"]) if event["delay_reason"] is not None else None,
                 "status": str(event["status"]) if event["status"] is not None else None,
-                "photo_path": str(event["photo_path"]) if event.get("photo_path") else None,
-                "document_id": str(event["document_id"]) if event.get("document_id") else None,
+                "photo_path": str(event["photo_path"]) if event["photo_path"] else None,
+                "document_id": str(event["document_id"]) if event["document_id"] else None,
                 "timestamp": ts,
                 "source_references": refs_by_event.get(e_id, []),
             }
@@ -451,21 +440,10 @@ def query_activities(
     conn: Optional[Any] = None,
 ) -> dict:
     if not schedule_id:
-        try:
-            from backend.shared.schedule_repository import get_active_schedule
-            active = get_active_schedule()
-            if active:
-                schedule_id = active.schedule_id
-        except Exception:
-            pass
-
-    if not schedule_id:
-        try:
-            row = _execute(conn, "SELECT schedule_id FROM schedule_activities ORDER BY schedule_id LIMIT 1").fetchone()
-            if row:
-                schedule_id = str(row["schedule_id"] if isinstance(row, dict) else row[0])
-        except Exception:
-            pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="schedule_id is required; implicit active/latest schedule selection is not allowed.",
+        )
 
     empty_metrics = {"total": 0, "in_progress": 0, "completed": 0, "not_started": 0, "critical": 0, "changed": 0}
     if not schedule_id:
@@ -663,7 +641,7 @@ def list_activities(
     page_size: int = Query(25, ge=1, le=500),
     sort_by: str = Query("activity_id"),
     sort_order: str = Query("asc"),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     List schedule activities with canonical execution state, multi-source lifecycle aggregation,
@@ -671,7 +649,7 @@ def list_activities(
     """
     try:
         return query_activities(
-            schedule_id=schedule_id,
+            schedule_id=schedule_context.schedule_id,
             search=search,
             discipline=discipline,
             location=location,
@@ -700,7 +678,7 @@ def list_activities(
 def get_activity_history(
     activity_id: str,
     schedule_id: Optional[str] = None,
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     Chronological activity history timeline for an activity, plus the
@@ -709,7 +687,7 @@ def get_activity_history(
     Restricted to SUPERVISOR role.
     """
     try:
-        return query_activity_history(activity_id=activity_id, schedule_id=schedule_id)
+        return query_activity_history(activity_id=activity_id, schedule_id=schedule_context.schedule_id)
     except HTTPException:
         raise
     except Exception as e:

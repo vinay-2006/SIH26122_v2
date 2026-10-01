@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from backend.shared.auth import UserProfile, get_current_user
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -306,26 +307,20 @@ def build_activity_graph(
 def get_activity_graph_endpoint(
     activity_id: str,
     depth: int = Query(default=1, ge=0, le=10, description="Graph traversal depth"),
-    schedule_id: Optional[str] = Query(default=None, description="Optional schedule_id filter"),
-    current_user: UserProfile = Depends(get_current_user),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.events_view),
 ) -> Dict[str, Any]:
     """
-    Read-time knowledge execution graph centered on activity_id.
-    Role-gated to SITE_ENGINEER and SUPERVISOR.
+    Read-time knowledge execution graph centered on activity_id, within an EXPLICIT schedule of the
+    caller's project (VIEW_EXECUTION_EVENTS).
     Returns:
       {
         "nodes": [...],
         "edges": [...]
       }
     """
-    if current_user.role not in ("SITE_ENGINEER", "SUPERVISOR"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: insufficient role permissions",
-        )
-
     return build_activity_graph(
         activity_id=activity_id,
         depth=depth,
-        schedule_id=schedule_id,
+        schedule_id=schedule_context.schedule_id,
     )

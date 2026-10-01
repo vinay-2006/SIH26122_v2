@@ -28,15 +28,20 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from backend.context.project import ProjectContext
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
+from backend.rbac.dependencies import require_permission
+from backend.rbac.permissions import Permission
 from backend.shared import schedule_index
 from backend.shared.schedule import parse_schedule_csv
 from backend.shared.schedule_repository import (
     ScheduleAlreadyExistsError,
     SchedulePersistenceError,
-    get_active_schedule,
+    list_active_schedules_for_project,
     get_schedule,
     get_schedule_activity,
     list_schedule_activities,
@@ -57,6 +62,7 @@ from backend.shared.schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
+
 
 
 @router.get("/health")
@@ -100,7 +106,10 @@ def _parse_errors_detail(message: str, errors) -> dict:
 
 
 @router.post("", response_model=ScheduleCreateResponse, status_code=status.HTTP_201_CREATED)
-def create_schedule(request: ScheduleCreateRequest) -> ScheduleCreateResponse:
+def create_schedule(
+    request: ScheduleCreateRequest,
+    project_context: ProjectContext = Depends(require_permission(Permission.MANAGE_SCHEDULE)),
+) -> ScheduleCreateResponse:
     # schedule_id is generated here, server-side — never accepted from the
     # client. This is what makes duplicate-schedule protection operate on a
     # genuinely system-assigned identity rather than one the caller could
@@ -129,7 +138,13 @@ def create_schedule(request: ScheduleCreateRequest) -> ScheduleCreateResponse:
     )
 
     try:
-        activity_count = save_schedule(schedule, parse_result)
+        has_active = bool(list_active_schedules_for_project(str(project_context.project_id)))
+        activity_count = save_schedule(
+            schedule,
+            parse_result,
+            project_id=str(project_context.project_id),
+            activate=not has_active,  # never silently displace or duplicate the project's active schedule
+        )
     except ScheduleAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SchedulePersistenceError as exc:
@@ -168,22 +183,35 @@ def create_schedule(request: ScheduleCreateRequest) -> ScheduleCreateResponse:
 
 
 @router.get("", response_model=list[Schedule])
-def get_schedules() -> list[Schedule]:
-    return list_schedules()
+def get_schedules(
+    project_context: ProjectContext = Depends(require_permission(Permission.VIEW_SCHEDULE)),
+) -> list[Schedule]:
+    return list_schedules(project_id=str(project_context.project_id))
 
 
 @router.get("/active", response_model=Schedule)
-def get_active_schedule_endpoint() -> Schedule:
-    """The schedule claims are currently matched against (most recently created).
+def get_active_schedule_endpoint(
+    project_context: ProjectContext = Depends(require_permission(Permission.VIEW_SCHEDULE)),
+) -> Schedule:
+    """The caller's PROJECT's active schedule. Requires explicit project context (never a global
+    'most recent'). Zero active -> 404; more than one -> 409, never a silent pick.
     Declared before "/{schedule_id}" so "active" is not read as a schedule id."""
-    schedule = get_active_schedule()
-    if schedule is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no schedule has been uploaded yet")
-    return schedule
+    active = list_active_schedules_for_project(str(project_context.project_id))
+    if not active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project has no active schedule")
+    if len(active) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project has multiple active schedules; select one explicitly by schedule_id",
+        )
+    return active[0]
 
 
 @router.get("/{schedule_id}", response_model=Schedule)
-def get_schedule_by_id(schedule_id: str) -> Schedule:
+def get_schedule_by_id(
+    schedule_id: str,
+    _context: ScheduleContext = Depends(gates.schedule_view),
+) -> Schedule:
     schedule = get_schedule(schedule_id)
     if schedule is None:
         raise HTTPException(
@@ -194,7 +222,10 @@ def get_schedule_by_id(schedule_id: str) -> Schedule:
 
 
 @router.get("/{schedule_id}/activities", response_model=list[ScheduleActivity])
-def get_activities_for_schedule(schedule_id: str) -> list[ScheduleActivity]:
+def get_activities_for_schedule(
+    schedule_id: str,
+    _context: ScheduleContext = Depends(gates.schedule_view),
+) -> list[ScheduleActivity]:
     schedule = get_schedule(schedule_id)
     if schedule is None:
         raise HTTPException(
@@ -205,7 +236,10 @@ def get_activities_for_schedule(schedule_id: str) -> list[ScheduleActivity]:
 
 
 @router.get("/{schedule_id}/activities/{activity_id}", response_model=ScheduleActivity)
-def get_activity_by_id(schedule_id: str, activity_id: str) -> ScheduleActivity:
+def get_activity_by_id(
+    schedule_id: str, activity_id: str,
+    _context: ScheduleContext = Depends(gates.schedule_view),
+) -> ScheduleActivity:
     schedule = get_schedule(schedule_id)
     if schedule is None:
         raise HTTPException(
@@ -223,7 +257,10 @@ def get_activity_by_id(schedule_id: str, activity_id: str) -> ScheduleActivity:
 
 
 @router.get("/{schedule_id}/dependencies", response_model=list[ScheduleDependency])
-def get_dependencies_for_schedule(schedule_id: str) -> list[ScheduleDependency]:
+def get_dependencies_for_schedule(
+    schedule_id: str,
+    _context: ScheduleContext = Depends(gates.schedule_view),
+) -> list[ScheduleDependency]:
     schedule = get_schedule(schedule_id)
     if schedule is None:
         raise HTTPException(
@@ -234,7 +271,10 @@ def get_dependencies_for_schedule(schedule_id: str) -> list[ScheduleDependency]:
 
 
 @router.get("/{schedule_id}/wbs-tree", response_model=WBSTreeResponse)
-def get_wbs_tree(schedule_id: str) -> WBSTreeResponse:
+def get_wbs_tree(
+    schedule_id: str,
+    _context: ScheduleContext = Depends(gates.schedule_view),
+) -> WBSTreeResponse:
     """M1 half of Feature #30 (WBS Granularity Bridge): a read-only grouping
     of this schedule's activities by wbs_code, for M3's decomposition
     analysis. No role gate, same as this router's other read endpoints.

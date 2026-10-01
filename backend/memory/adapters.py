@@ -162,39 +162,41 @@ class DatabaseMemoryProvider(MemoryProvider):
     ) -> List[MemoryRecord]:
         query = """
             SELECT
-                incident_id, project_id, stage_id, activity_id, contractor_id,
-                discipline, incident_type, title, narrative, root_cause,
-                delay_days, cost_impact, corrective_action, lessons_learned,
-                recorded_at, status
-            FROM institutional_incidents
-            WHERE project_id = %(project_id)s
+                i.incident_id, i.project_id, i.stage_id, i.activity_id, i.contractor_id, i.schedule_id,
+                i.discipline, i.incident_type, i.category_code, i.title, i.narrative, i.root_cause,
+                i.delay_days, i.cost_impact, i.corrective_action, i.lessons_learned, i.outcome,
+                i.visibility, i.source, i.issue_id, i.recorded_at, i.status,
+                p.project_name
+            FROM institutional_incidents i
+            JOIN projects p ON p.project_id = i.project_id
+            WHERE (i.project_id = %(project_id)s OR i.visibility = 'ORGANISATION')
         """
         params: Dict[str, Any] = {"project_id": context.project_id}
 
         if filters:
             if filters.stage_id:
-                query += " AND stage_id = %(stage_id)s"
+                query += " AND i.stage_id = %(stage_id)s"
                 params["stage_id"] = filters.stage_id
             if filters.activity_id:
-                query += " AND activity_id = %(activity_id)s"
+                query += " AND i.activity_id = %(activity_id)s"
                 params["activity_id"] = filters.activity_id
             if filters.contractor_id:
-                query += " AND contractor_id = %(contractor_id)s"
+                query += " AND i.contractor_id = %(contractor_id)s"
                 params["contractor_id"] = filters.contractor_id
             if filters.incident_type:
-                query += " AND UPPER(incident_type) = UPPER(%(incident_type)s)"
+                query += " AND UPPER(i.incident_type) = UPPER(%(incident_type)s)"
                 params["incident_type"] = filters.incident_type
             if filters.status:
-                query += " AND UPPER(status) = UPPER(%(status)s)"
+                query += " AND UPPER(i.status) = UPPER(%(status)s)"
                 params["status"] = filters.status
             if filters.date_from:
-                query += " AND recorded_at >= %(date_from)s"
+                query += " AND i.recorded_at >= %(date_from)s"
                 params["date_from"] = filters.date_from
             if filters.date_to:
-                query += " AND recorded_at <= %(date_to)s"
+                query += " AND i.recorded_at <= %(date_to)s"
                 params["date_to"] = filters.date_to
 
-        query += " ORDER BY recorded_at DESC LIMIT 200;"
+        query += " ORDER BY i.recorded_at DESC LIMIT 200;"
 
         records: List[MemoryRecord] = []
         try:
@@ -209,6 +211,8 @@ class DatabaseMemoryProvider(MemoryProvider):
                             content_parts.append(row_dict["narrative"])
                         if row_dict.get("root_cause"):
                             content_parts.append(f"Root Cause: {row_dict['root_cause']}")
+                        if row_dict.get("outcome"):
+                            content_parts.append(f"Outcome: {row_dict['outcome']}")
                         if row_dict.get("corrective_action"):
                             content_parts.append(f"Corrective Action: {row_dict['corrective_action']}")
                         if row_dict.get("lessons_learned"):
@@ -231,6 +235,17 @@ class DatabaseMemoryProvider(MemoryProvider):
                                     "discipline": row_dict.get("discipline"),
                                     "delay_days": row_dict.get("delay_days"),
                                     "cost_impact": row_dict.get("cost_impact"),
+                                    "category_code": row_dict.get("category_code"),
+                                    "root_cause": row_dict.get("root_cause"),
+                                    "resolution": row_dict.get("corrective_action"),
+                                    "outcome": row_dict.get("outcome"),
+                                    "lessons_learned": row_dict.get("lessons_learned"),
+                                    "source": row_dict.get("source"),
+                                    "issue_id": str(row_dict["issue_id"]) if row_dict.get("issue_id") else None,
+                                    "project_name": row_dict.get("project_name"),
+                                    # an ORGANISATION record from another project is shared knowledge, not this project's own data
+                                    "scope": "ORGANISATION" if row_dict["project_id"] != context.project_id else "PROJECT",
+                                    "shared_from_other_project": row_dict["project_id"] != context.project_id,
                                 },
                                 source_type="INSTITUTIONAL_INCIDENT",
                                 source_reference=str(row_dict["incident_id"]),

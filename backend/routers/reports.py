@@ -28,9 +28,10 @@ from backend.routers.summary import (
     generate_llm_summary,
     translate_dynamic_text,
 )
-from backend.shared.auth import UserProfile, require_role
+from backend.shared.auth import get_current_user
 from backend.shared.db import get_connection
-from backend.shared.schedule_context import resolve_schedule_id
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +137,8 @@ def execution_summary(
     end: Optional[str] = Query(default=None, description="YYYY-MM-DD; default today"),
     discipline: Optional[str] = Query(default=None, description="discipline, or all/omitted for all"),
     language: str = Query(default="en", description="display language: en, hi, te"),
-    schedule_id: Optional[str] = Query(default=None, description="Defaults to the active schedule"),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     try:
         end_d = date.fromisoformat(end) if end else date.today()
@@ -147,7 +148,7 @@ def execution_summary(
     if start_d > end_d:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start must be on or before end")
 
-    resolved_schedule_id = resolve_schedule_id(schedule_id)
+    resolved_schedule_id = schedule_context.schedule_id
     disc = (discipline or "all").strip()
     aggregate = build_deterministic_aggregate(
         period="custom", start_date=start_d.isoformat(), end_date=end_d.isoformat(),
@@ -209,7 +210,7 @@ class TranslateRequest(BaseModel):
 
 
 @router.post("/translate")
-def translate(req: TranslateRequest, current_user: UserProfile = Depends(require_role("SUPERVISOR", "SITE_ENGINEER"))):
+def translate(req: TranslateRequest, current_user=Depends(get_current_user)):
     """
     Translate generated/runtime text (clarification questions, Ask Why, evidence and validation
     explanations) for display. Canonical stored text is never modified. Any failure returns the

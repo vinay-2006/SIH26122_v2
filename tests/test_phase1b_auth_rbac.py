@@ -22,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as, set_event_ctx
 from backend.shared.auth import UserProfile, get_current_user
 
 
@@ -153,7 +154,7 @@ def test_auth_02_match_invalid_token_rejected(client: TestClient):
 # ---------------------------------------------------------------------------
 
 def test_auth_03_match_site_engineer_allowed(client: TestClient):
-    app.dependency_overrides[get_current_user] = lambda: SITE_ENGINEER_USER
+    set_event_ctx("SITE_ENGINEER", schedule_id="SCH-AUTH-1")
 
     mock_claim = _make_mock_claim("EVT-AUTH-ENG")
     mock_act = _make_mock_activity("ACT-100")
@@ -181,7 +182,7 @@ def test_auth_03_match_site_engineer_allowed(client: TestClient):
 # ---------------------------------------------------------------------------
 
 def test_auth_04_match_supervisor_allowed(client: TestClient):
-    app.dependency_overrides[get_current_user] = lambda: SUPERVISOR_USER
+    set_event_ctx("SUPERVISOR", schedule_id="SCH-AUTH-1")
 
     mock_claim = _make_mock_claim("EVT-AUTH-SUP")
     mock_act = _make_mock_activity("ACT-100")
@@ -208,23 +209,26 @@ def test_auth_04_match_supervisor_allowed(client: TestClient):
 # ---------------------------------------------------------------------------
 
 def test_auth_05_decision_site_engineer_rejected(client: TestClient):
-    app.dependency_overrides[get_current_user] = lambda: SITE_ENGINEER_USER
-
-    # Attempt POST /api/v1/decisions as SITE_ENGINEER
+    """A site engineer (project role without APPROVE_ACTUAL) can neither approve one claim nor bulk-approve."""
     decision_payload = {
         "event_id": "EVT-AUTH-05",
         "action": "APPROVE",
         "justification": "Attempted decision by engineer",
     }
-    resp = client.post("/api/v1/decisions", json=decision_payload)
-    assert resp.status_code == 403
-    assert "Operation requires role in ['SUPERVISOR']" in resp.json().get("detail", "")
+    with act_as("SITE_ENGINEER", schedule_id="SCH-AUTH-1"):
+        resp = client.post("/api/v1/decisions", json=decision_payload)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error_code"] == "PERMISSION_DENIED"
+        assert "APPROVE_ACTUAL" in resp.json()["detail"]["message"]
 
-    # Attempt POST /api/v1/digest/bulk-approve as SITE_ENGINEER
-    bulk_payload = {"event_ids": ["EVT-AUTH-05"]}
-    resp_bulk = client.post("/api/v1/digest/bulk-approve", json=bulk_payload)
-    assert resp_bulk.status_code == 403
-    assert "Operation requires role in ['SUPERVISOR']" in resp_bulk.json().get("detail", "")
+        resp_bulk = client.post("/api/v1/digest/bulk-approve", json={"event_ids": ["EVT-AUTH-05"], "schedule_id": "SCH-AUTH-1"})
+        assert resp_bulk.status_code == 403
+        assert resp_bulk.json()["detail"]["error_code"] == "PERMISSION_DENIED"
+
+    # the reviewer role that CAN approve is not blocked by RBAC (it then fails on the missing claim, not on permission)
+    with act_as("SUPERVISOR", schedule_id="SCH-AUTH-1"):
+        resp_sup = client.post("/api/v1/digest/bulk-approve", json={"event_ids": [], "schedule_id": "SCH-AUTH-1"})
+        assert resp_sup.status_code != 403
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +282,7 @@ def test_auth_08_check_invalid_token_rejected(client: TestClient):
 # ---------------------------------------------------------------------------
 
 def test_auth_09_check_site_engineer_allowed(client: TestClient):
-    app.dependency_overrides[get_current_user] = lambda: SITE_ENGINEER_USER
+    set_event_ctx("SITE_ENGINEER", schedule_id="SCH-AUTH-1")
 
     mock_claim = _make_mock_claim("EVT-AUTH-09")
     mock_act = _make_mock_activity("ACT-100")
@@ -306,7 +310,7 @@ def test_auth_10_site_engineer_intake_pipeline(client: TestClient):
     Verifies that a Site Engineer can run both match and check in sequence,
     reflecting the exact frontend intake flow (ClaimIntake.tsx).
     """
-    app.dependency_overrides[get_current_user] = lambda: SITE_ENGINEER_USER
+    set_event_ctx("SITE_ENGINEER", schedule_id="SCH-AUTH-1")
 
     event_id = "EVT-AUTH-10"
     mock_claim = _make_mock_claim(event_id)
@@ -356,7 +360,7 @@ def test_auth_rematch(client: TestClient):
     assert resp_invalid.status_code == 401
 
     # 3. Site Engineer -> 200
-    app.dependency_overrides[get_current_user] = lambda: SITE_ENGINEER_USER
+    set_event_ctx("SITE_ENGINEER", schedule_id="SCH-AUTH-1")
     with patch("backend.routers.matching.get_connection") as mock_get_conn:
         mock_conn = MagicMock()
         mock_cur = MagicMock()
@@ -370,7 +374,7 @@ def test_auth_rematch(client: TestClient):
     assert resp_eng.json()["event_id"] == event_id
 
     # 4. Supervisor -> 200
-    app.dependency_overrides[get_current_user] = lambda: SUPERVISOR_USER
+    set_event_ctx("SUPERVISOR", schedule_id="SCH-AUTH-1")
     with patch("backend.routers.matching.get_connection") as mock_get_conn:
         mock_conn = MagicMock()
         mock_cur = MagicMock()

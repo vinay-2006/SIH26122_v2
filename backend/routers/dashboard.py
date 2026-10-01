@@ -4,9 +4,10 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from backend.shared.auth import UserProfile, require_role
+from backend.context import gates
+from backend.context.project import ProjectContext
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
-from backend.shared.schedule_context import resolve_schedule_id
 
 logger = logging.getLogger(__name__)
 
@@ -250,15 +251,15 @@ def query_dashboard_summary(conn: Optional[Any] = None, schedule_id: Optional[st
 
 @router.get("/summary")
 def get_dashboard_summary(
-    schedule_id: Optional[str] = Query(default=None, description="Defaults to the active schedule"),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     Live dashboard summary KPIs and discipline volume breakdown, scoped to
-    the active schedule (or an explicit, validated schedule_id).
-    Restricted to SUPERVISOR role.
+    an EXPLICIT schedule of the caller's project (no active/latest fallback).
+    Requires REVIEW_CLAIM (supervisor / planner / project manager / owner).
     """
-    resolved_schedule_id = resolve_schedule_id(schedule_id)
+    resolved_schedule_id = schedule_context.schedule_id
     try:
         return query_dashboard_summary(schedule_id=resolved_schedule_id)
     except Exception as e:
@@ -271,15 +272,14 @@ def get_dashboard_summary(
 
 @router.get("/delay-reasons")
 def get_delay_reasons(
-    schedule_id: Optional[str] = Query(default=None, description="Defaults to the active schedule"),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     Aggregate execution_events.delay_reason across APPROVED/EDIT claims,
-    scoped to the active schedule (or an explicit, validated schedule_id).
-    Restricted to SUPERVISOR role.
+    scoped to an EXPLICIT schedule of the caller's project.
     """
-    resolved_schedule_id = resolve_schedule_id(schedule_id)
+    resolved_schedule_id = schedule_context.schedule_id
     try:
         return query_delay_reason_aggregates(schedule_id=resolved_schedule_id)
     except Exception as e:
@@ -342,6 +342,7 @@ def _calculate_variance_days(
 def query_institutional_memory(
     discipline: Optional[str] = None,
     conn: Optional[Any] = None,
+    project_id: Optional[str] = None,
 ) -> dict:
     """
     Query schedule_activities joined with approved_actuals to provide
@@ -369,10 +370,15 @@ def query_institutional_memory(
            AND aa.activity_id = sa.activity_id
     """
     params = []
-
+    where = []
+    if project_id is not None:  # operational callers always scope to the caller's project
+        where.append("sa.project_id = %s")
+        params.append(str(project_id))
     if discipline is not None and discipline.strip():
-        query += " WHERE UPPER(TRIM(sa.discipline)) = %s"
+        where.append("UPPER(TRIM(sa.discipline)) = %s")
         params.append(discipline.strip().upper())
+    if where:
+        query += " WHERE " + " AND ".join(where)
 
     query += " ORDER BY sa.activity_id ASC, sa.schedule_id ASC"
 
@@ -410,15 +416,14 @@ def get_institutional_memory(
         default=None,
         description="Filter activities by discipline (e.g. CIVIL, PIPING)",
     ),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    project_context: ProjectContext = Depends(gates.project_review),
 ):
     """
-    Historical comparison of planned vs actual duration per activity.
-    Filterable by discipline.
-    Restricted to SUPERVISOR role.
+    Historical comparison of planned vs actual duration per activity of THIS PROJECT
+    (all of its schedule versions). Filterable by discipline. Requires REVIEW_CLAIM.
     """
     try:
-        return query_institutional_memory(discipline=discipline)
+        return query_institutional_memory(discipline=discipline, project_id=str(project_context.project_id))
     except Exception as e:
         logger.error("Failed to query institutional memory: %s", e)
         raise HTTPException(
@@ -431,6 +436,7 @@ def _calculate_historical_ratio_for_discipline(
     discipline: str,
     target_activity_id: Optional[str] = None,
     conn: Optional[Any] = None,
+    project_id: Optional[str] = None,
 ) -> Optional[float]:
     """
     Calculate the average historical actual_duration / planned_duration ratio
@@ -459,11 +465,15 @@ def _calculate_historical_ratio_for_discipline(
           AND aa.actual_finish IS NOT NULL
     """
     disc_norm = discipline.strip().upper()
+    hist_params: tuple = (disc_norm,)
+    if project_id is not None:  # history is this project's own; never another project's
+        query += " AND sa.project_id = %s"
+        hist_params = (disc_norm, str(project_id))
     if conn is not None:
-        rows = conn.execute(query, (disc_norm,)).fetchall()
+        rows = conn.execute(query, hist_params).fetchall()
     else:
         with get_connection() as c:
-            rows = c.execute(query, (disc_norm,)).fetchall()
+            rows = c.execute(query, hist_params).fetchall()
 
     ratios: List[float] = []
     for row in rows:
@@ -487,6 +497,8 @@ def query_forecast(
     activity_id: Optional[str] = None,
     discipline: Optional[str] = None,
     conn: Optional[Any] = None,
+    project_id: Optional[str] = None,
+    schedule_id: Optional[str] = None,
 ) -> dict:
     """
     Calculate historical-ratio forecast for an activity or a discipline.
@@ -508,14 +520,20 @@ def query_forecast(
                 planned_finish
             FROM schedule_activities
             WHERE activity_id = %s
-            ORDER BY schedule_id ASC
-            LIMIT 1
         """
+        target_params: tuple = (activity_id,)
+        if schedule_id is not None:  # explicit schedule: never "the first schedule that has this id"
+            target_query += " AND schedule_id = %s"
+            target_params += (schedule_id,)
+        if project_id is not None:
+            target_query += " AND project_id = %s"
+            target_params += (str(project_id),)
+        target_query += " ORDER BY schedule_id ASC LIMIT 1"
         if conn is not None:
-            target_row = conn.execute(target_query, (activity_id,)).fetchone()
+            target_row = conn.execute(target_query, target_params).fetchone()
         else:
             with get_connection() as c:
-                target_row = c.execute(target_query, (activity_id,)).fetchone()
+                target_row = c.execute(target_query, target_params).fetchone()
         if not target_row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -534,6 +552,7 @@ def query_forecast(
             discipline=act_discipline,
             target_activity_id=activity_id,
             conn=conn,
+            project_id=project_id,
         )
 
         if avg_ratio is not None and planned_dur is not None and planned_dur > 0:
@@ -556,6 +575,7 @@ def query_forecast(
     avg_ratio = _calculate_historical_ratio_for_discipline(
         discipline=disc_norm,
         conn=conn,
+        project_id=project_id,
     )
 
     activities_query = """
@@ -567,13 +587,20 @@ def query_forecast(
             planned_finish
         FROM schedule_activities
         WHERE UPPER(TRIM(discipline)) = %s
-        ORDER BY activity_id ASC, schedule_id ASC
     """
+    act_params: tuple = (disc_norm,)
+    if schedule_id is not None:
+        activities_query += " AND schedule_id = %s"
+        act_params += (schedule_id,)
+    if project_id is not None:
+        activities_query += " AND project_id = %s"
+        act_params += (str(project_id),)
+    activities_query += " ORDER BY activity_id ASC, schedule_id ASC"
     if conn is not None:
-        rows = conn.execute(activities_query, (disc_norm,)).fetchall()
+        rows = conn.execute(activities_query, act_params).fetchall()
     else:
         with get_connection() as c:
-            rows = c.execute(activities_query, (disc_norm,)).fetchall()
+            rows = c.execute(activities_query, act_params).fetchall()
 
     activities: List[dict] = []
     hist_ratio = round(avg_ratio, 3) if avg_ratio is not None else None
@@ -613,16 +640,22 @@ def get_forecast(
         default=None,
         description="Target discipline for forecast",
     ),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID)"),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     Lightweight historical-ratio forecasting.
     Calculate actual_duration / planned_duration for completed historical activities
-    of the same discipline, and apply that ratio to the target activity.
-    Restricted to SUPERVISOR role.
+    of the same discipline IN THIS PROJECT, and apply that ratio to the target activity/schedule.
+    Requires REVIEW_CLAIM and an explicit schedule.
     """
     try:
-        return query_forecast(activity_id=activity_id, discipline=discipline)
+        return query_forecast(
+            activity_id=activity_id,
+            discipline=discipline,
+            project_id=str(schedule_context.project_id),
+            schedule_id=schedule_context.schedule_id,
+        )
     except HTTPException:
         raise
     except Exception as e:

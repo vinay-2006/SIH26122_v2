@@ -16,6 +16,7 @@ from backend.context.errors import raise_permission_denied, raise_resource_not_f
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.rbac.permissions import Permission, has_permission
+from backend.shared.workflow_flags import quality_hold_reason
 from backend.repositories.audit_repo import ProjectAuditRepository
 from backend.repositories.stage_repo import (
     InvalidStageRelationshipError,
@@ -108,9 +109,11 @@ class StageService:
             return WorkflowCondition.REOPEN_REQUESTED.value
         if is_reopened or reopen_status == "APPROVED":
             return WorkflowCondition.REWORK_IN_PROGRESS.value
-        if status_field == "QUALITY_HOLD":
+        # QUALITY_HOLD / BLOCKED are DERIVED from persisted facts (quality gates, blockers) that every bulk
+        # activity query carries (backend/repositories/workflow_flags.py); an explicit status still wins.
+        if status_field == "QUALITY_HOLD" or quality_hold_reason(activity_data):
             return WorkflowCondition.QUALITY_HOLD.value
-        if status_field == "BLOCKED":
+        if status_field == "BLOCKED" or (activity_data.get("wf_blockers") or 0) > 0:
             return WorkflowCondition.BLOCKED.value
 
         return WorkflowCondition.NONE.value

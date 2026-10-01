@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+from backend.shared.workflow_flags import with_workflow_flags
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.repositories.stage_repo import ProjectStageRepository
@@ -321,7 +322,7 @@ class MatchingEligibilityService:
 
         with ProjectStageRepository.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:
-                cur.execute(query, params)
+                cur.execute(with_workflow_flags(query), params)
                 all_acts = [dict(r) for r in cur.fetchall()]
 
         eligible, _ = cls.filter_eligible_activities(

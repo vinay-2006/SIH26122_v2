@@ -101,6 +101,23 @@ def create_test_db() -> SQLitePsycopgAdapter:
 # Test 1 — PMISAdapter Inheritance
 # ==============================================================================
 
+@pytest.fixture(autouse=True)
+def _mock_p6_needs_dev_mode(monkeypatch):
+    """The mock P6 routes exist only in development mode (AUTH_DEV_MODE=true). Tests opt in explicitly."""
+    monkeypatch.setenv("AUTH_DEV_MODE", "true")
+
+
+def test_mock_p6_is_hidden_outside_dev_mode(monkeypatch):
+    monkeypatch.setenv("AUTH_DEV_MODE", "false")
+    client = TestClient(app)
+    assert client.get("/api/v1/mock-p6/health").status_code == 404
+    assert client.get("/api/v1/mock-p6/received").status_code == 404
+    resp = client.post("/api/v1/mock-p6/activities/A1", json={"Id": "A1", "PercentComplete": 10})
+    assert resp.status_code == 404
+    monkeypatch.delenv("AUTH_DEV_MODE")
+    assert client.get("/api/v1/mock-p6/health").status_code == 404, "unset must default to closed"
+
+
 def test_pmis_adapter_inheritance():
     adapter = P6RestAdapter()
     assert isinstance(adapter, PMISAdapter)

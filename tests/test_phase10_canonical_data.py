@@ -607,13 +607,14 @@ def test_startup_isolation():
     assert len(getattr(production_app, "on_startup", [])) == 0
 
 
-def test_phase1_9_regression_baseline():
+def test_phase1_9_regression_baseline(monkeypatch):
     """Test #15: Baseline functionality from Phases 1-9 remains completely unaffected."""
     client = TestClient(production_app)
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
+    monkeypatch.setenv("AUTH_DEV_MODE", "true")  # mock P6 exists only in dev mode
     resp_p6 = client.get("/api/v1/mock-p6/health")
     assert resp_p6.status_code == 200
 

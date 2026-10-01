@@ -495,8 +495,6 @@ const en = {
   },
   compoundImpact: {
     title: 'Downstream Schedule Impact',
-    watchTitle: 'Downstream Schedule Impact Watch',
-    watchDesc: 'Deterministic Primavera schedule dependency analysis for delayed, on-hold, or quality-gated activities.',
     criticalImpact: 'Critical Impact',
     highImpact: 'High Impact',
     mediumImpact: 'Medium Impact',

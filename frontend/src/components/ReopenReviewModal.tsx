@@ -32,7 +32,6 @@ export const ReopenReviewModal: React.FC<ReopenReviewModalProps> = ({
         reopen_id: request.reopen_id || request.request_id || '',
         decision,
         supervisor_notes: supervisorNotes.trim() || undefined,
-        reviewer_name: user?.full_name || 'Supervisor',
       });
       onReviewed(updated);
       onClose();
@@ -99,7 +98,7 @@ export const ReopenReviewModal: React.FC<ReopenReviewModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 text-xs pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
               <div>
                 <span className="text-slate-400">Requested By:</span>{' '}
-                <strong className="text-slate-700 dark:text-slate-200">{request.requested_by_name} ({request.requested_by_role})</strong>
+                <strong className="text-slate-700 dark:text-slate-200">{request.requested_by_name ?? (request.requested_by ? `user ${request.requested_by.slice(0, 8)}…` : 'unknown')}</strong>
               </div>
               <div>
                 <span className="text-slate-400">Date:</span>{' '}

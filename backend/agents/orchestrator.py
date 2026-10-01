@@ -43,6 +43,8 @@ class AgentOrchestrator:
                 entity_id=str(context.project_id),
                 action="AGENT_BRIEFING_GENERATED",
                 actor_id=str(context.user_id),
+                project_id=context.project_id,
+                role=context.role,
                 before_state=None,
                 after_state={
                     "briefing_id": briefing.briefing_id,
@@ -98,6 +100,8 @@ class AgentOrchestrator:
                 entity_id=str(context.project_id),
                 action="AGENT_QUERY_EXECUTED",
                 actor_id=str(context.user_id),
+                project_id=context.project_id,
+                role=context.role,
                 before_state=None,
                 after_state={
                     "query": request.query,

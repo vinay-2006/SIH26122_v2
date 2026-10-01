@@ -53,6 +53,13 @@ REQUIRED_TABLES = [
     "contractor_disputes",
     "impact_scenarios",
     "agent_briefings",
+    "issues",
+    "issue_categories",
+    "issue_evidence",
+    "root_causes",
+    "disciplines",
+    "upload_batches",
+    "notifications",
     # Migration Tracking (1)
     "schema_migrations",
 ]

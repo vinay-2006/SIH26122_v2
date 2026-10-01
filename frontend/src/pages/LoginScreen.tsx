@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
-import { IS_MOCK_MODE } from '@/api';
 import {
   Lock,
   Mail,
@@ -24,6 +23,14 @@ import {
 } from 'lucide-react';
 
 import GlobalIndustrialBackground from '@/components/GlobalIndustrialBackground';
+
+// Local integration demo (isolated DB only): the two prototype identities provisioned by backend/prototype_seed. Enabled by
+// VITE_LOCAL_DEMO_AUTH=true; the backend refuses local-login anywhere except the isolated integration database.
+const LOCAL_DEMO_AUTH = import.meta.env.VITE_LOCAL_DEMO_AUTH === 'true';
+const LOCAL_IDENTITIES = [
+  { label: 'Supervisor', email: 'supervisor@setuai.demo' },
+  { label: 'Site Engineer', email: 'engineer@setuai.demo' },
+];
 
 export default function LoginScreen() {
   const { login, isAuthenticated, user, error, clearError, isLoading } = useAuth();
@@ -198,16 +205,6 @@ export default function LoginScreen() {
 
           {/* Form body */}
           <div className="px-8 py-7 space-y-5">
-            {/* Mock Mode banner */}
-            {IS_MOCK_MODE && (
-              <div
-                id="login-mock-mode-indicator"
-                className="p-3 rounded-xl flex items-center gap-2 text-xs font-mono font-bold bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400"
-              >
-                <span>⚠️</span>
-                <span>DEMO / MOCK DATA MODE ACTIVE</span>
-              </div>
-            )}
             {/* Error banner */}
             {(error || fieldError) && (
               <div className="p-3.5 rounded-xl flex items-start gap-2.5 text-xs bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 font-semibold">
@@ -280,6 +277,23 @@ export default function LoginScreen() {
                 <div className="flex-1 h-px bg-slate-300 dark:bg-[#1E3A5F]" />
               </div>
               <div className="grid grid-cols-2 gap-2.5">
+                {LOCAL_DEMO_AUTH
+                  ? LOCAL_IDENTITIES.map((id) => (
+                      <button
+                        key={id.email}
+                        type="button"
+                        onClick={() => fillDemo(id.email)}
+                        className="p-3 rounded-xl text-left transition-all border bg-[#F1F5F9] dark:bg-[#0A2340] border-slate-300 dark:border-[#1E3A5F] hover:border-[#FF7A18] dark:hover:border-[#FF7A18] hover:bg-white dark:hover:bg-[#0B2D4A] shadow-2xs group cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#071A2D] dark:text-[#F5F7FA] group-hover:text-[#FF7A18] transition-colors">
+                          <ShieldCheck className="w-4 h-4 text-[#0D9488]" />
+                          {id.label}
+                        </div>
+                        <div className="text-[10px] font-mono mt-0.5 truncate text-[#334155] dark:text-[#94A8B8] font-semibold">{id.email}</div>
+                      </button>
+                    ))
+                  : (
+                    <>
                 <button
                   type="button"
                   onClick={() => fillDemo('supervisor@sih26122.internal')}
@@ -303,6 +317,8 @@ export default function LoginScreen() {
                   </div>
                   <div className="text-[10px] font-mono mt-0.5 truncate text-[#334155] dark:text-[#94A8B8] font-semibold">site.engineer@sih26122.internal</div>
                 </button>
+                    </>
+                  )}
               </div>
             </div>
           </div>

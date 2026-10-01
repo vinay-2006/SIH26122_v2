@@ -2,10 +2,13 @@
 Owner: M2. Others: read-only. If you need a new field returned from this
 router, ask M2 — don't edit this file directly.
 
+V7 context (this revision): every route requires an EXPLICIT project (X-Project-ID) validated against
+  active membership, and an EXPLICIT schedule that belongs to that project. There is no active/latest
+  schedule fallback. Each execution_event is stamped with project_id (and stage/contractor/work-package
+  attribution when the reported activity is known). Roles are the project roles (RBAC permissions), not the
+  V6 profile role.
+
 Changes in this version, per PRD v5:
-  - Role-gated: SITE_ENGINEER required (via shared/auth.py's require_role()).
-    NOTE: shared/auth.py is currently M2's temporary local stub, not M6's
-    real implementation — see the big warning at the top of that file.
   - uploader_id/supervisor_id are no longer accepted from the request body
     (PRD v5 6.2: "User identity must never be accepted as a free-form
     request-body field"). They're derived from the authenticated user.
@@ -54,10 +57,13 @@ from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from backend.shared.auth import UserProfile as CurrentUser, require_role
+from backend.context import gates
+from backend.context.event import EventContext
+from backend.context.project import ProjectContext
+from backend.context.schedule import ScheduleContext, resolve_explicit_schedule
 from backend.shared.db import get_db
 from backend.shared.llm_extraction import (
     LLMExtractionError,
@@ -345,11 +351,18 @@ def claims_health():
     return {"router": "intake", "status": "ok"}
 
 
-def _get_active_schedule_id(conn) -> Optional[str]:
-    with conn.cursor() as cur:
-        cur.execute("SELECT schedule_id FROM schedules ORDER BY created_at DESC LIMIT 1")
-        row = cur.fetchone()
-    return row["schedule_id"] if row else None
+def _derive_attribution(cur, project_id, schedule_id: str, activity_id: Optional[str]) -> dict:
+    """Stage / contractor / work-package of the reported activity, derived deterministically from the
+    schedule (never from the claim text). Empty when the activity is unknown or not reported yet."""
+    if not activity_id:
+        return {}
+    cur.execute(
+        "SELECT stage_id, contractor_id, work_package_id FROM schedule_activities "
+        "WHERE schedule_id = %s AND activity_id = %s AND project_id = %s",
+        (schedule_id, activity_id, str(project_id)),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else {}
 
 
 def _build_ai_provenance(extracted: ExtractedClaimFields) -> dict[str, str]:
@@ -484,6 +497,10 @@ def _insert_execution_event(
     clarification_question: Optional[str] = None,
     clarification_answer: Optional[str] = None,
     field_provenance: Optional[dict[str, str]] = None,
+    project_id=None,
+    stage_id=None,
+    contractor_id=None,
+    work_package_id=None,
 ) -> None:
     """
     Shared INSERT for every intake path (text, file, schedule-export) --
@@ -497,8 +514,9 @@ def _insert_execution_event(
             action, event_type, claim_mode, asset_tag, location,
             claimed_quantity, claimed_uom, claimed_pct, delay_reason,
             supervisor_id, photo_path, status, clarification_status,
-            clarification_question, clarification_answer, field_provenance
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'EXTRACTED', %s, %s, %s, %s)""",
+            clarification_question, clarification_answer, field_provenance,
+            project_id, stage_id, contractor_id, work_package_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'EXTRACTED', %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             event_id, document_id, schedule_id, event_date_val, raw_claim_text,
             input_channel, language_detected, reported_activity_id, discipline,
@@ -506,6 +524,7 @@ def _insert_execution_event(
             claimed_quantity, claimed_uom, claimed_pct, delay_reason,
             supervisor_id, photo_path, clarification_status, clarification_question,
             clarification_answer, json.dumps(field_provenance or {}),
+            project_id, stage_id, contractor_id, work_package_id,
         ),
     )
 
@@ -521,19 +540,19 @@ def _insert_source_reference(cur, *, event_id: str, file_name: Optional[str], ra
 @router.post("/claims/text", response_model=ClaimResponse)
 def create_text_claim(
     payload: TextClaimRequest,
+    request: Request,
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER")),
+    project_context: ProjectContext = Depends(gates.project_events_create),
 ):
     """
     Handles both TYPED_TEXT and VOICE (voice already arrives as text from the
     browser's Web Speech API — no audio processing happens here).
     """
-    schedule_id = payload.schedule_id or _get_active_schedule_id(conn)
-    if not schedule_id:
-        raise HTTPException(
-            status_code=409,
-            detail="No schedule uploaded yet — a schedule must exist before claims can be created.",
-        )
+    current_user = project_context.user
+    schedule_scope = resolve_explicit_schedule(
+        project_context, payload.schedule_id, request.headers.get("X-Schedule-ID"), request.query_params.get("schedule_id")
+    )
+    schedule_id = schedule_scope.schedule_id
 
     # 1. Hash the raw text itself (no file exists for typed/voice claims) and
     #    log it as a source_document for audit-trail consistency with
@@ -629,6 +648,8 @@ def create_text_claim(
             clarification_question=clarification_question,
             clarification_answer=None,
             field_provenance=provenance,
+            project_id=project_context.project_id,
+            **_derive_attribution(cur, project_context.project_id, schedule_id, extracted.reported_activity_id),
         )
 
         if document_id and photo_path:
@@ -648,7 +669,7 @@ def create_text_claim(
 def get_claim(
     event_id: str,
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER", "SUPERVISOR")),
+    event_context: EventContext = Depends(gates.event_view),
 ):
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM execution_events WHERE event_id = %s", (event_id,))
@@ -662,7 +683,7 @@ def get_claim(
 def get_claim_photo(
     event_id: str,
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER", "SUPERVISOR")),
+    event_context: EventContext = Depends(gates.event_view),
 ):
     """
     Serves the evidence photo attached to a claim (execution_events.photo_path)
@@ -701,7 +722,7 @@ def clarify_claim(
     event_id: str,
     payload: ClarifyClaimRequest,
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER", "SUPERVISOR")),
+    event_context: EventContext = Depends(gates.event_clarify),
 ):
     """
     Feature #29: Adaptive Field Copilot clarification endpoint.
@@ -808,23 +829,17 @@ def clarify_claim(
 def list_claims(
     status: Optional[str] = Query(default=None),
     discipline: Optional[str] = Query(default=None),
-    schedule_id: Optional[str] = Query(default=None, description="Defaults to the active schedule"),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER", "SUPERVISOR")),
+    schedule_context: ScheduleContext = Depends(gates.events_view),
 ):
     """
-    ISS-05: scoped to the active schedule by default (or an explicit
-    schedule_id) -- this backs the Review Workspace queue, so an
-    unscoped list here is exactly the kind of cross-schedule leak that
-    feature must never show. No schedule at all yet -> empty list, same
-    as "no claims exist", not a 404 (this is a collection endpoint).
+    ISS-05: scoped to an EXPLICIT schedule of the caller's project -- this backs the Review Workspace
+    queue, so an unscoped list here is exactly the kind of cross-schedule/cross-project leak that feature
+    must never show. There is no active/latest fallback.
     """
-    resolved_schedule_id = schedule_id or _get_active_schedule_id(conn)
-    if not resolved_schedule_id:
-        return []
-
-    query = "SELECT * FROM execution_events WHERE schedule_id = %s"
-    params: list = [resolved_schedule_id]
+    query = "SELECT * FROM execution_events WHERE schedule_id = %s AND project_id = %s"
+    params: list = [schedule_context.schedule_id, str(schedule_context.project_id)]
     if status:
         query += " AND status = %s"
         params.append(status)
@@ -843,8 +858,10 @@ def create_file_claim(
     file: UploadFile = File(...),
     purpose: UploadPurpose = Form(UploadPurpose.EVIDENCE_PHOTO),
     raw_claim_text: Optional[str] = Form(None),
+    schedule_id: Optional[str] = Form(None),
+    request: Request = None,
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER")),
+    project_context: ProjectContext = Depends(gates.project_events_create),
 ):
     """
     File intake (#2): .pdf/.xlsx/.xls/.csv/.txt/.xer, or an image. A single
@@ -865,12 +882,11 @@ def create_file_claim(
         photo_path. This is what makes a bare photo upload (no typed text)
         a legitimate claim source instead of a guaranteed 422.
     """
-    schedule_id = _get_active_schedule_id(conn)
-    if not schedule_id:
-        raise HTTPException(
-            status_code=409,
-            detail="No schedule uploaded yet — a schedule must exist before claims can be created.",
-        )
+    current_user = project_context.user
+    schedule_scope = resolve_explicit_schedule(
+        project_context, schedule_id, request.headers.get("X-Schedule-ID"), request.query_params.get("schedule_id")
+    )
+    schedule_id = schedule_scope.schedule_id
 
     contents = file.file.read()
     if not contents:
@@ -967,6 +983,8 @@ def create_file_claim(
                 clarification_question=clarification_question,
                 clarification_answer=None,
                 field_provenance=provenance,
+                project_id=project_context.project_id,
+                **_derive_attribution(cur, project_context.project_id, schedule_id, extracted.reported_activity_id),
             )
             _insert_source_reference(
                 cur, event_id=event_id, file_name=file.filename, raw_snippet=draft.raw_text
@@ -993,8 +1011,10 @@ def _extract_single_or_raise(text: str) -> ExtractedClaimFields:
 @router.post("/claims/schedule-export", response_model=List[ClaimResponse])
 def create_schedule_export_claims(
     file: UploadFile = File(...),
+    schedule_id: Optional[str] = Form(None),
+    request: Request = None,
     conn=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("SITE_ENGINEER")),
+    project_context: ProjectContext = Depends(gates.project_events_create),
 ):
     """
     Schedule-export claims (#22, parsing half): a second P6/MSP-format file
@@ -1009,12 +1029,11 @@ def create_schedule_export_claims(
     so both endpoints agree on what "the activity id column" means for the
     same file shape.
     """
-    schedule_id = _get_active_schedule_id(conn)
-    if not schedule_id:
-        raise HTTPException(
-            status_code=409,
-            detail="No schedule uploaded yet — a schedule must exist before claims can be created.",
-        )
+    current_user = project_context.user
+    schedule_scope = resolve_explicit_schedule(
+        project_context, schedule_id, request.headers.get("X-Schedule-ID"), request.query_params.get("schedule_id")
+    )
+    schedule_id = schedule_scope.schedule_id
 
     contents = file.file.read()
     if not contents:
@@ -1085,6 +1104,8 @@ def create_schedule_export_claims(
                     clarification_question=None,
                     clarification_answer=None,
                     field_provenance=provenance,
+                    project_id=project_context.project_id,
+                    **_derive_attribution(cur, project_context.project_id, schedule_id, extracted.reported_activity_id),
                 )
                 _insert_source_reference(
                     cur, event_id=event_id, file_name=file.filename, raw_snippet=str(row.to_dict())

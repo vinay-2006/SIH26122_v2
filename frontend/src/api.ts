@@ -1,127 +1,14 @@
 /**
- * Setu AI (SIH26122) — Typed API Client & PRD Contracts
+ * SETUAI V7 — typed API clients and contracts.
  *
- * Fully compliant with PRD v5 specification.
- * VITE_USE_MOCKS=true → returns realistic mock data (explicit demo mode)
- * Any other value or omission → calls real FastAPI endpoints at VITE_API_BASE_URL
+ * Every request goes through api/client.ts, which sends the bearer token and the explicit
+ * project / schedule-version context (lib/apiContext). There is no mock mode: the UI only ever shows
+ * what the backend returns.
  */
+import { apiFetch, ApiError, BASE_URL } from './api/client';
+import { apiContext, requestHeaders } from '@/lib/apiContext';
 
-// Never silently substitute fabricated records for a real backend response.
-// Mock mode must be explicitly opted into by a demo build.
-const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true';
-export const IS_MOCK_MODE = USE_MOCKS;
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-interface ApiFetchOptions extends RequestInit {
-  responseType?: 'json' | 'blob' | 'text';
-}
-
-/** Thrown by apiFetch on a non-2xx response. `.message` is always safe to show
- * a user (never raw JSON/stack traces); `.status` and `.raw` are for callers
- * that want to branch on the status code or log the untouched backend body. */
-export class ApiError extends Error {
-  status: number;
-  raw: string;
-  constructor(status: number, message: string, raw: string) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.raw = raw;
-  }
-}
-
-const FRIENDLY_STATUS_MESSAGES: Record<number, string> = {
-  400: 'The request was invalid.',
-  401: 'Your session has expired. Please sign in again.',
-  403: "You don't have permission to do that.",
-  404: 'The requested item could not be found.',
-  409: 'This conflicts with existing data.',
-  422: 'Some of the submitted information was invalid.',
-  500: 'Something went wrong on the server. Please try again.',
-  502: 'The service is temporarily unavailable. Please try again shortly.',
-  503: 'The service is temporarily unavailable. Please try again shortly.',
-};
-
-function friendlyErrorMessage(status: number, bodyText: string): string {
-  // FastAPI's standard error shape is {"detail": "..."} or {"detail": [...]} for
-  // validation errors -- surface that human-readable detail when present, since
-  // it's already meant to be read (e.g. "Schedule 'x' not found"), but never a
-  // raw stack trace or an unparsed JSON blob.
-  try {
-    const parsed = JSON.parse(bodyText);
-    const detail = parsed?.detail ?? parsed?.error?.message ?? parsed?.message;
-    if (typeof detail === 'string' && detail.trim() && !detail.trim().startsWith('Traceback')) {
-      return detail;
-    }
-    if (Array.isArray(detail) && detail.length) {
-      const first = detail[0];
-      const field = Array.isArray(first?.loc) ? first.loc[first.loc.length - 1] : undefined;
-      if (typeof first?.msg === 'string') {
-        return field ? `${field}: ${first.msg}` : first.msg;
-      }
-    }
-  } catch {
-    // Not JSON (or not the expected shape) -- fall through to the generic message.
-  }
-  return FRIENDLY_STATUS_MESSAGES[status] || `Request failed (${status}). Please try again.`;
-}
-
-async function apiFetch<T>(path: string, options?: ApiFetchOptions): Promise<T> {
-  const token = localStorage.getItem('supabase_access_token') || localStorage.getItem('auth_token');
-  const headers: Record<string, string> = {
-    ...(options?.responseType !== 'blob' ? { 'Content-Type': 'application/json' } : {}),
-    ...(options?.headers as Record<string, string>),
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(`${BASE_URL}${path}`, {
-      ...options,
-      headers,
-    });
-  } catch (err: any) {
-    if (err instanceof TypeError && (err.message?.includes('fetch') || err.message?.includes('NetworkError') || err.message?.includes('Failed'))) {
-      throw new ApiError(
-        0,
-        `Unable to reach backend at ${BASE_URL}. Ensure the backend is running or enable mock mode (VITE_USE_MOCKS=true).`,
-        err.message || 'Network error'
-      );
-    }
-    throw err;
-  }
-
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    // Technical detail stays in the console for debugging; never in the thrown
-    // message a UI component might render directly (ISS-10).
-    console.error(`[api] ${options?.method || 'GET'} ${path} -> ${res.status}`, errorText);
-
-    if (res.status === 401) {
-      // Centralized session-expiry handling (ISS-22): clear the dead token so
-      // no further request is sent with it, and let AuthProvider react (it
-      // listens for this event) to drop `user` and bounce to /login via the
-      // existing ProtectedRoute redirect -- never a raw error left on screen.
-      localStorage.removeItem('supabase_access_token');
-      localStorage.removeItem('auth_token');
-      window.dispatchEvent(new Event('auth:unauthorized'));
-    }
-
-    throw new ApiError(res.status, friendlyErrorMessage(res.status, errorText), errorText);
-  }
-
-  if (options?.responseType === 'blob') {
-    return (await res.blob()) as unknown as T;
-  }
-  if (options?.responseType === 'text') {
-    return (await res.text()) as unknown as T;
-  }
-  return res.json();
-}
+export { ApiError, apiFetch, BASE_URL };
 
 // ─── Canonical PRD Enums & Types ──────────────────────────────────────────────
 
@@ -423,35 +310,65 @@ export interface ScheduleActivity {
   work_package_name?: string | null;
 }
 
-import type {
-  ActivityProgressSummary,
-  WBSProgressSummary,
-  StageProgressSummary,
-  ProjectProgressSummary,
-  WorkPackageProgressSummary,
-  ContractorProgressSummary,
-} from '@/lib/progressEngine';
+/** Server-computed impact (backend ImpactService, V7 Phase 10): deterministic propagation over the stored network. */
+export type ImpactSeverity = 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
-export type {
-  ActivityProgressSummary,
-  WBSProgressSummary,
-  StageProgressSummary,
-  ProjectProgressSummary,
-  WorkPackageProgressSummary,
-  ContractorProgressSummary,
-};
+export interface ActivityImpactItem {
+  activity_id: string;
+  activity_name: string;
+  stage_id: string | null;
+  stage_name: string | null;
+  is_critical: boolean;
+  canonical_state: string;
+  workflow_condition: string;
+  baseline_start: string | null;
+  baseline_finish: string | null;
+  shifted_start: string | null;
+  shifted_finish: string | null;
+  gross_delay_days: number;
+  total_float: number | null;
+  float_status: string;
+  absorbed_delay_days: number | null;
+  residual_delay_days: number | null;
+  controlling_predecessor: string | null;
+  controlling_relationship: string | null;
+  lag_days: number;
+  propagation_depth: number;
+  causal_path: string[];
+  classification: string;
+  explanation: string;
+}
 
-import type {
-  ImpactLevel,
-  DownstreamImpactedActivity,
-  CompoundImpact,
-} from './lib/impactEngine';
+export interface StageImpactItem {
+  stage_id: string;
+  stage_name: string;
+  affected_activities_count: number;
+  max_stage_delay_days: number;
+  stage_progression_impact: string;
+}
 
-export type {
-  ImpactLevel,
-  DownstreamImpactedActivity,
-  CompoundImpact,
-};
+export interface ImpactScenarioResult {
+  scenario_id: string | null;
+  project_id: string;
+  schedule_id: string;
+  name: string;
+  affected_activities: ActivityImpactItem[];
+  affected_stages: StageImpactItem[];
+  float_analysis: {
+    total_activities_evaluated: number;
+    activities_with_known_float: number;
+    activities_with_unknown_float: number;
+    total_float_absorbed_days: number;
+    critical_path_delays_count: number;
+  };
+  schedule_impact_days: number;
+  project_completion_impact_days: number;
+  severity: ImpactSeverity;
+  has_cycle: boolean;
+  cycle_path: string[] | null;
+  calculated_at: string;
+  algorithm_version: string;
+}
 
 export interface ScheduleDependency {
   dependency_id: string;
@@ -581,45 +498,6 @@ export interface WBSSplitResponse {
   created_decisions?: PlannerDecision[];
   splits?: WBSSplitItem[];
   message?: string;
-}
-
-// ─── Feature 31: Evidence Fusion & Knowledge Graph ──────────────────────────
-
-export type EvidenceRelation = 'CORROBORATES' | 'CONTRADICTS' | 'SUPPORTING' | 'NEUTRAL';
-
-export interface EvidenceDocument {
-  evidence_id: string;
-  event_id: string;
-  document_type: string; // 'DAILY_REPORT' | 'INSPECTION_PHOTO' | 'SURVEY_LOG' | 'CAD_DWG' | string
-  relation?: EvidenceRelation | string | null; // CORROBORATES vs CONTRADICTS
-  file_name: string;
-  page_or_cell_ref?: string | null;
-  snippet_text?: string | null;
-  ocr_confidence?: number | null;
-  gps_lat?: number | null;
-  gps_lon?: number | null;
-  timestamp?: string | null;
-  source_url?: string | null;
-}
-
-export interface KnowledgeGraphNode {
-  id: string;
-  label: string;
-  type: 'CLAIM' | 'ACTIVITY' | 'WBS' | 'DOCUMENT' | 'LOCATION' | 'DISCIPLINE' | string;
-  properties?: Record<string, any>;
-}
-
-export interface KnowledgeGraphEdge {
-  source: string;
-  target: string;
-  relationship: string; // 'MATCHED_TO' | 'PART_OF_WBS' | 'EVIDENCED_BY' | 'LOCATED_AT' | string
-  confidence?: number | null;
-}
-
-export interface KnowledgeGraphData {
-  event_id: string;
-  nodes: KnowledgeGraphNode[];
-  edges: KnowledgeGraphEdge[];
 }
 
 // ─── Feature 33: Fine-Grained Field Provenance ───────────────────────────────
@@ -777,104 +655,12 @@ export interface DisciplineForecastData {
   total_activities: number;
 }
 
-// ─── Realistic Demo Dataset (Dynamically Scoped to Active Project) ────────────
 
-import {
-  getActiveProjectId,
-  getActiveScheduleVersionId,
-  getDatasetForCurrentProject,
-  getActivitiesForCurrentSchedule,
-  getAllEventsForCurrentProject,
-  MOCK_DYNAMIC_EVENTS,
-  extractMockClaimFields,
-  TODAY,
-  runEligibilityFirstMatching,
-  getMockReopenRequests,
-  createMockReopenRequest,
-  reviewMockReopenRequest,
-  updateActivityExecutionState,
-  recordApprovedActualProgress,
-  getMockProjectProgress,
-  getMockStageProgress,
-  getMockWBSProgress,
-  getMockActivityProgress,
-  getMockContractors,
-  getMockWorkPackages,
-  getMockContractorProgress,
-  getMockWorkPackageProgress,
-  getMockQualityGates,
-  completeMockQualityGate,
-  waiveMockQualityGate,
-  getActivityQualitySummary,
-  getMockCompoundImpacts,
-  getMockActivityImpact,
-  getMockScheduleDependencies,
-} from './mockData';
-
-const MOCK_AUDIT_LOGS: AuditLogEntry[] = [
-  {
-    log_id: 102,
-    entity_type: 'execution_event',
-    entity_id: 'evt-104',
-    action: 'DECISION_APPROVE',
-    actor_id: 'usr-supervisor-01',
-    before_state: '{"status":"VALIDATED","claimed_pct":100}',
-    after_state: '{"status":"APPROVED","approved_pct":100}',
-    payload_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
-    previous_hash: '9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b',
-    current_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
-    timestamp: new Date(Date.now() - 7200000).toISOString(),
-  },
-  {
-    log_id: 101,
-    entity_type: 'execution_event',
-    entity_id: 'evt-106',
-    action: 'DECISION_APPROVE',
-    actor_id: 'usr-supervisor-01',
-    before_state: '{"status":"VALIDATED","claimed_pct":100}',
-    after_state: '{"status":"APPROVED","approved_pct":100}',
-    payload_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-    previous_hash: '0000000000000000000000000000000000000000000000000000000000000000',
-    current_hash: '9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b',
-    timestamp: new Date(Date.now() - 5400000).toISOString(),
-  },
-];
 
 // ─── API Methods ─────────────────────────────────────────────────────────────
 
 export const authApi = {
   getMe: async (hintEmail?: string): Promise<UserProfile> => {
-    if (USE_MOCKS) {
-      await sleep(200);
-      const rawUser = localStorage.getItem('user');
-      if (rawUser) {
-        try {
-          const parsed = JSON.parse(rawUser);
-          if (parsed && parsed.role && parsed.id) return parsed;
-        } catch {
-          // ignore corrupted JSON
-        }
-      }
-      const devEmail = hintEmail || localStorage.getItem('setu_dev_email_v1') || '';
-      const isEngineer =
-        devEmail.toLowerCase().includes('engineer') ||
-        devEmail.toLowerCase().includes('site');
-
-      if (isEngineer) {
-        return {
-          id: '811a1e0f-976d-42ea-a37f-1096186daf36',
-          email: devEmail || 'site.engineer@sih26122.internal',
-          full_name: 'Site Engineer',
-          role: 'SITE_ENGINEER',
-        };
-      }
-      return {
-        id: '4b8e6901-de81-490c-8bec-9761f62bee70',
-        email: devEmail || 'supervisor@sih26122.internal',
-        full_name: 'Supervisor',
-        role: 'SUPERVISOR',
-      };
-    }
     const data: any = await apiFetch('/api/v1/auth/me');
     return { ...data, email: data.email || '' };
   },
@@ -885,29 +671,6 @@ export const authApi = {
 // and scores are unbounded points (routine ≈ 5, critical-path sequence error ≥ 200).
 // The UI works with a list of reasons, a rank and an escalation flag.
 const ESCALATION_SCORE_THRESHOLD = 100; // >= one critical-severity issue (base 100) or worse
-
-// GET /claims/{id}/evidence returns evidence *links* (link_id, relation_type, rationale,
-// opposite_* context describing the other claim/document), not documents. Map them onto
-// EvidenceDocument so the panel always has the fields it renders. Rows that are already
-// document-shaped (mock data) pass through unchanged.
-function normalizeEvidence(raw: any): EvidenceDocument {
-  const ctx = raw?.opposite_context || {};
-  const docType = raw?.document_type || raw?.opposite_document_type || raw?.opposite_channel || 'LINKED_CLAIM';
-  return {
-    evidence_id: raw?.evidence_id || raw?.link_id || `${raw?.event_id_a ?? ''}:${raw?.event_id_b ?? ''}`,
-    event_id: raw?.event_id || raw?.event_id_a || '',
-    document_type: docType,
-    relation: raw?.relation ?? raw?.relation_type ?? null,
-    file_name: raw?.file_name || ctx.file_name || raw?.opposite_document_type || 'Linked claim',
-    page_or_cell_ref: raw?.page_or_cell_ref ?? (ctx.event_date ? `Claim dated ${ctx.event_date}` : null),
-    snippet_text: raw?.snippet_text ?? raw?.rationale ?? ctx.raw_claim_text ?? null,
-    ocr_confidence: raw?.ocr_confidence ?? null, // link `confidence` is not OCR confidence
-    gps_lat: raw?.gps_lat ?? null,
-    gps_lon: raw?.gps_lon ?? null,
-    timestamp: raw?.timestamp ?? raw?.created_at ?? null,
-    source_url: raw?.source_url ?? null,
-  };
-}
 
 function normalizeEvent(raw: any, rank?: number): ExecutionEvent {
   if (!raw || typeof raw !== 'object') return raw;
@@ -933,77 +696,6 @@ export const claimsApi = {
     text: string,
     evidenceFile?: File | null
   ): Promise<{ event: ExecutionEvent }> => {
-    if (USE_MOCKS) {
-      await sleep(1000);
-      const extracted = extractMockClaimFields(text);
-      const activeSched = getActiveScheduleVersionId();
-      const allActs = getActivitiesForCurrentSchedule(activeSched);
-      const matchedTarget = allActs.find(
-        (a) =>
-          text.toLowerCase().includes(a.activity_id.toLowerCase()) ||
-          (a.asset_tag && text.toLowerCase().includes(a.asset_tag.toLowerCase())) ||
-          (a.activity_name && text.toLowerCase().includes(a.activity_name.toLowerCase().slice(0, 15)))
-      );
-
-      const reportedActId = matchedTarget?.activity_id || extracted.activity_id || null;
-      const discipline = matchedTarget?.discipline || extracted.discipline || 'CIVIL';
-      const location = matchedTarget?.location || extracted.location || null;
-      const assetTag = matchedTarget?.asset_tag || extracted.asset_tag || null;
-      const isCompleted = matchedTarget?.execution_state === 'COMPLETED';
-
-      const ev: ExecutionEvent = {
-        event_id: `evt-${Date.now()}`,
-        document_id: evidenceFile ? `doc-${Date.now()}` : null,
-        schedule_id: activeSched,
-        event_date: TODAY,
-        raw_claim_text: text,
-        input_channel: 'TYPED_TEXT',
-        language_detected: 'en',
-        reported_activity_id: reportedActId,
-        matched_activity_id: matchedTarget?.activity_id || null,
-        discipline,
-        action: extracted.event_type,
-        event_type: extracted.event_type,
-        claim_mode: extracted.claimed_quantity ? 'INCREMENTAL_QUANTITY' : 'CUMULATIVE_PCT',
-        asset_tag: assetTag,
-        location,
-        claimed_quantity: extracted.claimed_quantity,
-        claimed_uom: extracted.claimed_uom,
-        claimed_pct: extracted.claimed_pct,
-        delay_reason: null,
-        supervisor_id: null,
-        photo_path: evidenceFile ? `/uploads/${evidenceFile.name}` : null,
-        status: isCompleted ? 'REVIEW_REQUIRED' : 'EXTRACTED',
-        created_at: new Date().toISOString(),
-        clarification_status: extracted.clarification_status,
-        clarification_question: extracted.clarification_question,
-        is_completed_activity_target: isCompleted,
-        field_provenance: {
-          activity_id: {
-            field_name: 'activity_id',
-            source: 'AI_EXTRACTED',
-            source_detail: reportedActId || 'Pending Matching',
-          },
-          discipline: {
-            field_name: 'discipline',
-            source: matchedTarget ? 'SCHEDULE_AUTO_FILLED' : 'AI_EXTRACTED',
-            source_detail: discipline,
-          },
-          location: {
-            field_name: 'location',
-            source: 'SCHEDULE_AUTO_FILLED',
-            source_detail: location || 'Project Site',
-          },
-          asset_tag: {
-            field_name: 'asset_tag',
-            source: 'SCHEDULE_AUTO_FILLED',
-            source_detail: assetTag || 'Master Asset',
-          },
-        },
-      };
-      MOCK_DYNAMIC_EVENTS.set(ev.event_id, ev);
-      return { event: ev };
-    }
     if (evidenceFile) {
       const res = await claimsApi.submitFile(evidenceFile, {
         purpose: 'EVIDENCE_PHOTO',
@@ -1020,37 +712,6 @@ export const claimsApi = {
 
   // Submit a schedule-export file (P6 / MSP .xer, .xml, .csv, .xlsx) as field execution progress claims
   submitScheduleExport: async (file: File): Promise<{ events: ExecutionEvent[] }> => {
-    if (USE_MOCKS) {
-      await sleep(1500);
-      const activeSched = getActiveScheduleVersionId();
-      const ev: ExecutionEvent = {
-        event_id: `evt-${Date.now()}`,
-        document_id: `doc-${Date.now()}`,
-        schedule_id: activeSched,
-        event_date: TODAY,
-        raw_claim_text: `P6/MSP Schedule Progress Export: ${file.name} (Actuals Batch)`,
-        input_channel: 'SCHEDULE_EXPORT',
-        language_detected: 'en',
-        reported_activity_id: 'ACT-201',
-        matched_activity_id: 'ACT-201',
-        discipline: 'CIVIL',
-        action: 'PROGRESS_UPDATE',
-        event_type: 'PROGRESS_UPDATE',
-        claim_mode: 'CUMULATIVE_PCT',
-        asset_tag: 'COL-C4',
-        location: 'Block-4 North',
-        claimed_quantity: null,
-        claimed_uom: null,
-        claimed_pct: 85,
-        delay_reason: null,
-        supervisor_id: null,
-        photo_path: null,
-        status: 'VALIDATED',
-        created_at: new Date().toISOString(),
-      };
-      MOCK_DYNAMIC_EVENTS.set(ev.event_id, ev);
-      return { events: [ev] };
-    }
     const formData = new FormData();
     formData.append('file', file);
     const data = await apiFetch<ExecutionEvent[]>('/api/v1/claims/schedule-export', {
@@ -1064,39 +725,6 @@ export const claimsApi = {
     file: File,
     options?: { purpose?: 'EVIDENCE_PHOTO' | 'SCANNED_DIARY'; rawClaimText?: string }
   ): Promise<{ events: ExecutionEvent[] }> => {
-    if (USE_MOCKS) {
-      await sleep(1500);
-      const activeSched = getActiveScheduleVersionId();
-      const ev: ExecutionEvent = {
-        event_id: `evt-${Date.now()}`,
-        document_id: `doc-${Date.now()}`,
-        schedule_id: activeSched,
-        event_date: TODAY,
-        raw_claim_text: options?.rawClaimText || `Ingested update from file: ${file.name}`,
-        input_channel: 'FILE_UPLOAD',
-        language_detected: 'en',
-        reported_activity_id: 'ACT-201',
-        matched_activity_id: null,
-        discipline: 'CIVIL',
-        action: 'PROGRESS_UPDATE',
-        event_type: 'PROGRESS_UPDATE',
-        claim_mode: 'CUMULATIVE_PCT',
-        asset_tag: null,
-        location: null,
-        claimed_quantity: null,
-        claimed_uom: null,
-        claimed_pct: 60,
-        delay_reason: null,
-        supervisor_id: null,
-        photo_path: null,
-        status: 'EXTRACTED',
-        created_at: new Date().toISOString(),
-        clarification_status: 'NONE',
-        clarification_question: null,
-      };
-      MOCK_DYNAMIC_EVENTS.set(ev.event_id, ev);
-      return { events: [ev] };
-    }
     const form = new FormData();
     form.append('file', file);
     if (options?.purpose) form.append('purpose', options.purpose);
@@ -1116,68 +744,16 @@ export const claimsApi = {
   },
 
   match: async (eventId: string): Promise<{ status: ClaimStatus; matches: CandidateMatch[] }> => {
-    if (USE_MOCKS) {
-      await sleep(600);
-      const allEvents = getAllEventsForCurrentProject();
-      const ev = MOCK_DYNAMIC_EVENTS.get(eventId) || allEvents.find((e) => e.event_id === eventId);
-      const res = runEligibilityFirstMatching(ev);
-      if (ev) {
-        ev.status = res.status;
-        MOCK_DYNAMIC_EVENTS.set(eventId, ev);
-      }
-      return res;
-    }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/match`, { method: 'POST' });
     return { status: data.status, matches: data.candidates || [] };
   },
 
   check: async (eventId: string): Promise<{ status: ClaimStatus; issues: ValidationIssue[] }> => {
-    if (USE_MOCKS) {
-      await sleep(800);
-      const dataset = getDatasetForCurrentProject();
-      return { status: 'REVIEW_REQUIRED', issues: dataset.validationIssues };
-    }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/check`, { method: 'POST' });
     return { status: data.status, issues: data.validation_issues || [] };
   },
 
   clarify: async (eventId: string, answer: string): Promise<{ event: ExecutionEvent }> => {
-    if (USE_MOCKS) {
-      await sleep(500);
-      const allEvents = getAllEventsForCurrentProject();
-      const ev = MOCK_DYNAMIC_EVENTS.get(eventId) || allEvents.find((e) => e.event_id === eventId) || {
-        event_id: eventId,
-        document_id: null,
-        schedule_id: getActiveScheduleVersionId(),
-        event_date: TODAY,
-        raw_claim_text: 'Clarified claim',
-        input_channel: 'TYPED_TEXT' as const,
-        language_detected: 'en',
-        reported_activity_id: 'ACT-201',
-        matched_activity_id: null,
-        discipline: 'CIVIL' as const,
-        action: 'PROGRESS_UPDATE',
-        event_type: 'PROGRESS_UPDATE' as const,
-        claim_mode: 'CUMULATIVE_PCT' as const,
-        asset_tag: null,
-        location: null,
-        claimed_quantity: null,
-        claimed_uom: null,
-        claimed_pct: 100,
-        delay_reason: null,
-        supervisor_id: null,
-        photo_path: null,
-        status: 'EXTRACTED' as const,
-        created_at: new Date().toISOString(),
-      };
-      ev.clarification_status = 'ANSWERED';
-      ev.clarification_answer = answer;
-      ev.discipline = ev.discipline || 'CIVIL';
-      ev.claimed_pct = ev.claimed_pct || 100;
-      ev.status = 'EXTRACTED';
-      MOCK_DYNAMIC_EVENTS.set(eventId, ev);
-      return { event: { ...ev } };
-    }
     const data = await apiFetch(`/api/v1/claims/${eventId}/clarify`, {
       method: 'POST',
       body: JSON.stringify({ answer }),
@@ -1186,154 +762,30 @@ export const claimsApi = {
   },
 
   getCandidates: async (eventId: string): Promise<CandidateMatch[]> => {
-    if (USE_MOCKS) {
-      await sleep(200);
-      const allEvents = getAllEventsForCurrentProject();
-      const ev = MOCK_DYNAMIC_EVENTS.get(eventId) || allEvents.find((e) => e.event_id === eventId);
-      const res = runEligibilityFirstMatching(ev);
-      return res.matches;
-    }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/candidates`);
     return data.candidates || [];
   },
 
   getConflicts: async (eventId: string): Promise<ConflictRecord[]> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const dataset = getDatasetForCurrentProject();
-      return [
-        {
-          conflict_id: `cnf-${getActiveProjectId()}-01`,
-          schedule_id: getActiveScheduleVersionId(),
-          activity_id: dataset.candidates[0]?.activity_id || 'ACT-202',
-          reporting_period: TODAY,
-          event_id_a: eventId,
-          event_id_b: 'evt-previous-09',
-          value_a: 75,
-          value_b: 60,
-          variance_pct: 25,
-          status: 'OPEN',
-        },
-      ];
-    }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/conflicts`);
     return data.conflicts || [];
   },
 
   getValidation: async (eventId: string): Promise<ValidationIssue[]> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const dataset = getDatasetForCurrentProject();
-      return dataset.validationIssues;
-    }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/validation`);
     return data.validation_issues || [];
   },
 
-  getEvidence: async (eventId: string): Promise<EvidenceDocument[]> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const pId = getActiveProjectId();
-      const docName = pId === 'PRJ-RAJ-02' ? 'Rajasthan_GasPlant_Shift_Report.pdf' : pId === 'PRJ-KG-03' ? 'Offshore_Barge_QC_Log.pdf' : 'Assam_Civil_Shift_Report.pdf';
-      return [
-        {
-          evidence_id: 'ev-01',
-          event_id: eventId,
-          document_type: 'DAILY_REPORT',
-          relation: 'CORROBORATES',
-          file_name: docName,
-          page_or_cell_ref: 'Page 3, Line 14',
-          snippet_text: `Verified physical execution and test progress against project schedule ${getActiveScheduleVersionId()}. QC signoff attached.`,
-          ocr_confidence: 0.95,
-          gps_lat: 28.6139,
-          gps_lon: 77.209,
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-        },
-        {
-          evidence_id: 'ev-02',
-          event_id: eventId,
-          document_type: 'INSPECTION_PHOTO',
-          relation: 'CORROBORATES',
-          file_name: 'Site_Inspection_Evidence.jpg',
-          page_or_cell_ref: 'Attachment 1',
-          snippet_text: 'Site photo verifying construction progress, material staging and inspection tags.',
-          ocr_confidence: 0.98,
-          gps_lat: 28.6141,
-          gps_lon: 77.2093,
-          timestamp: new Date(Date.now() - 1800000).toISOString(),
-        },
-      ];
-    }
-    const data: any = await apiFetch(`/api/v1/claims/${eventId}/evidence`);
-    const rows: any[] = Array.isArray(data) ? data : data?.evidence || data?.evidence_links || [];
-    return rows.map(normalizeEvidence);
-  },
-
   getPhotoBlobUrl: async (eventId: string): Promise<string> => {
-    if (USE_MOCKS) {
-      await sleep(200);
-      return 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=800&q=80';
-    }
     const blob = await apiFetch<Blob>(`/api/v1/claims/${eventId}/photo`, { responseType: 'blob' });
     return URL.createObjectURL(blob);
   },
 
-  getKnowledgeGraph: async (eventId: string): Promise<KnowledgeGraphData> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      const acts = getActivitiesForCurrentSchedule();
-      const firstAct = acts[0];
-      return {
-        event_id: eventId,
-        nodes: [
-          { id: 'node-claim', label: `Claim ${eventId}`, type: 'CLAIM' },
-          { id: 'node-act', label: `${firstAct?.activity_id || 'ACT-01'} ${firstAct?.activity_name || ''}`, type: 'ACTIVITY' },
-          { id: 'node-wbs', label: `${firstAct?.wbs_code || 'WBS-1.0'} Work Package`, type: 'WBS' },
-          { id: 'node-doc', label: `${firstAct?.discipline || 'Civil'}_Shift_Report.pdf`, type: 'DOCUMENT' },
-          { id: 'node-loc', label: firstAct?.location || 'Project Site', type: 'LOCATION' },
-        ],
-        edges: [
-          { source: 'node-claim', target: 'node-act', relationship: 'MATCHED_TO', confidence: 0.88 },
-          { source: 'node-act', target: 'node-wbs', relationship: 'PART_OF_WBS' },
-          { source: 'node-claim', target: 'node-doc', relationship: 'EVIDENCED_BY', confidence: 0.94 },
-          { source: 'node-claim', target: 'node-loc', relationship: 'LOCATED_AT' },
-        ],
-      };
-    }
-    const data: any = await apiFetch(`/api/v1/claims/${eventId}/knowledge-graph`);
-    return data;
-  },
-
   askWhy: async (request: AskWhyRequest): Promise<AskWhyResponse> => {
-    const activities = getActivitiesForCurrentSchedule();
-    const activity = activities.find((a) => a.activity_id === request.activity_id) || activities[0];
-    const activityId = activity?.activity_id || request.activity_id || 'ACT-201';
+    const activityId = request.activity_id;
+    if (!activityId) throw new Error('askWhy requires an activity_id');
     const depth = request.depth ?? 2;
 
-    if (USE_MOCKS) {
-      await sleep(600);
-      return {
-        activity_id: activityId,
-        event_id: request.event_id,
-        explanation:
-          `Matched to activity ${activityId} (${activity?.activity_name || 'Activity'}) with 88% confidence based on spatial alignment in ${activity?.location || 'Sector'} and prerequisite dependencies verified in ${getActiveScheduleVersionId()}.`,
-        traversal_depth: depth,
-        reasoning_steps: [
-          `Extracted entity "${activity?.asset_tag || activityId}" and location "${activity?.location || 'Site'}" from source update.`,
-          `Traversed WBS hierarchy: Schedule -> ${activity?.wbs_code || 'WBS-1.0'} -> ${activity?.activity_name || activityId}.`,
-          `Verified predecessor prerequisite milestones cleared QC inspection.`,
-        ],
-        entities_involved: [
-          { name: activityId, type: 'ACTIVITY', role: 'Matched Schedule Package' },
-          { name: activity?.location || 'Site', type: 'LOCATION', role: 'Spatial Constraint' },
-          { name: activity?.asset_tag || 'TAG-01', type: 'PREDECESSOR', role: 'Verified Dependency' },
-        ],
-        evidence_references: [
-          `${activity?.discipline || 'Discipline'}_Shift_Report_2026.pdf (Page 3)`,
-          `IMG_${activityId}_QC.jpg (Attachment 1)`,
-        ],
-      };
-    }
     const qs = new URLSearchParams({ depth: String(depth) });
     if (request.event_id) qs.set('event_id', request.event_id);
     const data = await apiFetch(`/api/v1/graph/explain/${encodeURIComponent(activityId)}?${qs.toString()}`);
@@ -1341,18 +793,6 @@ export const claimsApi = {
   },
 
   getReviewQueue: async (sort: string = 'priority'): Promise<ExecutionEvent[]> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      const allEvents = getAllEventsForCurrentProject();
-      return allEvents.filter(
-        (c) =>
-          c.status === 'REVIEW_REQUIRED' ||
-          c.status === 'VALIDATED' ||
-          c.status === 'HOLD' ||
-          c.status === 'UNMATCHED' ||
-          c.status === 'EXTRACTED'
-      );
-    }
     const data: any = await apiFetch(`/api/v1/review-queue?sort=${sort}`);
     const items: any[] = Array.isArray(data)
       ? data
@@ -1361,39 +801,22 @@ export const claimsApi = {
   },
 
   getEvent: async (eventId: string): Promise<ExecutionEvent> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const allEvents = getAllEventsForCurrentProject();
-      return allEvents.find((e) => e.event_id === eventId) || allEvents[0];
-    }
     return normalizeEvent(await apiFetch(`/api/v1/claims/${eventId}`));
   },
 };
 
 export const digestApi = {
   getByDate: async (dateStr: string): Promise<ExecutionEvent[]> => {
-    if (USE_MOCKS) {
-      await sleep(500);
-      return getAllEventsForCurrentProject();
-    }
     const rows: any[] = await apiFetch(`/api/v1/digest?date=${dateStr}`);
     return rows.map((r) => normalizeEvent(r));
   },
 
   getAll: async (): Promise<ExecutionEvent[]> => {
-    if (USE_MOCKS) {
-      await sleep(500);
-      return getAllEventsForCurrentProject();
-    }
     const rows: any[] = await apiFetch('/api/v1/digest');
     return rows.map((r) => normalizeEvent(r));
   },
 
   bulkApprove: async (eventIds: string[]): Promise<{ approved: string[]; failed: string[] }> => {
-    if (USE_MOCKS) {
-      await sleep(900);
-      return { approved: eventIds, failed: [] };
-    }
     const data: any = await apiFetch('/api/v1/digest/bulk-approve', {
       method: 'POST',
       body: JSON.stringify({ event_ids: eventIds }),
@@ -1411,21 +834,6 @@ export const decisionsApi = {
     approved_qty?: number | null;
     justification: string;
   }): Promise<PlannerDecision> => {
-    if (USE_MOCKS) {
-      await sleep(800);
-      recordApprovedActualProgress(payload.selected_activity_id, payload.approved_pct, payload.approved_qty, payload.action);
-      return {
-        decision_id: `dec-${Date.now()}`,
-        event_id: payload.event_id,
-        selected_activity_id: payload.selected_activity_id,
-        action: payload.action,
-        approved_pct: payload.approved_pct ?? null,
-        approved_qty: payload.approved_qty ?? null,
-        planner_id: 'usr-supervisor-01',
-        justification: payload.justification,
-        decided_at: new Date().toISOString(),
-      };
-    }
     const data: any = await apiFetch('/api/v1/decisions', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1444,206 +852,113 @@ export const decisionsApi = {
   },
 
   getRecent: async (): Promise<PlannerDecision[]> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      return getDatasetForCurrentProject().decisions;
-    }
     return apiFetch('/api/v1/decisions?limit=10');
   },
 };
 
-export const progressApi = {
-  getProjectProgress: async (projectId?: string, scheduleId?: string): Promise<ProjectProgressSummary> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockProjectProgress(pId, sId);
-    }
-    const qs = new URLSearchParams();
-    if (projectId) qs.set('project_id', projectId);
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    return apiFetch<ProjectProgressSummary>(`/api/v1/progress/project?${qs.toString()}`);
-  },
+// ── Quality gates (V7: /projects/{pid}/schedules/{sid}/quality-gates, pass/fail/waive) ──────────────
+interface BackendGate {
+  quality_gate_id: string;
+  project_id: string;
+  schedule_id: string | null;
+  stage_id: string | null;
+  activity_id: string | null;
+  gate_name: string;
+  gate_type: string;
+  checkpoint_category: 'HOLD' | 'WITNESS' | 'REVIEW' | 'QUALITY_CHECK';
+  required: boolean;
+  status: 'NOT_REQUIRED' | 'PENDING' | 'SUBMITTED' | 'PASSED' | 'FAILED' | 'WAIVED';
+  due_date: string | null;
+  passed_at: string | null;
+  passed_by: string | null;
+  waived_at: string | null;
+  waived_by: string | null;
+  waiver_reason: string | null;
+  remarks: string | null;
+}
 
-  getStageProgress: async (stageId?: string, projectId?: string, scheduleId?: string): Promise<StageProgressSummary[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockStageProgress(pId, sId, stageId);
-    }
-    const qs = new URLSearchParams();
-    if (stageId) qs.set('stage_id', stageId);
-    if (projectId) qs.set('project_id', projectId);
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    return apiFetch<StageProgressSummary[]>(`/api/v1/progress/stages?${qs.toString()}`);
-  },
-
-  getWbsProgress: async (scheduleId?: string, projectId?: string): Promise<WBSProgressSummary[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockWBSProgress(pId, sId);
-    }
-    const qs = new URLSearchParams();
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    if (projectId) qs.set('project_id', projectId);
-    return apiFetch<WBSProgressSummary[]>(`/api/v1/progress/wbs?${qs.toString()}`);
-  },
-
-  getActivityProgress: async (activityId: string, scheduleId?: string, projectId?: string): Promise<ActivityProgressSummary | null> => {
-    if (USE_MOCKS) {
-      await sleep(100);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockActivityProgress(activityId, pId, sId);
-    }
-    const qs = new URLSearchParams();
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    if (projectId) qs.set('project_id', projectId);
-    return apiFetch<ActivityProgressSummary>(`/api/v1/progress/activities/${encodeURIComponent(activityId)}?${qs.toString()}`);
-  },
+const GATE_TYPE: Record<string, QualityGateType> = {
+  HOLD: 'HOLD_POINT', WITNESS: 'WITNESS_POINT', REVIEW: 'REVIEW_POINT', QUALITY_CHECK: 'ITP_CHECK',
+};
+const GATE_STATUS: Record<string, QualityGateStatus> = {
+  PASSED: 'COMPLETED', FAILED: 'BLOCKED', WAIVED: 'WAIVED', SUBMITTED: 'READY', PENDING: 'PENDING', NOT_REQUIRED: 'PENDING',
 };
 
-export const contractorsApi = {
-  getContractors: async (projectId?: string): Promise<Contractor[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      return getMockContractors(pId);
-    }
-    const qs = new URLSearchParams();
-    if (projectId) qs.set('project_id', projectId);
-    return apiFetch<Contractor[]>(`/api/v1/contractors?${qs.toString()}`);
-  },
+function toGate(g: BackendGate, index: number): QualityGate {
+  return {
+    id: g.quality_gate_id,
+    projectId: g.project_id,
+    scheduleId: g.schedule_id ?? '',
+    stageId: g.stage_id ?? undefined,
+    activityId: g.activity_id ?? '',
+    gateType: GATE_TYPE[g.checkpoint_category] ?? 'ITP_CHECK',
+    name: g.gate_name,
+    description: [g.gate_type.replace(/_/g, ' '), g.remarks].filter(Boolean).join(' — '),
+    status: GATE_STATUS[g.status] ?? 'PENDING',
+    required: g.required,
+    sequence: index + 1,
+    dueDate: g.due_date ?? undefined,
+    completedAt: g.passed_at,
+    completedBy: g.passed_by,
+    evidenceRequired: g.checkpoint_category === 'HOLD',
+    waiverJustification: g.waiver_reason,
+    waivedBy: g.waived_by,
+    waivedAt: g.waived_at,
+  };
+}
 
-  getWorkPackages: async (projectId?: string, scheduleId?: string): Promise<WorkPackage[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockWorkPackages(pId, sId);
-    }
-    const qs = new URLSearchParams();
-    if (projectId) qs.set('project_id', projectId);
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    return apiFetch<WorkPackage[]>(`/api/v1/work-packages?${qs.toString()}`);
-  },
-
-  getContractorProgress: async (projectId?: string, scheduleId?: string): Promise<ContractorProgressSummary[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockContractorProgress(pId, sId);
-    }
-    const qs = new URLSearchParams();
-    if (projectId) qs.set('project_id', projectId);
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    return apiFetch<ContractorProgressSummary[]>(`/api/v1/progress/contractors?${qs.toString()}`);
-  },
-
-  getWorkPackageProgress: async (contractorId?: string, projectId?: string, scheduleId?: string): Promise<WorkPackageProgressSummary[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getMockWorkPackageProgress(pId, sId, contractorId);
-    }
-    const qs = new URLSearchParams();
-    if (contractorId) qs.set('contractor_id', contractorId);
-    if (projectId) qs.set('project_id', projectId);
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    return apiFetch<WorkPackageProgressSummary[]>(`/api/v1/progress/work-packages?${qs.toString()}`);
-  },
+const projectBase = () => {
+  const pid = apiContext.getProjectId();
+  if (!pid) throw new ApiError(400, 'Select a project to continue.', '', 'INVALID_PROJECT_CONTEXT');
+  return `/api/v1/projects/${encodeURIComponent(pid)}`;
 };
 
 export const qualityGatesApi = {
-  getGates: async (params?: { projectId?: string; scheduleId?: string; activityId?: string }): Promise<QualityGate[]> => {
-    if (USE_MOCKS) {
-      await sleep(100);
-      const pId = params?.projectId || getActiveProjectId();
-      const sId = params?.scheduleId || getActiveScheduleVersionId();
-      return getMockQualityGates(pId, sId, params?.activityId);
-    }
-    const qs = new URLSearchParams();
-    if (params?.projectId) qs.set('project_id', params.projectId);
-    if (params?.scheduleId) qs.set('schedule_id', params.scheduleId);
-    if (params?.activityId) qs.set('activity_id', params.activityId);
-    return apiFetch<QualityGate[]>(`/api/v1/quality-gates?${qs.toString()}`);
+  /** Gates of the selected schedule version (or one activity). */
+  getGates: async (params?: { scheduleId?: string; activityId?: string }): Promise<QualityGate[]> => {
+    const sid = params?.scheduleId ?? (await getActiveScheduleId());
+    const rows = await apiFetch<BackendGate[]>(`${projectBase()}/schedules/${encodeURIComponent(sid)}/quality-gates`);
+    const filtered = params?.activityId ? rows.filter((g) => g.activity_id === params.activityId) : rows;
+    return filtered.map(toGate);
   },
 
-  getQualitySummary: async (activityId: string, projectId?: string, scheduleId?: string) => {
-    if (USE_MOCKS) {
-      await sleep(80);
-      const pId = projectId || getActiveProjectId();
-      const sId = scheduleId || getActiveScheduleVersionId();
-      return getActivityQualitySummary(activityId, pId, sId);
-    }
-    const qs = new URLSearchParams();
-    if (projectId) qs.set('project_id', projectId);
-    if (scheduleId) qs.set('schedule_id', scheduleId);
-    return apiFetch<{
-      totalGates: number;
-      completedGates: number;
-      pendingRequiredHoldPoint: boolean;
-      blockedRequiredHoldPoint: boolean;
-      hasBlockingHoldPoint: boolean;
-      blockingHoldPointName?: string;
-      gates: QualityGate[];
-    }>(`/api/v1/quality-gates/summary/${encodeURIComponent(activityId)}?${qs.toString()}`);
+  /** Inspector/supervisor releases the gate (the server requires the role permission and records who and when). */
+  completeGate: async (gateId: string, remarks?: string): Promise<QualityGate> => {
+    const g = await apiFetch<BackendGate>(`${projectBase()}/quality-gates/${encodeURIComponent(gateId)}/pass`, {
+      method: 'POST', body: JSON.stringify({ remarks }),
+    });
+    return toGate(g, 0);
   },
 
-  completeGate: async (gateId: string, completedBy = 'usr-supervisor-01', evidenceId?: string): Promise<QualityGate> => {
-    if (USE_MOCKS) {
-      await sleep(250);
-      const updated = completeMockQualityGate(gateId, completedBy, evidenceId);
-      MOCK_AUDIT_LOGS.unshift({
-        log_id: Date.now(),
-        entity_type: 'quality_gate',
-        entity_id: gateId,
-        action: 'QUALITY_GATE_COMPLETED',
-        actor_id: completedBy,
-        before_state: JSON.stringify({ gate_id: gateId, status: 'PENDING' }),
-        after_state: JSON.stringify({ gate_id: gateId, status: 'COMPLETED', completed_at: updated.completedAt }),
-        payload_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-        previous_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
-        current_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
-        timestamp: new Date().toISOString(),
-      });
-      return updated;
-    }
-    return apiFetch<QualityGate>(`/api/v1/quality-gates/${encodeURIComponent(gateId)}/complete`, {
+  /** Inspection record for a gate (a required HOLD point is only released with a PASS record). */
+  recordEvidence: async (
+    gateId: string,
+    evidence: { evidence_type: string; result: 'PASS' | 'FAIL' | 'PENDING_REVIEW'; inspector_name?: string; notes?: string },
+  ): Promise<void> => {
+    await apiFetch(`${projectBase()}/quality-gates/${encodeURIComponent(gateId)}/evidence`, {
       method: 'POST',
-      body: JSON.stringify({ completed_by: completedBy, evidence_id: evidenceId }),
+      body: JSON.stringify({
+        evidence_type: evidence.evidence_type,
+        result: evidence.result,
+        inspector_name: evidence.inspector_name,
+        inspection_date: new Date().toISOString().slice(0, 10),
+        metadata: evidence.notes ? { notes: evidence.notes } : {},
+      }),
     });
   },
 
-  waiveGate: async (gateId: string, justification: string, waivedBy = 'usr-supervisor-01'): Promise<QualityGate> => {
-    if (USE_MOCKS) {
-      await sleep(250);
-      const updated = waiveMockQualityGate(gateId, justification, waivedBy);
-      MOCK_AUDIT_LOGS.unshift({
-        log_id: Date.now(),
-        entity_type: 'quality_gate',
-        entity_id: gateId,
-        action: 'QUALITY_GATE_WAIVED',
-        actor_id: waivedBy,
-        before_state: JSON.stringify({ gate_id: gateId, status: 'PENDING' }),
-        after_state: JSON.stringify({ gate_id: gateId, status: 'WAIVED', justification, waived_at: updated.waivedAt }),
-        payload_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
-        previous_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
-        current_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-        timestamp: new Date().toISOString(),
-      });
-      return updated;
-    }
-    return apiFetch<QualityGate>(`/api/v1/quality-gates/${encodeURIComponent(gateId)}/waive`, {
-      method: 'POST',
-      body: JSON.stringify({ justification, waived_by: waivedBy }),
+  failGate: async (gateId: string, remarks?: string): Promise<QualityGate> => {
+    const g = await apiFetch<BackendGate>(`${projectBase()}/quality-gates/${encodeURIComponent(gateId)}/fail`, {
+      method: 'POST', body: JSON.stringify({ remarks }),
     });
+    return toGate(g, 0);
+  },
+
+  waiveGate: async (gateId: string, justification: string): Promise<QualityGate> => {
+    const g = await apiFetch<BackendGate>(`${projectBase()}/quality-gates/${encodeURIComponent(gateId)}/waive`, {
+      method: 'POST', body: JSON.stringify({ waiver_reason: justification }),
+    });
+    return toGate(g, 0);
   },
 };
 
@@ -1656,38 +971,21 @@ export const dashboardApi = {
     discipline_breakdown: { discipline: string; name: string; count: number; value: number }[];
     claims_trend_pct: number | null;
   }> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      return getDatasetForCurrentProject().dashboard;
-    }
     const data: any = await apiFetch('/api/v1/dashboard/summary');
     return { ...data, claims_trend_pct: data.claims_trend_pct ?? null };
   },
 
   getDelayReasons: async (): Promise<{ reason: string; count: number }[]> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      return getDatasetForCurrentProject().delayReasons;
-    }
     const data: any = await apiFetch('/api/v1/dashboard/delay-reasons');
     return (data.delay_reasons || []).map((d: any) => ({ reason: d.delay_reason, count: d.count }));
   },
 
   getInstitutionalMemory: async (): Promise<{ topic: string; resolution: string; count: number }[]> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      return getDatasetForCurrentProject().institutionalMemory;
-    }
     const data: any = await apiFetch('/api/v1/dashboard/institutional-memory');
     return (data.activities || []).map((a: any) => ({ topic: a.activity_id + ' (' + a.discipline + ')', resolution: a.variance_days !== null ? (a.variance_days > 0 ? a.variance_days + ' days delayed' : Math.abs(a.variance_days) + ' days ahead') : 'No actuals yet', count: a.planned_duration || 0 }));
   },
 
   getForecast: async (discipline: string = 'CIVIL'): Promise<DisciplineForecastData> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      const fc = getDatasetForCurrentProject().forecast;
-      return { ...fc, discipline };
-    }
     const data: any = await apiFetch(`/api/v1/dashboard/forecast?discipline=${encodeURIComponent(discipline)}`);
     const activities = (data.activities || (data.activity_id ? [data] : [])).map((a: any) => ({
       activity_id: a.activity_id || 'Unknown',
@@ -1706,11 +1004,6 @@ export const dashboardApi = {
   },
 
   getSilentActivities: async (): Promise<ScheduleActivity[]> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      const acts = getActivitiesForCurrentSchedule();
-      return acts.filter((a) => !a.is_critical || a.baseline_pct_complete < 50).slice(0, 3);
-    }
     const data: any = await apiFetch('/api/v1/alerts/silent-activities');
     return (data.silent_activities || []).map((a: any) => ({ ...a, asset_tag: a.asset_tag || null, uom: a.uom || null, baseline_pct_complete: a.baseline_pct_complete || 0 }));
   },
@@ -1720,15 +1013,6 @@ export const dashboardApi = {
   },
 
   exportCsv: async (): Promise<Blob> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      const acts = getActivitiesForCurrentSchedule();
-      const rows = ['activity_id,activity_name,discipline,wbs_code,planned_start,planned_finish,baseline_pct_complete'];
-      for (const a of acts) {
-        rows.push(`${a.activity_id},"${a.activity_name}",${a.discipline},${a.wbs_code || ''},${a.planned_start},${a.planned_finish},${a.baseline_pct_complete}`);
-      }
-      return new Blob([rows.join('\n')], { type: 'text/csv; charset=utf-8' });
-    }
     return apiFetch<Blob>('/api/v1/export/csv', { responseType: 'blob' });
   },
 };
@@ -1831,109 +1115,6 @@ export interface ActivityFilterParams {
 
 export const activitiesApi = {
   getActivities: async (params?: ActivityFilterParams): Promise<ActivityListResponse> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const acts = getActivitiesForCurrentSchedule(params?.schedule_id);
-      let filtered = acts.map((a): ActivitySummary => {
-        const isCrit = a.is_critical ?? null;
-        const totalFloat = a.total_float ?? null;
-        const actualStart = a.actual_start || (a.baseline_pct_complete > 0 ? a.planned_start : null);
-        const actualPct = a.actual_pct_complete !== undefined ? a.actual_pct_complete : (a.baseline_pct_complete > 0 ? a.baseline_pct_complete : null);
-        let execState: ExecutionState = a.execution_state || 'NOT_STARTED';
-        if (!a.execution_state) {
-          if (actualPct !== null && actualPct >= 100) execState = 'COMPLETED';
-          else if (actualStart) execState = 'IN_PROGRESS';
-        }
-
-        const hasChg = a.baseline_pct_complete > 0 || execState !== 'NOT_STARTED';
-        return {
-          activity_id: a.activity_id,
-          activity_name: a.activity_name,
-          schedule_id: a.schedule_id,
-          discipline: a.discipline,
-          location: a.location,
-          asset_tag: a.asset_tag,
-          wbs_code: a.wbs_code,
-          planned_start: a.planned_start,
-          planned_finish: a.planned_finish,
-          planned_quantity: a.planned_quantity,
-          uom: a.uom,
-          baseline_pct_complete: a.baseline_pct_complete,
-          actual_start: actualStart,
-          actual_finish: a.actual_finish || (execState === 'COMPLETED' ? a.planned_finish : null),
-          actual_pct_complete: actualPct,
-          execution_state: execState,
-          is_critical: isCrit,
-          total_float: totalFloat,
-          has_changes: hasChg,
-          event_count: hasChg ? 2 : 0,
-          last_changed_at: hasChg ? new Date().toISOString() : null,
-        };
-      });
-
-      if (params?.search) {
-        const s = params.search.toLowerCase();
-        filtered = filtered.filter(
-          (a) =>
-            a.activity_id.toLowerCase().includes(s) ||
-            a.activity_name.toLowerCase().includes(s) ||
-            (a.asset_tag && a.asset_tag.toLowerCase().includes(s))
-        );
-      }
-      if (params?.discipline && params.discipline !== 'ALL') {
-        filtered = filtered.filter((a) => a.discipline.toUpperCase() === params.discipline!.toUpperCase());
-      }
-      if (params?.location && params.location !== 'ALL') {
-        filtered = filtered.filter((a) => a.location.toLowerCase() === params.location!.toLowerCase());
-      }
-      if (params?.wbs_code && params.wbs_code !== 'ALL') {
-        filtered = filtered.filter((a) => a.wbs_code && a.wbs_code.startsWith(params.wbs_code!));
-      }
-      if (params?.execution_state && params.execution_state !== 'ALL') {
-        filtered = filtered.filter((a) => a.execution_state === params.execution_state);
-      }
-      if (params?.is_critical && params.is_critical !== 'ALL') {
-        if (params.is_critical === 'CRITICAL') filtered = filtered.filter((a) => a.is_critical === true);
-        else if (params.is_critical === 'NON_CRITICAL') filtered = filtered.filter((a) => a.is_critical === false);
-        else if (params.is_critical === 'UNKNOWN') filtered = filtered.filter((a) => a.is_critical === null);
-      }
-      if (params?.float_range && params.float_range !== 'ALL') {
-        if (params.float_range === 'ZERO') filtered = filtered.filter((a) => a.total_float === 0);
-        else if (params.float_range === '1_TO_5') filtered = filtered.filter((a) => a.total_float !== null && a.total_float > 0 && a.total_float <= 5);
-        else if (params.float_range === 'GT_5') filtered = filtered.filter((a) => a.total_float !== null && a.total_float > 5);
-        else if (params.float_range === 'UNKNOWN') filtered = filtered.filter((a) => a.total_float === null);
-      }
-      if (params?.has_changes !== undefined) {
-        filtered = filtered.filter((a) => a.has_changes === params.has_changes);
-      }
-
-      const total = filtered.length;
-      const in_progress = filtered.filter((a) => a.execution_state === 'IN_PROGRESS').length;
-      const completed = filtered.filter((a) => a.execution_state === 'COMPLETED').length;
-      const not_started = filtered.filter((a) => a.execution_state === 'NOT_STARTED').length;
-      const critical = filtered.filter((a) => a.is_critical === true).length;
-      const changed = filtered.filter((a) => a.has_changes).length;
-
-      const page = params?.page || 1;
-      const pageSize = params?.page_size || 25;
-      const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
-
-      return {
-        items: paginated,
-        total,
-        page,
-        page_size: pageSize,
-        schedule_id: params?.schedule_id || getActiveScheduleVersionId(),
-        metrics: {
-          total,
-          in_progress,
-          completed,
-          not_started,
-          critical,
-          changed,
-        },
-      };
-    }
 
     const query = new URLSearchParams();
     if (params) {
@@ -1970,174 +1151,6 @@ export const activitiesApi = {
       actor: string;
     }[];
   }> => {
-    if (USE_MOCKS) {
-      await sleep(500);
-      const acts = getActivitiesForCurrentSchedule(scheduleIdArg);
-      const activity = acts.find((a) => a.activity_id === activityId) || acts[0];
-      const allEvents = getAllEventsForCurrentProject();
-      const matchedEv = allEvents.find((e) => e.matched_activity_id === activityId || e.reported_activity_id === activityId) || allEvents[0];
-      const schedId = scheduleIdArg || getActiveScheduleVersionId();
-
-      const isCompletedOrReopened =
-        activity?.execution_state === 'COMPLETED' ||
-        activity?.execution_state === 'REOPENED' ||
-        activity?.execution_state === 'REOPEN_REQUESTED' ||
-        activity?.activity_id === 'ACT-ASSAM-401';
-
-      const mockTimeline: ActivityTimelineItem[] = isCompletedOrReopened
-        ? [
-            {
-              type: 'approved_actual',
-              actual_id: `actl-hist-${activityId}`,
-              decision_id: `dec-close-${activityId}`,
-              event_id: `evt-comp-${activityId}`,
-              schedule_id: schedId,
-              activity_id: activityId,
-              actual_start: activity?.actual_start || '2026-09-01',
-              actual_finish: activity?.actual_finish || '2026-09-08',
-              actual_pct_complete: 100,
-              actual_quantity: activity?.planned_quantity || null,
-              timestamp: '2026-09-08T18:00:00.000Z',
-            },
-            {
-              type: 'planner_decision',
-              decision_id: `dec-close-${activityId}`,
-              event_id: `evt-comp-${activityId}`,
-              selected_activity_id: activityId,
-              action: 'APPROVE',
-              approved_pct: 100,
-              approved_qty: activity?.planned_quantity || null,
-              planner_id: 'usr-supervisor-01',
-              justification: 'Completed SCADA RTU & Solar Power Skid Installation signed off and QA/QC inspection certificate verified. Authoritative Actual Finish locked.',
-              timestamp: '2026-09-08T17:30:00.000Z',
-            },
-            {
-              type: 'execution_event',
-              event_id: `evt-comp-${activityId}`,
-              schedule_id: schedId,
-              event_date: '2026-09-08',
-              raw_claim_text: `Installation of ${activity?.activity_name || activityId} completed to 100% on site. Solar power skid energized.`,
-              claim_mode: 'CUMULATIVE_PCT',
-              claimed_pct: 100,
-              claimed_quantity: activity?.planned_quantity || null,
-              delay_reason: null,
-              status: 'APPROVED',
-              timestamp: '2026-09-08T16:00:00.000Z',
-              source_references: [
-                {
-                  reference_id: 'REF-COMP-01',
-                  file_name: `${activity?.discipline || 'Electrical'}_Commissioning_DPR.pdf`,
-                  sheet_name: 'Completion Sign-off',
-                  row_cell_ref: 'Row 42',
-                  message_id: null,
-                  raw_snippet: `Final handover signoff for ${activity?.activity_name || activityId}. 100% complete.`,
-                },
-              ],
-            },
-            ...(activity?.execution_state === 'REOPEN_REQUESTED' || activity?.execution_state === 'REOPENED'
-              ? [
-                  {
-                    type: 'execution_event' as const,
-                    event_id: `evt-reopen-${activityId}`,
-                    schedule_id: schedId,
-                    event_date: TODAY,
-                    raw_claim_text: `Activity Reopen Request: Additional instrumentation integration required for ${activity?.activity_name || activityId}.`,
-                    claim_mode: 'CUMULATIVE_PCT',
-                    claimed_pct: activity?.actual_pct_complete ?? 100,
-                    claimed_quantity: null,
-                    delay_reason: null,
-                    status: 'REOPEN_REQUESTED',
-                    timestamp: new Date(Date.now() - 3600000).toISOString(),
-                  },
-                ]
-              : []),
-            ...(activity?.execution_state === 'REOPENED'
-              ? [
-                  {
-                    type: 'planner_decision' as const,
-                    decision_id: `dec-reopen-${activityId}`,
-                    event_id: `evt-reopen-${activityId}`,
-                    selected_activity_id: activityId,
-                    action: 'APPROVE',
-                    approved_pct: activity?.actual_pct_complete ?? 100,
-                    approved_qty: null,
-                    planner_id: 'usr-supervisor-01',
-                    justification: 'Supervisor approved Reopen Request. Previous Actual Finish (2026-09-08) & 100% completion remain traceable in history. Activity unlocked for new progress claims.',
-                    timestamp: new Date(Date.now() - 1800000).toISOString(),
-                  },
-                ]
-              : []),
-          ]
-        : [
-            {
-              type: 'execution_event',
-              event_id: matchedEv?.event_id || 'evt-101',
-              schedule_id: schedId,
-              event_date: matchedEv?.event_date || TODAY,
-              raw_claim_text: matchedEv?.raw_claim_text || 'Daily execution progress claim logged for work package.',
-              claim_mode: matchedEv?.claim_mode || 'CUMULATIVE_PCT',
-              claimed_pct: matchedEv?.claimed_pct ?? 75,
-              claimed_quantity: matchedEv?.claimed_quantity ?? null,
-              delay_reason: matchedEv?.delay_reason ?? null,
-              status: matchedEv?.status || 'REVIEW_REQUIRED',
-              timestamp: matchedEv?.created_at || new Date().toISOString(),
-              source_references: [
-                {
-                  reference_id: 'REF-001',
-                  file_name: `${activity?.discipline || 'Civil'}_Shift_Report.pdf`,
-                  sheet_name: 'Field Execution',
-                  row_cell_ref: 'Row 14',
-                  message_id: null,
-                  raw_snippet: `Work on ${activity?.activity_name || activityId} progressed to ${activity?.baseline_pct_complete || 50}%.`,
-                },
-              ],
-            },
-            {
-              type: 'planner_decision',
-              decision_id: 'dec-102',
-              event_id: matchedEv?.event_id || 'evt-101',
-              selected_activity_id: activityId,
-              action: 'APPROVE',
-              approved_pct: activity?.baseline_pct_complete || 75,
-              approved_qty: null,
-              planner_id: 'usr-supervisor-01',
-              justification: 'Verified against QA/QC physical inspection sign-off certificate.',
-              timestamp: new Date(Date.now() - 3600000).toISOString(),
-            },
-            {
-              type: 'approved_actual',
-              actual_id: 'actl-102',
-              decision_id: 'dec-102',
-              event_id: matchedEv?.event_id || 'evt-101',
-              schedule_id: schedId,
-              activity_id: activityId,
-              actual_start: activity?.planned_start || '2026-09-01',
-              actual_finish: activity?.baseline_pct_complete >= 100 ? activity?.planned_finish : null,
-              actual_pct_complete: activity?.baseline_pct_complete || 75,
-              actual_quantity: null,
-              timestamp: new Date(Date.now() - 3590000).toISOString(),
-            },
-          ];
-
-      return {
-        activity: activity || null,
-        timeline: mockTimeline,
-        history: [
-          {
-            timestamp: '2026-09-08T16:00:00.000Z',
-            raw_claim_text: isCompletedOrReopened
-              ? `Handover sign-off for ${activity?.activity_name || activityId} (100% Complete)`
-              : matchedEv?.raw_claim_text || `Field report for ${activity?.activity_name || activityId}`,
-            input_channel: 'TYPED_TEXT' as InputChannel,
-            claimed_pct: 100,
-            claimed_qty: null,
-            status: 'APPROVED' as ClaimStatus,
-            supervisor_action: 'APPROVE',
-            actor: 'Site Engineer (Commissioning Shift Log)',
-          },
-        ],
-      };
-    }
     const historyQs = scheduleIdArg ? `?schedule_id=${encodeURIComponent(scheduleIdArg)}` : '';
     const data: any = await apiFetch(`/api/v1/activities/${encodeURIComponent(activityId)}/history${historyQs}`);
     const timeline: ActivityTimelineItem[] = data.timeline || [];
@@ -2187,10 +1200,6 @@ export const activitiesApi = {
   },
 
   updateState: async (activityId: string, newState: ExecutionState): Promise<ScheduleActivity | null> => {
-    if (USE_MOCKS) {
-      await sleep(200);
-      return updateActivityExecutionState(activityId, newState);
-    }
     return apiFetch<ScheduleActivity>(`/api/v1/activities/${encodeURIComponent(activityId)}/state`, {
       method: 'PATCH',
       body: JSON.stringify({ execution_state: newState }),
@@ -2198,114 +1207,104 @@ export const activitiesApi = {
   },
 };
 
+// ── Reopen (V7: activity-scoped lifecycle; the activity id identifies the request within a schedule) ──
+export const REOPEN_REASON_OPTIONS: { value: string; label: string }[] = [
+  { value: 'INCORRECT_COMPLETION', label: 'Incorrect / premature completion' },
+  { value: 'CONTRADICTORY_FIELD_REPORT', label: 'Contradictory field report' },
+  { value: 'QUALITY_FAILURE', label: 'Quality failure / rework' },
+  { value: 'QUANTITY_CORRECTION', label: 'Quantity correction' },
+  { value: 'DATE_CORRECTION', label: 'Date correction' },
+  { value: 'SUPERVISOR_CORRECTION', label: 'Supervisor correction' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+interface BackendReopen {
+  activity_id: string;
+  schedule_id: string;
+  project_id: string;
+  reopen_status: 'NONE' | 'REQUESTED' | 'APPROVED' | 'REJECTED';
+  reason: string | null;
+  justification: string | null;
+  requested_by: string | null;
+  requested_at: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_notes: string | null;
+  rework_instructions: string | null;
+  original_actual_id: string | null;
+}
+
+function toReopen(r: BackendReopen, name?: string): ReopenRequest {
+  return {
+    request_id: r.activity_id,
+    reopen_id: r.activity_id,
+    activity_id: r.activity_id,
+    activity_name: name,
+    schedule_id: r.schedule_id,
+    project_id: r.project_id,
+    requested_by: r.requested_by ?? undefined,
+    requested_at: r.requested_at ?? undefined,
+    created_at: r.requested_at ?? undefined,
+    reason: r.reason ?? '',
+    justification: r.justification ?? undefined,
+    status: r.reopen_status === 'REQUESTED' ? 'PENDING' : (r.reopen_status === 'NONE' ? 'PENDING' : r.reopen_status),
+    reviewed_by: r.decided_by,
+    reviewed_at: r.decided_at,
+    review_comments: r.decision_notes,
+    supervisor_notes: r.decision_notes,
+  };
+}
+
 export const reopenApi = {
   getRequests: async (params?: { activity_id?: string; status?: string }): Promise<ReopenRequest[]> => {
-    if (USE_MOCKS) {
-      await sleep(200);
-      let list = getMockReopenRequests();
-      if (params?.activity_id) {
-        list = list.filter((r) => r.activity_id === params.activity_id);
-      }
-      if (params?.status) {
-        list = list.filter((r) => r.status === params.status);
-      }
-      return list;
-    }
-    const query = new URLSearchParams();
-    if (params?.activity_id) query.set('activity_id', params.activity_id);
-    if (params?.status) query.set('status', params.status);
-    return apiFetch<ReopenRequest[]>(`/api/v1/reopen-requests?${query.toString()}`);
+    const sid = await getActiveScheduleId();
+    const backendStatus = params?.status === 'PENDING' ? 'REQUESTED' : params?.status;
+    const qs = backendStatus ? `?status=${encodeURIComponent(backendStatus)}` : '';
+    const rows = await apiFetch<BackendReopen[]>(`${projectBase()}/schedules/${encodeURIComponent(sid)}/reopen-requests${qs}`);
+    const list = rows.map((r) => toReopen(r));
+    return params?.activity_id ? list.filter((r) => r.activity_id === params.activity_id) : list;
   },
 
-  createRequest: async (payload: {
-    activity_id: string;
-    reason: string;
-    justification: string;
-    requested_by_role: UserRole;
-    requested_by_name: string;
-    event_id?: string;
-  }): Promise<ReopenRequest> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      return createMockReopenRequest(payload);
-    }
-    return apiFetch<ReopenRequest>('/api/v1/reopen-requests', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  createRequest: async (payload: { activity_id: string; reason: string; justification: string; event_id?: string }): Promise<ReopenRequest> => {
+    const sid = await getActiveScheduleId();
+    const r = await apiFetch<BackendReopen>(
+      `${projectBase()}/schedules/${encodeURIComponent(sid)}/activities/${encodeURIComponent(payload.activity_id)}/reopen`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: payload.reason,
+          justification: payload.justification,
+          evidence_event_ids: payload.event_id ? [payload.event_id] : [],
+        }),
+      },
+    );
+    return toReopen(r);
   },
 
-  reviewRequest: async (payload: {
-    reopen_id: string;
-    decision: 'APPROVED' | 'REJECTED';
-    supervisor_notes?: string;
-    reviewer_name?: string;
-  }): Promise<ReopenRequest> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      const res = reviewMockReopenRequest(payload);
-      MOCK_AUDIT_LOGS.unshift({
-        log_id: Date.now(),
-        entity_type: 'execution_event',
-        entity_id: res.event_id || res.reopen_id || 'reopen-log',
-        action: payload.decision === 'APPROVED' ? 'DECISION_APPROVE' : 'DECISION_REJECT',
-        actor_id: payload.reviewer_name || 'usr-supervisor-01',
-        before_state: JSON.stringify({
-          activity_id: res.activity_id,
-          execution_state: 'COMPLETED',
-          actual_start: res.locked_actuals_summary?.actual_start || '2026-09-01',
-          actual_finish: res.locked_actuals_summary?.actual_finish || '2026-09-08',
-          actual_pct_complete: res.original_actual_pct || 100,
-          status: 'REOPEN_REQUESTED',
-        }),
-        after_state: JSON.stringify({
-          activity_id: res.activity_id,
-          execution_state: payload.decision === 'APPROVED' ? 'REOPENED' : 'COMPLETED',
-          previous_actual_start: res.locked_actuals_summary?.actual_start || '2026-09-01',
-          previous_actual_finish: res.locked_actuals_summary?.actual_finish || '2026-09-08',
-          decision: payload.decision,
-          supervisor_notes: payload.supervisor_notes || null,
-          status: payload.decision === 'APPROVED' ? 'REOPEN_APPROVED' : 'REOPEN_REJECTED',
-        }),
-        payload_hash: 'f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8',
-        previous_hash: 'e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7',
-        current_hash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-        timestamp: new Date().toISOString(),
-      });
-      return res;
-    }
-    return apiFetch<ReopenRequest>(`/api/v1/reopen-requests/${payload.reopen_id}/review`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  /** `reopen_id` is the activity id (one open reopen lifecycle per activity per schedule version). */
+  reviewRequest: async (payload: { reopen_id: string; decision: 'APPROVED' | 'REJECTED'; supervisor_notes?: string; rework_instructions?: string }): Promise<ReopenRequest> => {
+    const sid = await getActiveScheduleId();
+    const r = await apiFetch<BackendReopen>(
+      `${projectBase()}/schedules/${encodeURIComponent(sid)}/activities/${encodeURIComponent(payload.reopen_id)}/reopen/decide`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ decision: payload.decision, notes: payload.supervisor_notes, rework_instructions: payload.rework_instructions }),
+      },
+    );
+    return toReopen(r);
   },
 };
 
-// The schedule new claims are matched against (most recently created). Cached for the
-// session; real mode only -- mock mode keeps its active mock schedule id.
-let activeScheduleIdPromise: Promise<string> | null = null;
+// The EXPLICITLY selected schedule version (ProjectProvider -> lib/apiContext). There is no "active" or
+// "latest" schedule lookup: a screen that needs a schedule uses the one the user selected.
 export function getActiveScheduleId(): Promise<string> {
-  if (USE_MOCKS) return Promise.resolve(getActiveScheduleVersionId());
-  if (!activeScheduleIdPromise) {
-    activeScheduleIdPromise = apiFetch<{ schedule_id: string }>('/api/v1/schedules/active')
-      .then((s) => s.schedule_id)
-      .catch((err) => {
-        activeScheduleIdPromise = null; // retry next call
-        throw err;
-      });
-  }
-  return activeScheduleIdPromise;
+  const id = apiContext.getScheduleId();
+  if (!id) return Promise.reject(new ApiError(400, 'Select a schedule version to continue.', '', 'INVALID_SCHEDULE_CONTEXT'));
+  return Promise.resolve(id);
 }
 
 export const graphApi = {
   getActivityGraph: async (activityId: string, depth = 1, scheduleId?: string): Promise<{ nodes: any[]; edges: any[] }> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const activities = getActivitiesForCurrentSchedule(scheduleId);
-      const current = activities.find((a) => a.activity_id === activityId) || activities[0];
-      const nodes = current ? [{ id: current.activity_id, label: current.activity_name, type: 'activity' }] : [];
-      return { nodes, edges: [] };
-    }
     const sid = scheduleId ?? (await getActiveScheduleId().catch(() => undefined));
     const query = sid ? `?depth=${depth}&schedule_id=${sid}` : `?depth=${depth}`;
     return apiFetch<{ nodes: any[]; edges: any[] }>(`/api/v1/graph/activity/${activityId}${query}`);
@@ -2314,67 +1313,11 @@ export const graphApi = {
 
 export const schedulesApi = {
   getActivities: async (scheduleId?: string): Promise<ScheduleActivity[]> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      return getActivitiesForCurrentSchedule(scheduleId);
-    }
     const sid = scheduleId ?? (await getActiveScheduleId());
     return apiFetch(`/api/v1/schedules/${sid}/activities`);
   },
 
   getImpactPreview: async (activityId: string, delayDays: number, scheduleId?: string): Promise<ImpactPreviewResult> => {
-    if (USE_MOCKS) {
-      await sleep(500);
-      const activities = getActivitiesForCurrentSchedule(scheduleId);
-      const activity = activities.find((a) => a.activity_id === activityId) || activities[0];
-      const successors = activities.filter((a) => a.activity_id !== activity?.activity_id).slice(0, 2);
-      const mockImpacts: ImpactEvaluationItem[] = successors.map((succ, idx) => ({
-        successor_activity_id: succ.activity_id,
-        activity_name: succ.activity_name,
-        dependency_type: 'FS',
-        original_earliest_start: succ.planned_start,
-        shifted_earliest_start: succ.planned_start,
-        original_planned_finish: succ.planned_finish,
-        shifted_earliest_finish: succ.planned_finish,
-        propagation_depth: idx + 1,
-        target_path: [activity?.activity_id || 'ACT-101', succ.activity_id],
-        execution_state: 'IN_PROGRESS' as ExecutionState,
-        gross_delay_days: delayDays,
-        total_float: idx === 0 ? 2 : 0,
-        float_status: 'KNOWN',
-        absorbed_delay_days: idx === 0 ? Math.min(2, delayDays) : 0,
-        net_delay_days: idx === 0 ? Math.max(0, delayDays - 2) : delayDays,
-        controlling_predecessor: activity?.activity_id || 'ACT-101',
-        controlling_relationship: 'FS',
-        uncertainty: false,
-        classification: delayDays > 2 ? 'CRITICAL_PATH_SLIP' : idx === 0 ? 'ABSORBED_BY_FLOAT' : 'NO_IMPACT',
-      }));
-
-      return {
-        activity_id: activity.activity_id,
-        activity_name: activity.activity_name,
-        planned_start: activity.planned_start,
-        planned_finish: activity.planned_finish,
-        shifted_finish: activity.planned_finish,
-        delay_days: delayDays,
-        propagation_depth_limit: 5,
-        disclaimer: 'Preview only · Deterministic A1 CPM Evaluation · Full Multi-Hop Propagation',
-        impacts: mockImpacts,
-        successors: mockImpacts.map((imp) => ({
-          successor_activity_id: imp.successor_activity_id,
-          activity_name: imp.activity_name,
-          relationship_type: imp.dependency_type,
-          original_start: imp.original_earliest_start,
-          original_finish: imp.original_planned_finish,
-          shifted_start: imp.shifted_earliest_start,
-          shifted_finish: imp.shifted_earliest_finish,
-          lag_days: 0,
-          depth: imp.propagation_depth,
-          net_delay_days: imp.net_delay_days,
-          execution_state: imp.execution_state,
-        })),
-      };
-    }
     const queryParams = new URLSearchParams({ delay_days: String(delayDays) });
     const impactScheduleId = scheduleId ?? (await getActiveScheduleId().catch(() => undefined));
     if (impactScheduleId) queryParams.set('schedule_id', impactScheduleId);
@@ -2431,91 +1374,17 @@ export const schedulesApi = {
 
   getWbsTree: async (scheduleIdArg?: string): Promise<WBSTreeResponse> => {
     const scheduleId = scheduleIdArg ?? (await getActiveScheduleId());
-    if (USE_MOCKS) {
-      await sleep(400);
-      const activities = getActivitiesForCurrentSchedule(scheduleId);
-      const groupMap = new Map<string, WBSGroupActivity[]>();
-      for (const a of activities) {
-        if (!a.wbs_code) continue;
-        const list = groupMap.get(a.wbs_code) || [];
-        list.push({ activity_id: a.activity_id, planned_quantity: a.planned_quantity });
-        groupMap.set(a.wbs_code, list);
-      }
-      const wbs_groups: WBSGroup[] = Array.from(groupMap.entries()).map(
-        ([wbs_code, acts]) => ({ wbs_code, activities: acts })
-      );
-      return { schedule_id: scheduleId, wbs_groups };
-    }
     return apiFetch(`/api/v1/schedules/${scheduleId}/wbs-tree`);
   },
 };
 
-export const MOCK_SPLITS_STORE = new Map<string, WBSSplitItem[]>();
-
 export const wbsApi = {
   getSplits: async (eventId: string): Promise<WBSSplitItem[]> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      if (MOCK_SPLITS_STORE.has(eventId)) {
-        return MOCK_SPLITS_STORE.get(eventId)!;
-      }
-      // Only the explicit demo unmatched/decomposed claim in initial dataset has default mock splits
-      if (eventId === 'evt-assam-104') {
-        const activities = getActivitiesForCurrentSchedule();
-        const a1 = activities[0]?.activity_id || 'ACT-ASSAM-101';
-        const a2 = activities[1]?.activity_id || 'ACT-ASSAM-201';
-        return [
-          {
-            split_id: `spl-${eventId}-1`,
-            event_id: eventId,
-            activity_id: a1,
-            split_basis: 'WBS_WEIGHTED',
-            split_pct: 0.6,
-            allocated_quantity: 45,
-            uom: 'cu.m',
-            rationale: 'Primary work package',
-            created_at: new Date().toISOString(),
-          },
-          {
-            split_id: `spl-${eventId}-2`,
-            event_id: eventId,
-            activity_id: a2,
-            split_basis: 'MANUAL',
-            split_pct: 0.4,
-            allocated_quantity: 30,
-            uom: 'cu.m',
-            rationale: 'Secondary tie-in / handover scope',
-            created_at: new Date().toISOString(),
-          },
-        ];
-      }
-      return [];
-    }
     const data: any = await apiFetch(`/api/v1/claims/${eventId}/splits`);
     return Array.isArray(data) ? data : data.splits || [];
   },
 
   updateSplits: async (eventId: string, splits: Partial<WBSSplitItem>[]): Promise<WBSSplitResponse> => {
-    if (USE_MOCKS) {
-      await sleep(600);
-      const items: WBSSplitItem[] = splits.map((s, i) => ({
-        split_id: s.split_id || `spl-${eventId}-${i + 1}`,
-        event_id: eventId,
-        activity_id: s.activity_id || 'ACT-ASSAM-101',
-        split_basis: s.split_basis || 'WBS_WEIGHTED',
-        split_pct: s.split_pct || 0.5,
-        allocated_quantity: s.allocated_quantity || null,
-        uom: s.uom || null,
-        rationale: s.rationale || 'Supervisor manual WBS decomposition',
-        created_at: new Date().toISOString(),
-      }));
-      MOCK_SPLITS_STORE.set(eventId, items);
-      return {
-        event_id: eventId,
-        status: 'SPLIT_APPROVED',
-        message: `Successfully updated ${splits.length} WBS split allocations.`,
-      };
-    }
     return apiFetch(`/api/v1/claims/${eventId}/splits`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -2525,14 +1394,6 @@ export const wbsApi = {
   },
 
   splitClaim: async (request: WBSSplitRequest): Promise<WBSSplitResponse> => {
-    if (USE_MOCKS) {
-      await sleep(600);
-      return {
-        event_id: request.event_id,
-        status: 'SPLIT_APPROVED',
-        message: `Successfully allocated claim across ${request.allocations.length} WBS activities.`,
-      };
-    }
     return wbsApi.updateSplits(request.event_id, request.allocations as any);
   },
 
@@ -2543,10 +1404,6 @@ export const wbsApi = {
 
 export const auditApi = {
   getLogs: async (): Promise<AuditLogEntry[]> => {
-    if (USE_MOCKS) {
-      await sleep(400);
-      return MOCK_AUDIT_LOGS;
-    }
     return apiFetch('/api/v1/audit');
   },
 };
@@ -2556,31 +1413,6 @@ export const reportsApi = {
     const startDate = filter?.start || filter?.start_date;
     const endDate = filter?.end || filter?.end_date;
 
-    if (USE_MOCKS) {
-      await sleep(700);
-      const ds = getDatasetForCurrentProject();
-      const todayStr = new Date().toISOString().split('T')[0];
-      const pastWeekStr = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-      return {
-        reporting_period: {
-          start_date: startDate || pastWeekStr,
-          end_date: endDate || todayStr,
-        },
-        discipline: filter?.discipline || null,
-        schedule_id: filter?.schedule_id || getActiveScheduleVersionId(),
-        summary_text: ds.summaryReport.text,
-        metrics: {
-          total_claims_processed: ds.dashboard.total_claims,
-          approval_rate_pct: 92.4,
-          open_conflicts_count: ds.dashboard.conflicts,
-          high_priority_escalations: 1,
-          top_delay_drivers: ds.delayReasons,
-          disciplines_active: ['CIVIL', 'PIPING', 'ELECTRICAL', 'HSE'],
-        },
-        key_highlights: ds.summaryReport.highlights,
-        generated_at: new Date().toISOString(),
-      };
-    }
     const params = new URLSearchParams();
     if (startDate) params.append('start', startDate);
     if (endDate) params.append('end', endDate);
@@ -2624,48 +1456,16 @@ export interface InvestigationContext {
 
 export const investigationApi = {
   getInvestigation: async (activityId: string, depth = 1): Promise<InvestigationContext> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const activities = getActivitiesForCurrentSchedule();
-      const activity = activities.find((a) => a.activity_id === activityId) || activities[0];
-      const events = getAllEventsForCurrentProject();
-      return {
-        root_activity_id: activityId,
-        depth,
-        context: {
-          activity: activity || { activity_id: activityId, activity_name: 'Activity', discipline: 'CIVIL' },
-          execution_events: events.slice(0, 2),
-          validations: [],
-          conflicts: [],
-          impacts: [],
-          evidence: [{ reference_id: 'REF-01', file_name: 'inspection_log.pdf', raw_snippet: 'Visual inspection accepted' }],
-          decisions: [],
-          approved_actuals: [],
-          dependencies: [],
-        },
-        summary: {
-          conflict_status: 'not_present',
-          validation_status: 'not_present',
-          impact_status: 'not_present',
-          evidence_status: 'present',
-          approved_actual_status: 'not_present',
-          dependencies_count: 0,
-          execution_events_count: events.length > 0 ? 1 : 0,
-          decisions_count: 0,
-        },
-        graph: { nodes: [], edges: [] },
-      };
-    }
     return apiFetch<InvestigationContext>(`/api/v1/investigation/activity/${activityId}?depth=${depth}`);
   },
 };
 
 // Runtime translation of generated text for display (canonical text is never changed).
-// Falls back to the original strings on any failure or in mock mode.
+// Falls back to the original strings on any failure.
 export const translateApi = {
   translate: async (texts: string[], targetLanguage: string): Promise<string[]> => {
     const lang = (targetLanguage || 'en').slice(0, 2);
-    if (USE_MOCKS || lang === 'en' || texts.length === 0) return texts;
+    if (lang === 'en' || texts.length === 0) return texts;
     try {
       const res: any = await apiFetch('/api/v1/reports/translate', {
         method: 'POST',
@@ -2693,65 +1493,12 @@ export const executionSummaryApi = {
     if (params?.discipline) query.set('discipline', params.discipline);
     if (params?.language) query.set('language', params.language);
 
-    if (USE_MOCKS) {
-      await sleep(350);
-      const ds = getDatasetForCurrentProject();
-      const isHindi = params?.language === 'hi';
-      const isTelugu = params?.language === 'te';
-      const lang = params?.language || 'en';
-
-      const canonical = ds.summaryReport.text;
-      let summaryText = canonical;
-      if (isHindi) {
-        summaryText = `[परियोजना सारांश] ${canonical}`;
-      } else if (isTelugu) {
-        summaryText = `[ప్రాజెక్ట్ సారాంశం] ${canonical}`;
-      }
-
-      return {
-        period: {
-          type: params?.period || 'last_7_days',
-          start: params?.start_date || '2026-09-11',
-          end: params?.end_date || '2026-09-18',
-        },
-        discipline: params?.discipline || 'ALL',
-        aggregate: {
-          period: { type: params?.period || 'last_7_days', start: '2026-09-11', end: '2026-09-18' },
-          discipline: params?.discipline || 'ALL',
-          claims: { total_claims: ds.dashboard.total_claims, by_status: { APPROVED: 18, REVIEW_REQUIRED: 4, EXTRACTED: 2 }, by_event_type: { PROGRESS_UPDATE: 20, DELAY: 4 } },
-          approved_progress: { total_approved: ds.dashboard.actuals, activities_with_actuals: 14, avg_approved_pct: 68.4 },
-          conflicts: { total_conflicts: ds.dashboard.conflicts, by_status: { OPEN: ds.dashboard.conflicts } },
-          validation_issues: { total_issues: ds.validationIssues.length, by_severity: { WARNING: 2, ERROR: 1 } },
-          delays: { total_delay_events: ds.delayReasons.length, reasons: { WEATHER: 2, MATERIAL: 2 } },
-          activities: { total: Object.values(ds.activities).flat().length, completed: 8, in_progress: 16, not_started: 8 },
-          forecast: { status: 'available', historical_ratio: 1.12 },
-        },
-        canonical_summary: canonical,
-        summary: summaryText,
-        language: lang,
-        cached: false,
-        generated_by: 'llm',
-      };
-    }
     return apiFetch<ExecutionSummaryResponse>(`/api/v1/execution-summary?${query.toString()}`);
   },
 };
 
 export const mockP6Api = {
   getReceived: async (): Promise<{ count: number; payloads: any[] }> => {
-    if (USE_MOCKS) {
-      await sleep(300);
-      const activities = getActivitiesForCurrentSchedule().slice(0, 3);
-      return {
-        count: activities.length,
-        payloads: activities.map((a) => ({
-          Id: a.activity_id,
-          StartDate: a.planned_start,
-          FinishDate: a.planned_finish,
-          PercentComplete: a.baseline_pct_complete || 0,
-        })),
-      };
-    }
     return apiFetch('/api/v1/mock-p6/received');
   },
 
@@ -2759,15 +1506,6 @@ export const mockP6Api = {
     activityId: string,
     payload: { Id: string; StartDate?: string; FinishDate?: string; PercentComplete?: number }
   ): Promise<{ status: string; activity_id: string; p6_id: string; message: string }> => {
-    if (USE_MOCKS) {
-      await sleep(500);
-      return {
-        status: 'success',
-        activity_id: activityId,
-        p6_id: payload.Id,
-        message: `Activity ${activityId} actuals updated in mock P6 EPPM`,
-      };
-    }
     return apiFetch(`/api/v1/mock-p6/activities/${encodeURIComponent(activityId)}`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -2775,29 +1513,83 @@ export const mockP6Api = {
   },
 };
 
+export type ImpactLevel = ImpactSeverity;
+
+/** One row of the server impact watch list, in the shape the review/intake/dashboard screens render. */
+export interface CompoundImpact {
+  activityId: string;
+  activityName: string;
+  projectId: string;
+  scheduleId: string;
+  stageId: string | null;
+  impactLevel: ImpactLevel;
+  workflowCondition: string;
+  sensitivityDays: number;
+  directSuccessorCount: number;
+  totalDownstreamCount: number;
+  criticalDownstreamCount: number;
+  impactedStageIds: string[];
+  impactedStageNames: string[];
+  primaryReason: string;
+  riskFactors: string[];
+  isBlockedOrAtRisk: boolean;
+}
+
+interface WatchlistRow {
+  activity_id: string;
+  activity_name: string;
+  stage_id: string | null;
+  workflow_condition: string;
+  severity: ImpactSeverity;
+  sensitivity_days: number;
+  direct_successor_count: number;
+  total_downstream_count: number;
+  critical_downstream_count: number;
+  stages: { stage_id: string; stage_name: string; count: number }[];
+  project_completion_impact_days: number;
+  primary_reason: string;
+}
+
 export const impactApi = {
+  /**
+   * Activities in a problem state (blocked / quality hold / reopen / rework) ranked by how far a slip would
+   * propagate. Server-computed by the impact engine; the browser derives nothing.
+   */
   getScheduleImpacts: async (projectId: string, scheduleId: string): Promise<CompoundImpact[]> => {
-    if (USE_MOCKS) {
-      await sleep(150);
-      return getMockCompoundImpacts(projectId, scheduleId);
-    }
-    return apiFetch<CompoundImpact[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}/compound-impacts`);
+    const rows = await apiFetch<WatchlistRow[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}/impact/watchlist`,
+    );
+    return rows.map((r) => ({
+      activityId: r.activity_id,
+      activityName: r.activity_name,
+      projectId,
+      scheduleId,
+      stageId: r.stage_id,
+      impactLevel: r.severity,
+      workflowCondition: r.workflow_condition,
+      sensitivityDays: r.sensitivity_days,
+      directSuccessorCount: r.direct_successor_count,
+      totalDownstreamCount: r.total_downstream_count,
+      criticalDownstreamCount: r.critical_downstream_count,
+      impactedStageIds: r.stages.map((x) => x.stage_id),
+      impactedStageNames: r.stages.map((x) => x.stage_name),
+      primaryReason: r.primary_reason,
+      riskFactors: [
+        r.primary_reason,
+        `A ${r.sensitivity_days}-day slip reaches ${r.total_downstream_count} downstream activit${r.total_downstream_count === 1 ? 'y' : 'ies'}` +
+          (r.critical_downstream_count ? ` (${r.critical_downstream_count} critical)` : ''),
+      ],
+      isBlockedOrAtRisk: true,
+    }));
   },
 
-  getActivityImpact: async (projectId: string, scheduleId: string, activityId: string): Promise<CompoundImpact | null> => {
-    if (USE_MOCKS) {
-      await sleep(100);
-      return getMockActivityImpact(projectId, scheduleId, activityId);
-    }
-    return apiFetch<CompoundImpact | null>(`/api/v1/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}/activities/${encodeURIComponent(activityId)}/compound-impact`);
-  },
+  /** What-if: delay one activity by N days and propagate through the stored network (nothing is written). */
+  preview: (projectId: string, scheduleId: string, activityId: string, delayDays: number) =>
+    apiFetch<ImpactScenarioResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}/activities/${encodeURIComponent(activityId)}/impact-preview?delay_days=${delayDays}`,
+    ),
 
-  getDependencies: async (scheduleId: string): Promise<ScheduleDependency[]> => {
-    if (USE_MOCKS) {
-      await sleep(100);
-      return getMockScheduleDependencies(scheduleId);
-    }
-    return apiFetch<ScheduleDependency[]>(`/api/v1/schedules/${encodeURIComponent(scheduleId)}/dependencies`);
-  },
+  getDependencies: async (scheduleId: string): Promise<ScheduleDependency[]> =>
+    apiFetch<ScheduleDependency[]>(`/api/v1/schedules/${encodeURIComponent(scheduleId)}/dependencies`),
 };
 

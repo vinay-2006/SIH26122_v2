@@ -8,7 +8,8 @@ from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from backend.shared.auth import UserProfile, require_role
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,7 @@ class CSVExportAdapter(PMISAdapter):
 def query_approved_actuals_for_export(
     conn: Optional[Any] = None,
     schedule_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> List[dict]:
     """
     Query approved_actuals table for export with deterministic ordering.
@@ -175,10 +177,15 @@ def query_approved_actuals_for_export(
         FROM approved_actuals
     """
     params = []
-
+    where = []
     if schedule_id:
-        query += " WHERE schedule_id = %s"
+        where.append("schedule_id = %s")
         params.append(schedule_id)
+    if project_id:
+        where.append("project_id = %s")
+        params.append(str(project_id))
+    if where:
+        query += " WHERE " + " AND ".join(where)
 
     query += " ORDER BY activity_id ASC"
 
@@ -216,7 +223,17 @@ def trigger_auto_export(
     Auto-triggered CSV export executed post-commit per Feature #26.
     Uses the complete current approved_actuals dataset.
     """
-    active_adapter = adapter or get_default_csv_adapter()
+    if adapter is None:
+        base = get_default_csv_adapter()
+        if base.output_file and schedule_id:
+            # one file per schedule: a single shared file would let the last-approving project overwrite
+            # (and expose) another project's export
+            root, ext = os.path.splitext(base.output_file)
+            active_adapter = CSVExportAdapter(output_file=f"{root}.{schedule_id}{ext or '.csv'}")
+        else:
+            active_adapter = base
+    else:
+        active_adapter = adapter
     return active_adapter.regenerate_from_db(conn=conn, schedule_id=schedule_id)
 
 
@@ -229,17 +246,19 @@ def health():
 def export_csv(
     schedule_id: Optional[str] = Query(
         default=None,
-        description="Optional filter by schedule_id",
+        description="Required (or X-Schedule-ID); validated against the project",
     ),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
-    Export approved actuals to canonical 5-column CSV.
-    Restricted to SUPERVISOR role.
+    Export the approved actuals of an EXPLICIT schedule of the caller's project to the canonical 5-column CSV.
+    Requires REVIEW_CLAIM (supervisor / planner / project manager / owner).
     Columns: activity_id, actual_start, actual_finish, actual_pct_complete, actual_quantity
     """
     try:
-        rows = query_approved_actuals_for_export(schedule_id=schedule_id)
+        rows = query_approved_actuals_for_export(
+            schedule_id=schedule_context.schedule_id, project_id=str(schedule_context.project_id)
+        )
     except Exception as e:
         logger.error(f"Error querying approved_actuals for CSV export: {e}")
         raise HTTPException(

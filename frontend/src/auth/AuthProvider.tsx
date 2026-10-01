@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { authApi } from '@/api';
+import { BASE_URL } from '@/api/client';
 
 export type UserRole = 'SITE_ENGINEER' | 'SUPERVISOR';
 
@@ -180,6 +181,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem('user');
         localStorage.setItem(TOKEN_KEY, data.session.access_token);
         const loggedInUser = await hydrateFromBackend(data.session.user?.email ?? emailTrimmed);
+        setUser(loggedInUser);
+        return;
+      }
+
+      // Local integration login: a REAL signed JWT from the backend, honoured only against the isolated DB.
+      if (import.meta.env.VITE_LOCAL_DEMO_AUTH === 'true') {
+        const res = await fetch(`${BASE_URL}/api/v1/auth/local-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: emailTrimmed, password }),
+        });
+        if (!res.ok) throw new Error(res.status === 401 ? 'Incorrect email or password.' : 'Local demo sign-in is not available.');
+        const { access_token } = await res.json();
+        localStorage.removeItem('user');
+        localStorage.setItem(TOKEN_KEY, access_token);
+        localStorage.setItem(DEV_EMAIL_KEY, emailTrimmed);
+        const loggedInUser = await hydrateFromBackend(emailTrimmed);
         setUser(loggedInUser);
         return;
       }

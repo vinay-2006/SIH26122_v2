@@ -34,8 +34,6 @@ import {
   ArrowRight,
   Flame,
   Layers,
-  ShieldCheck,
-  Network,
   HelpCircle,
   Building2,
   Lock,
@@ -65,9 +63,6 @@ import { QualityGateModal } from '@/components/QualityGateModal';
 import { CompoundImpactModal } from '@/components/CompoundImpactModal';
 import { AskWhyPanel } from '@/components/AskWhyPanel';
 import { WBSSplitEditor } from '@/components/WBSSplitEditor';
-import { EvidencePanel } from '@/components/EvidencePanel';
-import { KnowledgeGraph } from '@/components/KnowledgeGraph';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -109,7 +104,6 @@ export default function ReviewWorkspace() {
   const [hasSplits, setHasSplits] = useState<boolean>(false);
 
   // Feature 31: Bottom Inspection Tab ('evidence' vs 'graph')
-  const [bottomTab, setBottomTab] = useState<'evidence' | 'graph'>('evidence');
 
   // Feature 34: Ask Why Drawer / Panel State
   const [isAskWhyOpen, setIsAskWhyOpen] = useState<boolean>(false);
@@ -1482,52 +1476,6 @@ export default function ReviewWorkspace() {
             </CardContent>
           </Card>
         </div>
-      </div>
-
-      {/* Feature 31: Multi-Source Evidence Fusion & Construction Knowledge Graph Section */}
-      <div className="space-y-4 pt-4 border-t border-border">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-2 bg-card p-1 rounded-xl border border-border">
-            <button
-              type="button"
-              onClick={() => setBottomTab('evidence')}
-              className={cn(
-                'flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg border transition-all',
-                bottomTab === 'evidence'
-                  ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 shadow-xs'
-                  : 'bg-transparent border-transparent text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <ShieldCheck className="w-4 h-4 text-blue-500" />
-              Multi-Source Evidence Fusion
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setBottomTab('graph')}
-              className={cn(
-                'flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg border transition-all cursor-pointer',
-                bottomTab === 'graph'
-                  ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-900 text-[#003087] dark:text-blue-300 shadow-xs'
-                  : 'bg-transparent border-transparent text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Network className="w-4 h-4 text-[#1565C0]" />
-              Construction Knowledge Graph
-            </button>
-          </div>
-        </div>
-
-        <ErrorBoundary
-          label={bottomTab === 'evidence' ? 'Evidence panel' : 'Knowledge graph'}
-          resetKey={`${event.event_id}:${bottomTab}`}
-        >
-          {bottomTab === 'evidence' ? (
-            <EvidencePanel eventId={event.event_id} />
-          ) : (
-            <KnowledgeGraph eventId={event.event_id} />
-          )}
-        </ErrorBoundary>
       </div>
 
       {/* Quality Gate Modal */}

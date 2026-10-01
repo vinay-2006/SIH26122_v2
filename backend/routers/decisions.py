@@ -22,11 +22,14 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.context import gates
+from backend.context.errors import SecurityErrorCode, SecurityException, raise_project_denied
+from backend.context.project import ProjectContext
+from backend.context.schedule import ScheduleContext
 from backend.shared.actuals import upsert_approved_actual, _execute_upsert
-from backend.shared.audit import write_audit_log
-from backend.shared.auth import UserProfile, require_role
+from backend.services.notification_service import insert_decision_notification
+from backend.shared.audit import append_audit_record
 from backend.shared.db import get_connection
-from backend.shared.schedule_context import resolve_schedule_id
 from backend.shared.schemas import DecisionRequest
 
 logger = logging.getLogger(__name__)
@@ -148,12 +151,14 @@ def _record_decision(
     selected_activity_id: Optional[str],
     approved_pct: Optional[float],
     approved_qty: Optional[float],
+    project_context: ProjectContext,
 ) -> Dict[str, Any]:
     """
     Shared core for POST /decisions and POST /digest/bulk-approve: inserts
     exactly one planner_decisions row, updates execution_events.status,
-    calls write_audit_log(), and (APPROVE/EDIT only) calls
-    upsert_approved_actual(). Raises HTTPException on a genuine failure so
+    appends the audit record (same transaction: no approval without its audit trail), and
+    (APPROVE/EDIT only) calls the approved-actual upsert. The claim MUST belong to
+    project_context's project. Raises HTTPException on a genuine failure so
     callers can decide how to surface it (bulk-approve catches this
     per-claim; the single-decision endpoint lets it propagate).
     """
@@ -173,6 +178,8 @@ def _record_decision(
                         status_code=404,
                         detail=f"Claim '{event_id}' not found.",
                     )
+                if claim.get("project_id") is None or str(claim["project_id"]) != str(project_context.project_id):
+                    raise_project_denied("The claim does not belong to the authorized project")
 
                 if claim.get("status") not in ELIGIBLE_SOURCE_STATUSES:
                     raise HTTPException(
@@ -207,6 +214,36 @@ def _record_decision(
                         ),
                     )
 
+                # The target activity must exist in the CLAIM's schedule of THIS project, and a completed
+                # activity can only be changed through the governed reopen/revision workflow, never by
+                # overriding the target of an ordinary approval.
+                target_ids = split_ids if splits else [resolved_activity_id]
+                cur.execute(
+                    "SELECT sa.activity_id, sa.stage_id, aa.actual_pct_complete, aa.is_reopened "
+                    "FROM schedule_activities sa LEFT JOIN approved_actuals aa "
+                    "  ON aa.schedule_id = sa.schedule_id AND aa.activity_id = sa.activity_id "
+                    "WHERE sa.schedule_id = %s AND sa.project_id = %s AND sa.activity_id = ANY(%s)",
+                    (claim["schedule_id"], str(project_context.project_id), target_ids),
+                )
+                target_rows = {r["activity_id"]: r for r in cur.fetchall()}
+                missing = [a for a in target_ids if a not in target_rows]
+                if missing:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Activity {missing} does not exist in the claim's schedule for this project.",
+                    )
+                if action in ("APPROVE", "EDIT"):
+                    for a, tr in target_rows.items():
+                        if (tr["actual_pct_complete"] or 0) >= 100 and not tr["is_reopened"]:
+                            raise SecurityException(
+                                status_code=409,
+                                error_code="REOPEN_NOT_ALLOWED",
+                                message=(
+                                    f"Activity '{a}' is COMPLETED. A completed activity cannot be changed by an "
+                                    "ordinary approval; request a governed reopen first."
+                                ),
+                            )
+
                 decision_id = str(uuid.uuid4())
                 before_state = dict(claim)
 
@@ -234,6 +271,26 @@ def _record_decision(
                     "UPDATE execution_events SET status = %s WHERE event_id = %s",
                     (new_status, event_id),
                 )
+                # Notify the site engineer who reported the claim, in the SAME transaction: the decision and its
+                # notice commit together or not at all. (execution_events.supervisor_id is the reporting engineer.)
+                cur.execute(
+                    "SELECT activity_name FROM schedule_activities WHERE schedule_id = %s AND activity_id = %s",
+                    (claim["schedule_id"], resolved_activity_id),
+                )
+                _act = cur.fetchone()
+                insert_decision_notification(
+                    cur,
+                    project_id=str(project_context.project_id),
+                    decision_id=decision_id,
+                    event_id=event_id,
+                    recipient_id=claim.get("supervisor_id"),
+                    created_by=planner_id,
+                    action=action,
+                    activity_name=_act["activity_name"] if _act else None,
+                    claimed_pct=claim.get("claimed_pct"),
+                    approved_pct=approved_pct,
+                    comment=justification,
+                )
 
                 approved_actual = None
                 approved_actuals: List[dict] = []
@@ -251,6 +308,8 @@ def _record_decision(
                                 approved_pct=approved_pct,
                                 approved_qty=approved_qty,
                                 split_pct=float(sp["split_pct"]),
+                                project_id=str(project_context.project_id),
+                                stage_id=target_rows[sp["activity_id"]]["stage_id"],
                             )
                             if child:
                                 approved_actuals.append(child)
@@ -264,6 +323,8 @@ def _record_decision(
                             decision_id=decision_id,
                             approved_pct=approved_pct,
                             approved_qty=approved_qty,
+                            project_id=str(project_context.project_id),
+                            stage_id=target_rows[resolved_activity_id]["stage_id"],
                         )
                         approved_actuals = [approved_actual] if approved_actual else []
                     if action == "EDIT":
@@ -271,23 +332,28 @@ def _record_decision(
                             cur, claim, resolved_activity_id, approved_pct, approved_qty
                         )
 
-    try:
-        write_audit_log(
-            entity_type="execution_event",
-            entity_id=event_id,
-            action=action,
-            actor_id=planner_id,
-            before_state=before_state,
-            after_state={
-                "status": new_status,
-                "selected_activity_id": resolved_activity_id,
-                "decision_id": decision_id,
-                "split_activity_ids": split_ids,
-            },
-            payload={"justification": justification, "edited_fields": edited_fields},
-        )
-    except Exception as e:
-        logger.error("write_audit_log failed for decision %s: %s", decision_id, e)
+                # Audit record in the SAME transaction: the decision, the approved actual and its audit
+                # entry commit together or not at all (project-scoped hash chain).
+                append_audit_record(
+                    conn,
+                    entity_type="execution_event",
+                    entity_id=event_id,
+                    action=action,
+                    actor_id=planner_id,
+                    before_state=before_state,
+                    after_state={
+                        "status": new_status,
+                        "selected_activity_id": resolved_activity_id,
+                        "decision_id": decision_id,
+                        "split_activity_ids": split_ids,
+                        "approved_pct": approved_pct,
+                        "approved_qty": approved_qty,
+                    },
+                    project_id=project_context.project_id,
+                    schedule_id=claim["schedule_id"],
+                    role=project_context.role,
+                    entity_context={"justification": justification, "edited_fields": edited_fields},
+                )
 
     # Post-commit downstream adapters (non-blocking)
     if action in ("APPROVE", "EDIT") and approved_actuals:
@@ -319,46 +385,47 @@ def _record_decision(
 @router.post("/decisions")
 def create_decision(
     request: DecisionRequest,
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    project_context: ProjectContext = Depends(gates.project_approve),
 ):
     """
     POST /api/v1/decisions
-    Record Approve/Edit/Reject/Hold with justification. Internally calls
-    both write_audit_log() and upsert_approved_actual().
+    Record Approve/Edit/Reject/Hold with justification. Requires an explicit project (X-Project-ID) and the
+    APPROVE_ACTUAL permission (supervisor / project manager / owner); the claim must belong to that project.
+    Human decision only: nothing in the system approves a claim on its own.
     """
     return _record_decision(
         event_id=request.event_id,
         action=request.action,
-        planner_id=current_user.id,
+        planner_id=str(project_context.user.id),
         justification=request.justification,
         selected_activity_id=request.selected_activity_id,
         approved_pct=request.approved_pct,
         approved_qty=request.approved_qty,
+        project_context=project_context,
     )
 
 
 @router.get("/decisions")
 def list_decisions(
     limit: int = 10,
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    project_context: ProjectContext = Depends(gates.project_review),
 ):
     """
     GET /api/v1/decisions?limit=N
-    Most recent planner_decisions rows, newest first -- read-only convenience
-    for the Dashboard's "recent decisions" view. Not spec-required as a
-    named endpoint, but planner_decisions is spec's own action log, so this
-    is just a read over an already-existing table.
+    Most recent planner_decisions of THIS PROJECT (via the decided event), newest first.
     """
     safe_limit = max(1, min(limit, 100))
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT * FROM planner_decisions
-                ORDER BY decided_at DESC, decision_id DESC
+                SELECT pd.* FROM planner_decisions pd
+                JOIN execution_events ee ON ee.event_id = pd.event_id
+                WHERE ee.project_id = %s
+                ORDER BY pd.decided_at DESC, pd.decision_id DESC
                 LIMIT %s
                 """,
-                (safe_limit,),
+                (str(project_context.project_id), safe_limit),
             )
             rows = [dict(r) for r in cur.fetchall()]
     return rows
@@ -367,43 +434,35 @@ def list_decisions(
 @router.get("/digest")
 def get_digest(
     date: Optional[str] = None,
-    schedule_id: Optional[str] = None,
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = None,  # validated via schedule_context
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     GET /api/v1/digest?date=...&schedule_id=...
-    Claims for a given day, flat and unfiltered by status -- the frontend
-    groups by discipline and derives its own per-status counts (review
-    queue vs. already-decided) client-side from this one list, the same way
-    it already renders the Review Workspace queue. VALIDATED/REVIEW_REQUIRED/
-    HOLD are the ones actually actionable from here; APPROVED/EDITED/
-    REJECTED are included too so the day's full picture (KPI counts) is
-    visible, not just the open queue.
-
-    ISS-05: scoped to the active schedule (or an explicit schedule_id) --
-    otherwise another schedule's claims would appear in this Supervisor's
-    daily digest.
+    Claims for a given day of an EXPLICIT schedule of the caller's project (no active/latest fallback),
+    flat and unfiltered by status -- the frontend groups by discipline and derives its own per-status counts.
     """
-    resolved_schedule_id = resolve_schedule_id(schedule_id)
+    resolved_schedule_id = schedule_context.schedule_id
+    project_id = str(schedule_context.project_id)
     with get_connection() as conn:
         with conn.cursor() as cur:
             if date:
                 cur.execute(
                     """
                     SELECT * FROM execution_events
-                    WHERE schedule_id = %s AND event_date = %s
+                    WHERE schedule_id = %s AND project_id = %s AND event_date = %s
                     ORDER BY discipline ASC, priority_score DESC NULLS LAST, created_at ASC
                     """,
-                    (resolved_schedule_id, date),
+                    (resolved_schedule_id, project_id, date),
                 )
             else:
                 cur.execute(
                     """
                     SELECT * FROM execution_events
-                    WHERE schedule_id = %s
+                    WHERE schedule_id = %s AND project_id = %s
                     ORDER BY discipline ASC, priority_score DESC NULLS LAST, created_at ASC
                     """,
-                    (resolved_schedule_id,),
+                    (resolved_schedule_id, project_id),
                 )
             rows = [dict(r) for r in cur.fetchall()]
 
@@ -418,36 +477,34 @@ class BulkApproveRequest(BaseModel):
 @router.post("/digest/bulk-approve")
 def bulk_approve(
     request: BulkApproveRequest = BulkApproveRequest(),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_context: ScheduleContext = Depends(gates.approve_schedule),
 ):
     """
     POST /api/v1/digest/bulk-approve
-    Approve multiple eligible claims at once. Only VALIDATED claims are
-    eligible (no open flags, confidence above threshold -- both already
-    guaranteed by M4's /check only ever producing VALIDATED when clean).
-    If event_ids is omitted, every currently-VALIDATED claim in the active
-    schedule is attempted -- ISS-05: always schedule-scoped, so this can
-    never reach into another schedule's claims even when the caller omits
-    event_ids (an explicit list is also still scoped, as defense in depth).
+    Approve multiple eligible claims at once (supervisor-initiated; APPROVE_ACTUAL). Only VALIDATED claims of
+    the EXPLICIT schedule/project are eligible. If event_ids is omitted, every currently-VALIDATED claim of
+    that schedule is attempted -- never another schedule's or project's.
 
     Failure behavior: independent per-claim commits, not atomic. One bad
     claim does not roll back the others.
     """
-    resolved_schedule_id = resolve_schedule_id(request.schedule_id)
+    resolved_schedule_id = schedule_context.schedule_id
+    project_context = schedule_context.project_context
+    project_id = str(schedule_context.project_id)
     with get_connection() as conn:
         with conn.cursor() as cur:
             if request.event_ids is not None:
                 cur.execute(
                     """
                     SELECT event_id FROM execution_events
-                    WHERE status = 'VALIDATED' AND schedule_id = %s AND event_id = ANY(%s)
+                    WHERE status = 'VALIDATED' AND schedule_id = %s AND project_id = %s AND event_id = ANY(%s)
                     """,
-                    (resolved_schedule_id, request.event_ids),
+                    (resolved_schedule_id, project_id, request.event_ids),
                 )
             else:
                 cur.execute(
-                    "SELECT event_id FROM execution_events WHERE status = 'VALIDATED' AND schedule_id = %s",
-                    (resolved_schedule_id,),
+                    "SELECT event_id FROM execution_events WHERE status = 'VALIDATED' AND schedule_id = %s AND project_id = %s",
+                    (resolved_schedule_id, project_id),
                 )
             candidate_ids = [r["event_id"] for r in cur.fetchall()]
 
@@ -461,7 +518,7 @@ def bulk_approve(
         for event_id in ineligible:
             failed.append({
                 "event_id": event_id,
-                "error": "Not eligible for bulk-approve (status is not VALIDATED).",
+                "error": "Not eligible for bulk-approve (status is not VALIDATED, or not in this project's schedule).",
             })
 
     for event_id in candidate_ids:
@@ -469,11 +526,12 @@ def bulk_approve(
             _record_decision(
                 event_id=event_id,
                 action="APPROVE",
-                planner_id=current_user.id,
+                planner_id=str(project_context.user.id),
                 justification=BULK_APPROVE_JUSTIFICATION,
                 selected_activity_id=None,
                 approved_pct=None,
                 approved_qty=None,
+                project_context=project_context,
             )
             approved.append(event_id)
         except HTTPException as e:

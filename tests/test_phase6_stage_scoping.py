@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as_event
 from backend.services.matching_eligibility_service import (
     MatchingEligibilityService,
     REASON_STAGE_COMPLETED,
@@ -133,7 +134,8 @@ def test_completed_stage_match_endpoint_response():
         mock_cur.fetchone.return_value = mock_event
         mock_cur.fetchall.return_value = [mock_act]
 
-        resp = client.post("/api/v1/claims/EVT-STG-COMP/match")
+        with act_as_event(event_id="EVT-STG-COMP", schedule_id="SCHED-01", project_id=mock_event["project_id"]):
+            resp = client.post("/api/v1/claims/EVT-STG-COMP/match")
 
     assert resp.status_code == 200
     data = resp.json()

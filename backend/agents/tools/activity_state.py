@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from backend.shared.workflow_flags import with_workflow_flags
 from backend.context.project import ProjectContext
 from backend.services.stage_service import StageService
 from backend.shared.db import get_connection
@@ -33,14 +34,14 @@ def get_critical_and_blocked_activities(
                 SELECT sa.activity_id, sa.activity_name, sa.stage_id, sa.schedule_id,
                        sa.weight_factor, sa.quality_gate_required, sa.planned_start, sa.planned_finish,
                        aa.actual_pct_complete, aa.actual_start, aa.actual_finish, aa.is_reopened,
-                       ee.reopen_status,
+                       (SELECT ee.reopen_status FROM execution_events ee
+                         WHERE ee.matched_activity_id = sa.activity_id AND ee.schedule_id = sa.schedule_id
+                           AND ee.project_id = sa.project_id
+                         ORDER BY ee.event_date DESC, ee.created_at DESC LIMIT 1) AS reopen_status,
                        st.stage_name
                 FROM schedule_activities sa
                 LEFT JOIN stages st ON sa.stage_id = st.stage_id
-                LEFT JOIN approved_actuals aa ON sa.activity_id = aa.activity_id
-                     AND aa.project_id = %(project_id)s
-                LEFT JOIN execution_events ee ON sa.activity_id = ee.matched_activity_id
-                     AND ee.project_id = %(project_id)s AND ee.reopen_status = 'REQUESTED'
+                LEFT JOIN approved_actuals aa ON aa.schedule_id = sa.schedule_id AND aa.activity_id = sa.activity_id
                 WHERE sa.project_id = %(project_id)s
             """
             params: Dict[str, Any] = {"project_id": context.project_id}
@@ -48,7 +49,7 @@ def get_critical_and_blocked_activities(
                 query += " AND sa.schedule_id = %(schedule_id)s"
                 params["schedule_id"] = schedule_id
 
-            rows = conn.execute(query, params).fetchall()
+            rows = conn.execute(with_workflow_flags(query), params).fetchall()
 
             for r in rows:
                 item = dict(r)
@@ -104,14 +105,15 @@ def get_activity_state(
         with get_connection() as conn:
             query = """
                 SELECT sa.*, aa.actual_pct_complete, aa.actual_start, aa.actual_finish,
-                       aa.is_reopened, aa.approved_by, aa.approved_at,
-                       ee.reopen_status, st.stage_name
+                       aa.is_reopened, aa.created_at AS approved_at,
+                       (SELECT ee.reopen_status FROM execution_events ee
+                         WHERE ee.matched_activity_id = sa.activity_id AND ee.schedule_id = sa.schedule_id
+                           AND ee.project_id = sa.project_id
+                         ORDER BY ee.event_date DESC, ee.created_at DESC LIMIT 1) AS reopen_status,
+                       st.stage_name
                 FROM schedule_activities sa
                 LEFT JOIN stages st ON sa.stage_id = st.stage_id
-                LEFT JOIN approved_actuals aa ON sa.activity_id = aa.activity_id
-                     AND aa.project_id = %(project_id)s
-                LEFT JOIN execution_events ee ON sa.activity_id = ee.matched_activity_id
-                     AND ee.project_id = %(project_id)s AND ee.reopen_status = 'REQUESTED'
+                LEFT JOIN approved_actuals aa ON aa.schedule_id = sa.schedule_id AND aa.activity_id = sa.activity_id
                 WHERE sa.project_id = %(project_id)s AND sa.activity_id = %(activity_id)s
             """
             params: Dict[str, Any] = {"project_id": context.project_id, "activity_id": activity_id}
@@ -119,7 +121,7 @@ def get_activity_state(
                 query += " AND sa.schedule_id = %(schedule_id)s"
                 params["schedule_id"] = schedule_id
 
-            row = conn.execute(query, params).fetchone()
+            row = conn.execute(with_workflow_flags(query), params).fetchone()
             if not row:
                 return None
             item = dict(row)

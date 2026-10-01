@@ -46,6 +46,10 @@ from backend.routers import (
     memory,
     dossier,
     agent,
+    issues,
+    notifications,
+    project_dashboard,
+    batches,
 )
 
 from backend.shared.db import init_db
@@ -268,3 +272,7 @@ app.include_router(impact.router)
 app.include_router(memory.router)
 app.include_router(dossier.router)
 app.include_router(agent.router)
+app.include_router(issues.router)
+app.include_router(notifications.router)
+app.include_router(project_dashboard.router)
+app.include_router(batches.router)

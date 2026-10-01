@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import PROJECT_ID, act_as, fake_schedules
 from backend.routers.dashboard import query_dashboard_summary
 from backend.routers.graph import build_activity_graph
 from backend.routers.schedule import query_impact_preview
@@ -361,17 +362,21 @@ def _make_digest_test_db():
         """
         CREATE TABLE execution_events (
             event_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, event_date TEXT,
-            discipline TEXT, priority_score REAL, created_at TEXT, status TEXT
+            discipline TEXT, priority_score REAL, created_at TEXT, status TEXT, project_id TEXT
         )
         """
     )
     conn.execute(
-        "INSERT INTO execution_events (event_id, schedule_id, event_date, status, created_at) VALUES (?, ?, ?, ?, ?)",
-        ("EVT-A1", "SCHED_A", "2026-09-02", "VALIDATED", "2026-09-02 09:00:00"),
+        "INSERT INTO execution_events (event_id, schedule_id, event_date, status, created_at, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+        ("EVT-A1", "SCHED_A", "2026-09-02", "VALIDATED", "2026-09-02 09:00:00", str(PROJECT_ID)),
     )
     conn.execute(
-        "INSERT INTO execution_events (event_id, schedule_id, event_date, status, created_at) VALUES (?, ?, ?, ?, ?)",
-        ("EVT-B1", "SCHED_B", "2026-09-03", "VALIDATED", "2026-09-03 09:00:00"),
+        "INSERT INTO execution_events (event_id, schedule_id, event_date, status, created_at, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+        ("EVT-B1", "SCHED_B", "2026-09-03", "VALIDATED", "2026-09-03 09:00:00", str(PROJECT_ID)),
+    )
+    conn.execute(
+        "INSERT INTO execution_events (event_id, schedule_id, event_date, status, created_at, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+        ("EVT-OTHER-PROJECT", "SCHED_A", "2026-09-02", "VALIDATED", "2026-09-02 09:00:00", "99999999-9999-4999-8999-999999999999"),
     )
     conn.commit()
     return conn
@@ -381,35 +386,29 @@ def _supervisor():
     return UserProfile(id="22222222-2222-2222-2222-222222222222", full_name="Bob", role="SUPERVISOR")
 
 
-def test_digest_isolation_explicit_schedule_id():
-    """GET /api/v1/digest?schedule_id=... only returns that schedule's claims."""
+def test_digest_isolation_explicit_schedule_id(monkeypatch):
+    """GET /api/v1/digest?schedule_id=... returns only that schedule's claims AND only the caller's project's."""
     sqlite_conn = _make_digest_test_db()
     fake_conn = _DigestTestConn(sqlite_conn)
     client = TestClient(app)
-    app.dependency_overrides[get_current_user] = _supervisor
+    fake_schedules(monkeypatch, {"SCHED_A": str(PROJECT_ID), "SCHED_B": str(PROJECT_ID)})
 
     @contextmanager
     def _fake_get_connection():
         yield fake_conn
 
-    class _FakeSchedule:
-        def __init__(self, schedule_id):
-            self.schedule_id = schedule_id
+    with act_as("SUPERVISOR", schedule_id=None), patch("backend.routers.decisions.get_connection", _fake_get_connection):
+        resp_a = client.get("/api/v1/digest?schedule_id=SCHED_A", headers={"Authorization": "Bearer x"})
+        assert resp_a.status_code == 200
+        ids_a = {row["event_id"] for row in resp_a.json()}
+        assert ids_a == {"EVT-A1"}, "another project's event in the same schedule id must not appear"
 
-    try:
-        with patch("backend.routers.decisions.get_connection", _fake_get_connection), \
-             patch("backend.shared.schedule_context.get_schedule", lambda sid: _FakeSchedule(sid)):
-            resp_a = client.get("/api/v1/digest?schedule_id=SCHED_A", headers={"Authorization": "Bearer x"})
-            assert resp_a.status_code == 200
-            ids_a = {row["event_id"] for row in resp_a.json()}
-            assert ids_a == {"EVT-A1"}
+        resp_b = client.get("/api/v1/digest?schedule_id=SCHED_B", headers={"Authorization": "Bearer x"})
+        assert resp_b.status_code == 200
+        assert {row["event_id"] for row in resp_b.json()} == {"EVT-B1"}
 
-            resp_b = client.get("/api/v1/digest?schedule_id=SCHED_B", headers={"Authorization": "Bearer x"})
-            assert resp_b.status_code == 200
-            ids_b = {row["event_id"] for row in resp_b.json()}
-            assert ids_b == {"EVT-B1"}
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
+        # no schedule -> rejected, never "the active one"
+        assert client.get("/api/v1/digest", headers={"Authorization": "Bearer x"}).status_code == 400
 
 
 # ── Feature 31 Evidence Fusion isolation (ISS-05) ───────────────────────────

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.context.project import ProjectContext
 from backend.dossier.schemas import AuditChainVerificationResult
-from backend.shared.audit import GENESIS_HASH, verify_audit_chain
+from backend.shared.audit import GENESIS_HASH, verify_audit_chain, verify_project_chain_rows
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,31 @@ class AuditVerifier:
         context: ProjectContext,
         schedule_id: Optional[str] = None,
     ) -> AuditChainVerificationResult:
-        """Convenience method that queries DB and verifies the chain."""
-        logs = cls.fetch_audit_logs(context=context, schedule_id=schedule_id)
-        return cls.verify_chain(logs, allow_subchain=True)
+        """
+        Verifies the project's COMPLETE audit sequence (never a filtered subset: links can only be checked over
+        consecutive rows). Reports the V7 verified chain separately from legacy / pre-V7 history and pinpoints
+        tampering or a missing link. Read-only: nothing is repaired.
+        """
+        logs = cls.fetch_all_project_logs(context)
+        res = verify_project_chain_rows(logs)
+        return AuditChainVerificationResult(verified_at=datetime.utcnow(), **res)
+
+    @classmethod
+    def fetch_all_project_logs(cls, context: ProjectContext) -> List[Dict[str, Any]]:
+        """Every audit row of the project, ascending, in keyset-paginated batches (no silent truncation)."""
+        out: List[Dict[str, Any]] = []
+        last = 0
+        with get_connection() as conn:
+            while True:
+                rows = conn.execute(
+                    """
+                    SELECT log_id, entity_type, entity_id, action, actor_id, before_state, after_state, payload_hash,
+                           previous_hash, current_hash, timestamp, project_id, schedule_id, role, entity_context
+                    FROM audit_logs WHERE project_id = %s AND log_id > %s ORDER BY log_id ASC LIMIT 2000
+                    """,
+                    (context.project_id, last),
+                ).fetchall()
+                if not rows:
+                    return out
+                out.extend(dict(r) for r in rows)
+                last = out[-1]["log_id"]

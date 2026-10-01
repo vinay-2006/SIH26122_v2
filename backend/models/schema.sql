@@ -249,21 +249,11 @@ CREATE INDEX IF NOT EXISTS idx_claim_activity_splits_event ON claim_activity_spl
 CREATE INDEX IF NOT EXISTS idx_evidence_links_a ON evidence_links (event_id_a);
 CREATE INDEX IF NOT EXISTS idx_evidence_links_b ON evidence_links (event_id_b);
 
--- Row Level Security: same model as migration 001 (backend connects as the owning role and
--- bypasses RLS; PostgREST anon gets default-deny, authenticated gets read-only).
+-- Row Level Security: enabled here; policies are defined in migrations (see below).
 ALTER TABLE claim_activity_splits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE evidence_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE execution_summaries ENABLE ROW LEVEL SECURITY;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'authenticated_activity_splits_select') THEN
-        CREATE POLICY "authenticated_activity_splits_select" ON claim_activity_splits FOR SELECT TO authenticated USING (true);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'authenticated_evidence_links_select') THEN
-        CREATE POLICY "authenticated_evidence_links_select" ON evidence_links FOR SELECT TO authenticated USING (true);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'authenticated_execution_summaries_select') THEN
-        CREATE POLICY "authenticated_execution_summaries_select" ON execution_summaries FOR SELECT TO authenticated USING (true);
-    END IF;
-END $$;
+-- No client-facing policies are created here any more. The former USING (true) SELECT policies
+-- leaked rows across projects and were re-created on every startup by init_db().
+-- Project-scoped policies live in migrations 011 and 013; execution_summaries is service-connection only.

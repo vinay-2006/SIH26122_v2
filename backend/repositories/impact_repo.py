@@ -10,6 +10,7 @@ import json
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from backend.shared.workflow_flags import with_workflow_flags
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.repositories.base import BaseRepository
@@ -85,7 +86,7 @@ class ProjectImpactRepository(BaseRepository):
 
         with cls.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:
-                cur.execute(act_query, params)
+                cur.execute(with_workflow_flags(act_query), params)
                 activities = [dict(r) for r in cur.fetchall()]
 
                 cur.execute(dep_query, params)

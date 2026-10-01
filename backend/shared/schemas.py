@@ -78,6 +78,10 @@ class Discipline(str, Enum):
     ELECTRICAL = "ELECTRICAL"
     INSTRUMENTATION = "INSTRUMENTATION"
     HSE = "HSE"
+    STRUCTURAL = "STRUCTURAL"
+    PROCESS = "PROCESS"
+    DRILLING = "DRILLING"
+    LOGISTICS = "LOGISTICS"
 
 
 class EventType(str, Enum):

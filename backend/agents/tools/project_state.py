@@ -41,18 +41,30 @@ def get_project_status(context: ProjectContext) -> Dict[str, Any]:
 
 
 def get_active_schedule(context: ProjectContext) -> Optional[Dict[str, Any]]:
-    """Retrieves the active schedule version for the project."""
+    """Retrieves the project's active schedule version.
+
+    V7 expects exactly one active schedule per project. If there are several, this returns None
+    (reported as unavailable) rather than silently picking one, so the briefing never presents
+    numbers from an arbitrary schedule version."""
     try:
         with get_connection() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT schedule_id, version_code, active, created_at, version_metadata
                 FROM schedules
                 WHERE project_id = %(project_id)s AND active = TRUE
-                LIMIT 1
+                ORDER BY schedule_id
+                LIMIT 2
                 """,
                 {"project_id": context.project_id},
-            ).fetchone()
+            ).fetchall()
+            if len(rows) > 1:
+                logger.error(
+                    "[project_state_tool] project %s has multiple active schedules; refusing to pick one",
+                    context.project_id,
+                )
+                return None
+            row = rows[0] if rows else None
             if not row:
                 return None
             res = dict(row)

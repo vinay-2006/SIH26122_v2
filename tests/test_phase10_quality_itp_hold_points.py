@@ -182,9 +182,14 @@ def phase10_fixture():
 
     # Cleanup
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM quality_evidence;")
-        cur.execute("DELETE FROM quality_gates;")
-        cur.execute("DELETE FROM itps;")
+        # Scoped to this test's own projects: an unscoped DELETE wipes every project's quality data.
+        cur.execute(
+            "DELETE FROM quality_evidence WHERE quality_gate_id IN "
+            "(SELECT quality_gate_id FROM quality_gates WHERE project_id IN (%s, %s));",
+            (proj_a, proj_b),
+        )
+        cur.execute("DELETE FROM quality_gates WHERE project_id IN (%s, %s);", (proj_a, proj_b))
+        cur.execute("DELETE FROM itps WHERE project_id IN (%s, %s);", (proj_a, proj_b))
         cur.execute("DELETE FROM audit_logs WHERE project_id IN (%s, %s);", (proj_a, proj_b))
         cur.execute("DELETE FROM work_packages WHERE project_id IN (%s, %s);", (proj_a, proj_b))
         cur.execute("DELETE FROM contractors WHERE project_id IN (%s, %s);", (proj_a, proj_b))
@@ -509,8 +514,19 @@ def test_13_satisfied_hold_point_clears_block(phase10_fixture):
     )
     gate_id = gate_res.json()["quality_gate_id"]
 
-    # Pass the hold point
-    client.post(f"/api/v1/projects/{proj_a}/quality-gates/{gate_id}/pass", headers=headers)
+    # INTENTIONALLY CHANGED (evidence rule): a required HOLD point is released on a PASS inspection record, not on assertion.
+    refused = client.post(f"/api/v1/projects/{proj_a}/quality-gates/{gate_id}/pass", headers=headers)
+    assert refused.status_code == 409 and refused.json()["detail"]["error_code"] == "EVIDENCE_REQUIRED"
+    still = client.get(f"/api/v1/projects/{proj_a}/activities/ACT-101/quality-status", headers=headers).json()
+    assert still["has_active_hold_point"] is True
+
+    ev = client.post(
+        f"/api/v1/projects/{proj_a}/quality-gates/{gate_id}/evidence",
+        json={"evidence_type": "CLIENT_APPROVAL", "result": "PASS", "inspector_name": "Client QA"},
+        headers=headers,
+    )
+    assert ev.status_code == 201
+    assert client.post(f"/api/v1/projects/{proj_a}/quality-gates/{gate_id}/pass", headers=headers).status_code == 200
 
     res = client.get(f"/api/v1/projects/{proj_a}/activities/ACT-101/quality-status", headers=headers)
     data = res.json()

@@ -164,6 +164,18 @@ class ReopenService:
         return res
 
     @classmethod
+    def list_reopen_requests(cls, context: ScheduleContext, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Reopen lifecycle of every activity of this schedule that has ever had a reopen request (latest state each)."""
+        if not (has_permission(context.role, Permission.VIEW_SCHEDULE) or has_permission(context.role, Permission.VIEW_AUDIT)):
+            raise_permission_denied(Permission.VIEW_SCHEDULE.value, context.role)
+        out: List[Dict[str, Any]] = []
+        for activity_id in ProjectReopenRepository.list_reopen_activity_ids(context):
+            res = ProjectReopenRepository.get_reopen_status(context, activity_id)
+            if res and res.get("reopen_status") not in (None, "NONE") and (not status_filter or res["reopen_status"] == status_filter):
+                out.append(res)
+        return out
+
+    @classmethod
     def get_actual_history(
         cls,
         context: ScheduleContext,

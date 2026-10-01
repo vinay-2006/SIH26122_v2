@@ -85,41 +85,38 @@ def test_invalid_token_rejected():
 
 def test_site_engineer_forbidden():
     """
-    SITE_ENGINEER must be rejected with 403 Forbidden. Only SUPERVISOR allowed.
+    A SITE_ENGINEER (project role without REVIEW_CLAIM) must be rejected with 403.
     """
+    from tests.v7ctx import act_as
+
     client = TestClient(app)
-    engineer_user = UserProfile(
-        id="11111111-1111-1111-1111-111111111111",
-        full_name="Alice Engineer",
-        role="SITE_ENGINEER",
-    )
-    app.dependency_overrides[get_current_user] = lambda: engineer_user
-    try:
-        resp = client.get(
-            "/api/v1/export/csv",
-            headers={"Authorization": "Bearer mocked-engineer-token"},
-        )
-        assert resp.status_code == 403, f"Expected 403 for SITE_ENGINEER, got {resp.status_code}"
-    finally:
-        app.dependency_overrides.clear()
+    with act_as("SITE_ENGINEER"):
+        resp = client.get("/api/v1/export/csv", headers={"Authorization": "Bearer mocked-engineer-token"})
+    assert resp.status_code == 403, f"Expected 403 for SITE_ENGINEER, got {resp.status_code}"
+
+
+def test_export_requires_explicit_project_and_schedule():
+    from tests.v7ctx import act_as
+
+    client = TestClient(app)
+    with act_as("SUPERVISOR", schedule_id=None):  # real schedule resolution: none supplied
+        resp = client.get("/api/v1/export/csv", headers={"Authorization": "Bearer t"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["error_code"] == "INVALID_SCHEDULE_CONTEXT"
 
 
 def test_supervisor_authorized(monkeypatch):
     """
-    SUPERVISOR role is authorized to export CSV.
+    SUPERVISOR project role is authorized to export CSV of an explicit schedule of its project.
     """
-    client = TestClient(app)
-    supervisor_user = UserProfile(
-        id="22222222-2222-2222-2222-222222222222",
-        full_name="Bob Supervisor",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor_user
+    from tests.v7ctx import act_as
 
-    # Mock query function to avoid requiring a live Postgres DB during HTTP endpoint test
-    monkeypatch.setattr(
-        "backend.routers.export.query_approved_actuals_for_export",
-        lambda schedule_id=None: [
+    client = TestClient(app)
+    captured = {}
+
+    def _query(schedule_id=None, project_id=None):
+        captured.update(schedule_id=schedule_id, project_id=project_id)
+        return [
             {
                 "activity_id": "CIV-001",
                 "actual_start": "2026-08-01",
@@ -127,24 +124,21 @@ def test_supervisor_authorized(monkeypatch):
                 "actual_pct_complete": 100.0,
                 "actual_quantity": 40.0,
             }
-        ],
-    )
+        ]
 
-    try:
-        resp = client.get(
-            "/api/v1/export/csv",
-            headers={"Authorization": "Bearer mocked-supervisor-token"},
-        )
-        assert resp.status_code == 200
-        assert "text/csv" in resp.headers["content-type"]
-        assert 'filename="approved_actuals.csv"' in resp.headers["content-disposition"]
-        content = resp.text
-        lines = content.strip().split("\r\n")
-        assert len(lines) == 2
-        assert lines[0] == "activity_id,actual_start,actual_finish,actual_pct_complete,actual_quantity"
-        assert lines[1] == "CIV-001,2026-08-01,2026-08-10,100,40"
-    finally:
-        app.dependency_overrides.clear()
+    # Mock query function to avoid requiring a live Postgres DB during HTTP endpoint test
+    monkeypatch.setattr("backend.routers.export.query_approved_actuals_for_export", _query)
+
+    with act_as("SUPERVISOR", schedule_id="SCH-EXPORT"):
+        resp = client.get("/api/v1/export/csv", headers={"Authorization": "Bearer mocked-supervisor-token"})
+    assert resp.status_code == 200
+    assert captured["schedule_id"] == "SCH-EXPORT" and captured["project_id"]
+    assert "text/csv" in resp.headers["content-type"]
+    assert 'filename="approved_actuals.csv"' in resp.headers["content-disposition"]
+    lines = resp.text.strip().split("\r\n")
+    assert len(lines) == 2
+    assert lines[0] == "activity_id,actual_start,actual_finish,actual_pct_complete,actual_quantity"
+    assert lines[1] == "CIV-001,2026-08-01,2026-08-10,100,40"
 
 
 # =========================================================================

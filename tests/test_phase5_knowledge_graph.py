@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as
 from backend.routers.graph import build_activity_graph
 from backend.shared.auth import UserProfile, get_current_user
 
@@ -380,8 +381,8 @@ def test_graph_05_cycle_protection():
 # ==============================================================================
 def test_graph_06_authentication(monkeypatch):
     """
-    GRAPH-06: Unauthenticated access is rejected with HTTP 401.
-    Authenticated access (SITE_ENGINEER and SUPERVISOR) succeeds.
+    GRAPH-06: Unauthenticated access is rejected with HTTP 401. Authorization is by PROJECT role
+    (VIEW_EXECUTION_EVENTS) on an explicit schedule of the caller's project.
     """
     client = TestClient(app)
 
@@ -389,54 +390,23 @@ def test_graph_06_authentication(monkeypatch):
     resp_unauth = client.get("/api/v1/graph/activity/ACT-TEST-01")
     assert resp_unauth.status_code == 401, f"Expected 401, got {resp_unauth.status_code}"
 
-    # 2. Site Engineer authorized -> 200 (mocking graph builder response)
-    engineer_user = UserProfile(
-        id="11111111-1111-1111-1111-111111111111",
-        full_name="Alice Engineer",
-        role="SITE_ENGINEER",
-    )
-    app.dependency_overrides[get_current_user] = lambda: engineer_user
+    captured = {}
 
-    monkeypatch.setattr(
-        "backend.routers.graph.build_activity_graph",
-        lambda activity_id, depth=1, schedule_id=None: {
-            "nodes": [{"id": f"activity:{activity_id}", "type": "activity", "data": {}}],
-            "edges": [],
-        },
-    )
+    def _graph(activity_id, depth=1, schedule_id=None):
+        captured["schedule_id"] = schedule_id
+        return {"nodes": [{"id": f"activity:{activity_id}", "type": "activity", "data": {}}], "edges": []}
 
-    try:
-        resp_eng = client.get(
-            "/api/v1/graph/activity/ACT-TEST-01",
-            headers={"Authorization": "Bearer mock-eng-token"},
-        )
-        assert resp_eng.status_code == 200
-        assert resp_eng.json()["nodes"][0]["id"] == "activity:ACT-TEST-01"
+    monkeypatch.setattr("backend.routers.graph.build_activity_graph", _graph)
 
-        # 3. Supervisor authorized -> 200
-        supervisor_user = UserProfile(
-            id="22222222-2222-2222-2222-222222222222",
-            full_name="Bob Supervisor",
-            role="SUPERVISOR",
-        )
-        app.dependency_overrides[get_current_user] = lambda: supervisor_user
-        resp_sup = client.get(
-            "/api/v1/graph/activity/ACT-TEST-01",
-            headers={"Authorization": "Bearer mock-sup-token"},
-        )
-        assert resp_sup.status_code == 200
+    # 2. Site engineer and supervisor authorized -> 200, scoped to the validated schedule
+    for role in ("SITE_ENGINEER", "SUPERVISOR"):
+        with act_as(role, schedule_id="SCH-G"):
+            resp = client.get("/api/v1/graph/activity/ACT-TEST-01", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 200, role
+        assert resp.json()["nodes"][0]["id"] == "activity:ACT-TEST-01"
+        assert captured["schedule_id"] == "SCH-G"
 
-        # 4. Unknown role forbidden -> 403
-        unknown_user = UserProfile(
-            id="33333333-3333-3333-3333-333333333333",
-            full_name="Eve Visitor",
-            role="AUDITOR",
-        )
-        app.dependency_overrides[get_current_user] = lambda: unknown_user
-        resp_forbid = client.get(
-            "/api/v1/graph/activity/ACT-TEST-01",
-            headers={"Authorization": "Bearer mock-auditor-token"},
-        )
-        assert resp_forbid.status_code == 403
-    finally:
-        app.dependency_overrides.clear()
+    # 3. A project role without VIEW_EXECUTION_EVENTS -> 403
+    with act_as("VIEWER", schedule_id="SCH-G"):
+        resp_forbid = client.get("/api/v1/graph/activity/ACT-TEST-01", headers={"Authorization": "Bearer t"})
+    assert resp_forbid.status_code == 403

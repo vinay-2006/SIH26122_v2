@@ -47,7 +47,7 @@ from openai import OpenAI
 
 from backend.shared import llm_client
 from backend.shared.llm_client import strip_code_fences
-from backend.shared.rule_extraction import extract_with_rules, fallback_enabled
+from backend.shared.rule_extraction import extract_with_rules, extract_with_rules_batch, fallback_enabled
 from backend.shared.schemas import ExtractedClaimFields
 
 logger = logging.getLogger(__name__)
@@ -330,7 +330,7 @@ def extract_claim_fields_batch(raw_text: str) -> list[ExtractedClaimFields]:
         err = e if isinstance(e, LLMExtractionError) else LLMExtractionError(f"LLM request failed: {e}")
         if fallback_enabled():
             logger.warning("LLM batch extraction unavailable (%s); using rule-based fallback", err)
-            return [extract_with_rules(raw_text)]
+            return extract_with_rules_batch(raw_text)  # one claim per reported item, not one per document
         if err is e:
             raise
         raise err from e

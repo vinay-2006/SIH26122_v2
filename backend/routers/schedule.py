@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from backend.shared.auth import UserProfile, require_role
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -375,16 +376,15 @@ def query_impact_preview(
 def get_impact_preview(
     activity_id: str,
     delay_days: int = Query(..., ge=0, description="Hypothetical delay in days"),
-    schedule_id: Optional[str] = Query(None, description="Schedule context"),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
-    Downstream schedule impact preview for an activity and hypothetical delay.
-    One-level traversal of direct FS successors with shifted earliest-start estimate.
-    Restricted to SUPERVISOR role.
+    LEGACY quick impact preview (V6 shape) within an EXPLICIT schedule of the caller's project.
+    The V7 compound-impact engine is /projects/{project_id}/schedules/{schedule_id}/impact/*.
     """
     try:
-        return query_impact_preview(activity_id=activity_id, delay_days=delay_days, schedule_id=schedule_id)
+        return query_impact_preview(activity_id=activity_id, delay_days=delay_days, schedule_id=schedule_context.schedule_id)
     except HTTPException:
         raise
     except Exception as e:

@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as_event
 from backend.routers.matching import match_claim, match_exact_id
 from backend.services.matching_eligibility_service import (
     MatchingEligibilityService,
@@ -125,7 +126,8 @@ def test_missing_schedule_context_rejected_400():
         mock_conn.cursor.return_value.__enter__.return_value = mock_cur
         mock_cur.fetchone.return_value = mock_event
 
-        resp = client.post("/api/v1/claims/EVT-NO-SCHED/match")
+        with act_as_event(event_id="EVT-NO-SCHED", schedule_id=None, project_id=mock_event["project_id"]):
+            resp = client.post("/api/v1/claims/EVT-NO-SCHED/match")
 
     assert resp.status_code == 400
     assert "INVALID_SCHEDULE_CONTEXT" in resp.json()["detail"]
