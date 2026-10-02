@@ -8,7 +8,8 @@ from v2world import TODAY, add_activity, as_actor, build_world, fails, one, sysm
 
 def test_all_migrations_recorded_and_marker_present(conn):
     rows = [r["version"] for r in conn.execute("select version from public.schema_migrations order by version").fetchall()]
-    assert rows == sorted(rows) and len(rows) == 8 and rows[0].startswith("0001_") and rows[-1].startswith("0008_")
+    assert rows == sorted(rows) and len(rows) >= 8 and rows[0].startswith("0001_")
+    assert [r[:4] for r in rows] == [f"{i:04d}" for i in range(1, len(rows) + 1)]       # contiguous, no gaps or duplicates
     assert one(conn, "select value from public._setuai_env where key='env'") == "integration"
 
 

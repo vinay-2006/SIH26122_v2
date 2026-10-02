@@ -39,7 +39,7 @@ DB_WRITE = {
     # clean-schema (db/migrations) suite: runs only against the isolated setuai_v2_integ database; each test rolls back
     "tests/db_v2/test_schema_and_constraints.py", "tests/db_v2/test_ledger_and_progress.py",
     "tests/db_v2/test_roles_and_authorization.py", "tests/db_v2/test_versioning.py", "tests/db_v2/test_rls.py",
-    "tests/db_v2/test_runner_and_isolation.py",
+    "tests/db_v2/test_runner_and_isolation.py", "tests/db_v2/test_import_staging_migrations.py",
     "backend/routers/test_schedules.py", "backend/shared/test_schedule_index.py",
     "backend/shared/test_schedule_repository_integration.py", "backend/test_m2_intake.py",
     "backend/test_p0_stabilization.py",
