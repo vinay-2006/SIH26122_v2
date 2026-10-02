@@ -18,6 +18,7 @@ so approved_actuals stays the single authoritative source of actual progress.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import uuid
@@ -28,7 +29,7 @@ from typing import Dict, List, Optional
 import psycopg
 import psycopg.rows
 
-from backend.prototype_seed import data
+from backend.prototype_seed import data, history as hist
 from backend.prototype_seed.data import Act, Project
 from backend.services.issue_service import _ISSUE_SQL, promote_issue_to_memory
 from backend.services.notification_service import insert_decision_notification
@@ -46,22 +47,11 @@ def _ts(day: date, hour: int = 9) -> datetime:
     return datetime.combine(day, time(hour, 0), tzinfo=timezone.utc)
 
 
-def _j(code: str, mod: int) -> int:
-    """deterministic small jitter from a code"""
-    return zlib.crc32(code.encode()) % mod
-
-
 UID = {"engineer": _id("user:engineer"), "supervisor": _id("user:supervisor")}
 USERS = {
     "engineer": ("engineer@setuai.demo", "Demo Site Engineer", "SITE_ENGINEER"),
     "supervisor": ("supervisor@setuai.demo", "Demo Supervisor", "SUPERVISOR"),
 }
-APPROVE_COMMENTS = [
-    "Verified against the daily site record and photographs.",
-    "Quantity matches the measurement book; approved.",
-    "Consistent with the contractor's joint measurement.",
-    "Checked on site by the supervisor; approved as reported.",
-]
 
 
 def _connect():
@@ -76,32 +66,84 @@ def _stage_status(acts: List[Act]) -> str:
     return "IN_PROGRESS"
 
 
+_STATUS = {"APPROVE": "APPROVED", "EDIT": "EDITED", "REJECT": "REJECTED", "HOLD": "HOLD"}
+_REPORT_KINDS = {  # kind -> (title, extension, document_type, input channel, extraction method)
+    "DSR": ("DSR", "pdf", "DPR", "FILE_UPLOAD", "LLM"),
+    "WPR": ("WPR", "xlsx", "DPR", "FILE_UPLOAD", "STRUCTURED"),
+    "DIARY": ("DIARY", "jpg", "SCANNED_DIARY", "SCANNED_OCR", "LLM"),
+    "MBOOK": ("MBOOK", "pdf", "MBOOK", "FILE_UPLOAD", "STRUCTURED"),
+}
+
+
+def _report_document(cur, p: Project, pid: str, kind: str, day: date) -> tuple:
+    """The report file a claim came from. One file per (kind, report date), so one daily report backs every activity it covers."""
+    title, ext, doc_type, _, method = _REPORT_KINDS[kind]
+    report_day = day
+    if kind == "WPR":   # a weekly report is dated the Friday that closes the week, never after the data date
+        report_day = min(day + timedelta(days=(4 - day.weekday()) % 7), p.data_date)
+        fname = f"WPR_{p.code}_{report_day:%G}-W{report_day:%V}.{ext}"
+    else:
+        fname = f"{title}_{p.code}_{day:%Y-%m-%d}.{ext}"
+    doc_id = _id(f"doc:{p.code}:{fname}")
+    cur.execute(
+        "INSERT INTO source_documents (document_id, file_name, document_type, uploader_id, file_hash, uploaded_at, project_id, "
+        "extraction_status, extraction_method) VALUES (%s, %s, %s, %s, %s, %s, %s, 'EXTRACTED', %s) ON CONFLICT DO NOTHING",
+        (doc_id, fname, doc_type, UID["engineer"], hashlib.sha256(fname.encode()).hexdigest(), _ts(report_day, 18), pid, method),
+    )
+    return doc_id, fname
+
+
 def _decision(cur, *, p: Project, pid: str, sid: Dict[str, str], act: Act, stage_code: str, key: str, action: str,
               claimed: float, approved: Optional[float], day: date, text: str, comment: str,
-              actual_start: Optional[date], actual_finish: Optional[date], notify: str) -> None:
-    """One field claim + supervisor decision (+ approved actual for APPROVE/EDIT) + audit + notification."""
-    status = {"APPROVE": "APPROVED", "EDIT": "EDITED", "REJECT": "REJECTED", "HOLD": "HOLD"}[action]
+              actual_start: Optional[date], actual_finish: Optional[date], notify: str,
+              event_type: Optional[str] = None, source: str = "TYPED", corroborated_by: Optional[str] = None,
+              decision_lag: int = 0, write_actual: bool = True) -> None:
+    """One field claim (from a report file or typed) + supervisor decision (+ approved actual when it is the latest state) + audit."""
+    status = _STATUS[action]
     ev, dec = _id(f"event:{p.code}:{key}"), _id(f"decision:{p.code}:{key}")
-    decided_at = _ts(day, 17)
+    decided_at = _ts(day + timedelta(days=decision_lag), 17)
+    channel, doc_id, refs = "TYPED_TEXT", None, []
+    if source in _REPORT_KINDS:
+        channel = _REPORT_KINDS[source][3]
+        doc_id, fname = _report_document(cur, p, pid, source, day)
+        refs.append((doc_id, fname))
+        if corroborated_by in _REPORT_KINDS and corroborated_by != source:   # a second report mentions the same event
+            refs.append(_report_document(cur, p, pid, corroborated_by, day))
+    etype = event_type or ("ACTUAL_FINISH" if claimed >= 100 else "PROGRESS_UPDATE")
     cur.execute(
-        "INSERT INTO execution_events (event_id, schedule_id, project_id, event_date, raw_claim_text, input_channel, "
+        "INSERT INTO execution_events (event_id, document_id, schedule_id, project_id, event_date, raw_claim_text, input_channel, "
         "reported_activity_id, matched_activity_id, discipline, claim_mode, claimed_pct, status, supervisor_id, stage_id, "
         "location, event_type, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, 'TYPED_TEXT', %s, %s, %s, 'CUMULATIVE_PCT', %s, %s, %s, %s, %s, %s, %s) "
-        "ON CONFLICT DO NOTHING",
-        (ev, p.schedule_id, pid, day, text, act.code, act.code, act.discipline, claimed, status, UID["engineer"],
-         sid[stage_code], act.location, "ACTUAL_FINISH" if claimed >= 100 else "PROGRESS_UPDATE", _ts(day, 9)),
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CUMULATIVE_PCT', %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (event_id) DO UPDATE SET document_id = EXCLUDED.document_id, event_date = EXCLUDED.event_date, "
+        "raw_claim_text = EXCLUDED.raw_claim_text, input_channel = EXCLUDED.input_channel, claimed_pct = EXCLUDED.claimed_pct, "
+        "status = EXCLUDED.status, event_type = EXCLUDED.event_type, created_at = EXCLUDED.created_at",
+        (ev, doc_id, p.schedule_id, pid, day, text, channel, act.code, act.code, act.discipline, claimed, status,
+         UID["engineer"], sid[stage_code], act.location, etype, _ts(day, 9)),
     )
+    for d_id, fname in refs:
+        cur.execute(
+            "INSERT INTO source_references (reference_id, event_id, file_name, raw_snippet, document_id) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+            (_id(f"ref:{ev}:{d_id}"), ev, fname, text[:2000], d_id),
+        )
     cur.execute(
         "INSERT INTO planner_decisions (decision_id, event_id, selected_activity_id, action, approved_pct, planner_id, "
-        "justification, decided_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+        "justification, decided_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (decision_id) DO UPDATE SET action = EXCLUDED.action, approved_pct = EXCLUDED.approved_pct, "
+        "justification = EXCLUDED.justification, decided_at = EXCLUDED.decided_at",
         (dec, ev, act.code, action, approved, UID["supervisor"], comment, decided_at),
     )
-    if action in ("APPROVE", "EDIT"):
+    if action in ("APPROVE", "EDIT") and write_actual:
+        # approved_actuals holds ONLY the latest approved state of the activity (one row, upserted); the history of how it
+        # got there is this chain of claims and decisions
         cur.execute(
             "INSERT INTO approved_actuals (actual_id, decision_id, event_id, schedule_id, activity_id, project_id, stage_id, "
             "actual_start, actual_finish, actual_pct_complete, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (schedule_id, activity_id) DO UPDATE SET decision_id = EXCLUDED.decision_id, event_id = EXCLUDED.event_id, "
+            "actual_start = EXCLUDED.actual_start, actual_finish = EXCLUDED.actual_finish, "
+            "actual_pct_complete = EXCLUDED.actual_pct_complete, created_at = EXCLUDED.created_at",
             (_id(f"actual:{p.code}:{act.code}"), dec, ev, p.schedule_id, act.code, pid, sid[stage_code],
              actual_start, actual_finish, approved, decided_at),
         )
@@ -189,35 +231,66 @@ def seed_project(cur, p: Project, ordinal: int) -> None:
             )
         prev_stage_first, prev_stage_last = s.acts[0], s.acts[-1]
 
-    # ---- execution: every activity with progress gets a real claim -> decision -> approved actual
-    special = {c.activity for c in p.claims if c.action == "EDIT"}   # their authoritative decision is the EDIT claim
-    approved_keys: List[tuple] = []
+    # ---- execution: every activity with progress gets its OWN chronological history of claims, each reviewed by the
+    # supervisor; the latest claim carries the state the dashboards read (approved_actuals), the earlier ones are history
+    edit_claims = {c.activity: c for c in p.claims if c.action == "EDIT"}   # their latest decision is this EDIT claim
+    plans: List[tuple] = []
     for s in p.stages:
         for a in s.acts:
-            if a.pct <= 0 or a.code in special:
+            if a.pct <= 0:
                 continue
-            start = min(a.start + timedelta(days=_j(a.code, 7)), p.data_date)
-            if a.pct >= 100:
-                finish = min(a.finish + timedelta(days=_j(a.code + "f", 11) - 3), p.data_date)
-                finish = max(finish, start)
-                day = finish
+            start, finish, final_day = data.execution_window(p, a)
+            edit = edit_claims.get(a.code)
+            if edit is not None:
+                final_day = max(start, edit.day)
+            issues = [hist.IssueWindow(i.reported, i.resolved, i.title, i.blocks_work) for i in p.issues if i.activity == a.code]
+            claims = hist.build_history(
+                project_code=p.code, activity_code=a.code, name=a.name, description=a.description, discipline=a.discipline,
+                location=a.location, qty=a.qty, uom=a.uom, start=start, final_day=final_day, final_pct=int(a.pct),
+                data_date=p.data_date, issues=issues)
+            if edit is not None:   # the EDIT claim below IS the latest accepted claim of this activity
+                last = max(i for i, c in enumerate(claims) if c.accepted)
+                claims.pop(last)
+            plans.append((a, s.code, start, finish, final_day, claims, edit is not None))
+    finals = sorted((fd, a.code) for a, _, _, _, fd, _, _ in plans)
+    recent = {code for _, code in finals[-3:]} if p.lifecycle == "ONGOING" else set()
+    written_keys: List[str] = []
+    for a, scode, start, finish, final_day, claims, has_edit in plans:
+        accepted = [c for c in claims if c.accepted]
+        k = rej = 0
+        for c in claims:
+            if c.accepted:
+                is_final = (not has_edit) and c is accepted[-1]
+                key = f"approved:{a.code}" if is_final else f"hist:{a.code}:{k:02d}"
+                k += 1
             else:
-                finish = None
-                day = max(start, p.data_date - timedelta(days=1 + _j(a.code + "d", 9)))
-            text = f"{a.name} completed" if a.pct >= 100 else f"{a.name} {a.pct:g} percent complete"
-            approved_keys.append((day, a, s.code, text, start, finish))
-    approved_keys.sort(key=lambda t: (t[0], t[1].code))
-    recent = {t[1].code for t in approved_keys[-3:]} if p.lifecycle == "ONGOING" else set()
-    for day, a, scode, text, start, finish in approved_keys:
-        _decision(cur, p=p, pid=pid, sid=sid, act=a, stage_code=scode, key=f"approved:{a.code}", action="APPROVE",
-                  claimed=a.pct, approved=a.pct, day=day, text=text, comment=APPROVE_COMMENTS[_j(a.code, len(APPROVE_COMMENTS))],
-                  actual_start=start, actual_finish=finish, notify="unread" if a.code in recent else "none")
+                is_final, key = False, f"hist:{a.code}:rej{rej}"
+                rej += 1
+            written_keys.append(key)
+            _decision(cur, p=p, pid=pid, sid=sid, act=a, stage_code=scode, key=key, action=c.action,
+                      claimed=c.claimed, approved=c.pct if c.accepted else None, day=c.day, text=c.text, comment=c.comment,
+                      actual_start=start, actual_finish=finish if is_final else None,
+                      notify="unread" if (is_final and a.code in recent) else "none", event_type=c.event_type,
+                      source=c.source, corroborated_by=c.corroborated_by, decision_lag=c.decision_lag, write_actual=is_final)
     for c in p.claims:
         a, scode = by_code[c.activity]
-        start = min(a.start + timedelta(days=_j(a.code, 7)), p.data_date)
+        start, _, _ = data.execution_window(p, a)
         _decision(cur, p=p, pid=pid, sid=sid, act=a, stage_code=scode, key=f"claim:{c.key}", action=c.action,
                   claimed=c.claimed_pct, approved=c.approved_pct, day=c.day, text=c.text, comment=c.comment,
                   actual_start=start, actual_finish=None, notify="unread")
+    # prune history written by an earlier version of the generator: only the seeder ever creates these deterministic ids
+    written = {_id(f"event:{p.code}:{k}") for k in written_keys}
+    possible = [f"approved:{a.code}" for a, *_ in plans] + [f"hist:{a.code}:{n:02d}" for a, *_ in plans for n in range(24)] \
+        + [f"hist:{a.code}:rej{n}" for a, *_ in plans for n in range(6)]
+    stale = [_id(f"event:{p.code}:{k}") for k in possible if _id(f"event:{p.code}:{k}") not in written]
+    if stale:
+        cur.execute("DELETE FROM notifications WHERE event_id = ANY(%s)", (stale,))
+        cur.execute("DELETE FROM source_references WHERE event_id = ANY(%s)", (stale,))
+        cur.execute("DELETE FROM planner_decisions WHERE event_id = ANY(%s) AND NOT EXISTS (SELECT 1 FROM approved_actuals aa WHERE aa.decision_id = planner_decisions.decision_id)", (stale,))
+        cur.execute("DELETE FROM execution_events WHERE event_id = ANY(%s) AND NOT EXISTS (SELECT 1 FROM planner_decisions pd WHERE pd.event_id = execution_events.event_id)", (stale,))
+    cur.execute(
+        "UPDATE source_documents d SET claims_extracted = (SELECT count(*) FROM execution_events e WHERE e.document_id = d.document_id) "
+        "WHERE d.project_id = %s AND d.batch_id IS NULL", (pid,))
 
     # ---- root causes, issues, memory
     rc_id = {k: _id(f"rootcause:{p.code}:{k}") for k in p.root_causes}
@@ -280,6 +353,7 @@ def summary(conn) -> Dict[str, int]:
         "dependencies": q("SELECT count(*) n FROM schedule_dependencies"),
         "claims (execution_events)": q("SELECT count(*) n FROM execution_events"),
         "decisions": q("SELECT count(*) n FROM planner_decisions"),
+        "report files": q("SELECT count(*) n FROM source_documents WHERE batch_id IS NULL"),
         "approved_actuals": q("SELECT count(*) n FROM approved_actuals"),
         "issues": q("SELECT count(*) n FROM issues"),
         "root_causes": q("SELECT count(*) n FROM root_causes"),

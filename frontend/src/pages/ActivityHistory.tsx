@@ -965,7 +965,7 @@ export default function ActivityHistory() {
                           </span>
                         )}
 
-                        <ExecutionStateBadge state={activityMetadata.execution_state} size="sm" />
+                        <ExecutionStateBadge state={activityMetadata.execution_state ?? activities.find((a) => a.activity_id === selectedActivityId)?.execution_state} size="sm" />
                       </div>
 
                       <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">

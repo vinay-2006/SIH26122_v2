@@ -321,13 +321,13 @@ AND = Project(
     ],
     claims=[
         ClaimSeed("bop_rej", "AND-MOB-060", "REJECT", 100.0, None, d("2026-08-05"),
-                  "BOP stack installation and pressure test 100 percent complete",
+                  "BOP stack nippled up and function-tested on the wellhead; annular and ram pressure tests reported as completed.",
                   "Annular preventer test failed on 30 July; the stack cannot be reported complete until the retest passes."),
         ClaimSeed("cond_edit", "AND-SIT-030", "EDIT", 95.0, 85.0, d("2026-09-12"),
-                  "Conductor pipe driving 95 percent complete",
+                  "Conductor driven close to the target penetration; the final section is being driven and the driving record is submitted.",
                   "Penetration record supports 85 percent; final 15 percent still requires driving to refusal."),
         ClaimSeed("anchor_hold", "AND-SIT-040", "HOLD", 85.0, None, d("2026-09-20"),
-                  "Anchor pattern 85 percent complete, five of six anchors set",
+                  "Five of six anchors set and tensioned; the remaining south-west anchor is planned for the next weather window.",
                   "Please attach the ROV anchor position survey before this can be approved."),
     ],
 )
@@ -442,13 +442,13 @@ NRL = Project(
     ],
     claims=[
         ClaimSeed("cap_rej", "NRL-CIV-030", "REJECT", 100.0, None, d("2026-09-14"),
-                  "Pile caps and equipment foundations 100 percent complete",
+                  "Last pile caps in the column and heater area poured; stripping and curing under way, cube results to follow.",
                   "Cube test results for the last six pours are not attached and 14 caps are still being stripped."),
         ClaimSeed("rack_edit", "NRL-ERC-010", "EDIT", 85.0, 75.0, d("2026-09-18"),
-                  "Pipe rack steel erection 85 percent complete",
+                  "Pipe rack bays 1 to 9 erected and bolted up; the remaining bays are waiting for steel from the delayed consignment.",
                   "Erection records support 75 percent; two bays are waiting for the delayed consignment."),
         ClaimSeed("pump_hold", "NRL-ERC-050", "HOLD", 40.0, None, d("2026-09-22"),
-                  "Pump and compressor installation 40 percent complete",
+                  "Process pumps set on baseplates and grouted; compressor skid positioning has started in the pump area.",
                   "Please attach alignment records for the pumps counted before this can be approved."),
     ],
 )
@@ -558,6 +558,26 @@ def rollup(acts: List[Act]) -> float:
     """Weighted mean actual progress, the same weighting the progress engine applies."""
     w = sum(weight_of(a) for a in acts)
     return round(sum(weight_of(a) * a.pct for a in acts) / w, 2) if w else 0.0
+
+
+def _jit(code: str, mod: int) -> int:
+    """deterministic small jitter derived from a code (stable across runs and machines)"""
+    import zlib
+
+    return zlib.crc32(code.encode()) % mod
+
+
+def execution_window(p: Project, a: Act):
+    """
+    (actual_start, actual_finish or None, date of the latest approved claim) for an activity that has progress.
+    Single definition shared by the seeder (approved_actuals) and the history generator, so the final claim of every
+    activity lands on exactly the state the dashboards already show.
+    """
+    start = min(a.start + timedelta(days=_jit(a.code, 7)), p.data_date)
+    if a.pct >= 100:
+        finish = max(min(a.finish + timedelta(days=_jit(a.code + "f", 11) - 3), p.data_date), start)
+        return start, finish, finish
+    return start, None, max(start, p.data_date - timedelta(days=1 + _jit(a.code + "d", 9)))
 
 
 def all_acts(p: Project) -> List[Act]:

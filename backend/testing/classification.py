@@ -29,7 +29,7 @@ DB_FREE = {
     "tests/test_phase6_activity_history.py", "tests/test_phase6_ask_why.py",
     "tests/test_phase7_forecast.py", "tests/test_phase9_p6_adapter.py",
     "tests/test_db_test_guard.py", "tests/test_canonical_dataset_definition.py", "tests/test_local_demo_auth.py", "tests/test_schedule_export_roundtrip.py","tests/test_route_context_contract.py", "tests/test_audit_chain_verification.py",
-    "tests/test_match_signals.py",
+    "tests/test_match_signals.py", "tests/test_execution_history.py",
 }
 DB_READ = {
     "backend/shared/test_schedule_repository.py", "backend/smoke_test.py",
@@ -62,6 +62,7 @@ DB_WRITE = {
     "tests/test_integration_workflow_state.py",
     "tests/test_integration_audit_verifier.py", "tests/test_integration_canonical_dataset.py",
     "tests/test_integration_prototype_dataset.py", "tests/test_integration_batch_intake.py",
+    "tests/test_integration_execution_history.py",
 }
 DB_DESTRUCTIVE: set = set()
 INTEGRATION = {
@@ -74,6 +75,7 @@ INTEGRATION = {
     "tests/test_integration_seed_integrity.py", "tests/test_integration_canonical_dataset.py", "tests/test_integration_intake_context.py",
     "tests/test_integration_workflow_state.py", "tests/test_integration_audit_verifier.py",
     "tests/test_integration_prototype_dataset.py", "tests/test_integration_batch_intake.py",
+    "tests/test_integration_execution_history.py",
 }
 E2E: set = set()
 # tests that live in a DB_FREE file but do reach Postgres (found by running them without a DB)
