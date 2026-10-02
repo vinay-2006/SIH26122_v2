@@ -13,7 +13,7 @@ Per-test overrides use "path::test_name".
 DB_FREE = {
     # schedule import: parsers, validation, reconciliation, upload guard (pure logic, no database)
     "tests/schedule_import/test_parsers_golden.py", "tests/schedule_import/test_validation.py",
-    "tests/schedule_import/test_reconcile.py",
+    "tests/schedule_import/test_reconcile.py", "tests/schedule_import/test_upload_guard.py",
     # pure logic
     "backend/routers/test_matching_semantic.py", "backend/shared/test_llm_extraction.py",
     "backend/shared/test_schedule.py", "backend/shared/test_tabular_extraction.py",
@@ -43,6 +43,9 @@ DB_WRITE = {
     "tests/db_v2/test_schema_and_constraints.py", "tests/db_v2/test_ledger_and_progress.py",
     "tests/db_v2/test_roles_and_authorization.py", "tests/db_v2/test_versioning.py", "tests/db_v2/test_rls.py",
     "tests/db_v2/test_runner_and_isolation.py", "tests/db_v2/test_import_staging_migrations.py",
+    # schedule import service + v2 API against the isolated setuai_v2_integ database (commits, then truncates after each test)
+    "tests/schedule_import/test_api_projects_members.py", "tests/schedule_import/test_api_schedule_flow.py",
+    "tests/schedule_import/test_api_authorization.py", "tests/schedule_import/test_api_revision_reconciliation.py",
     "backend/routers/test_schedules.py", "backend/shared/test_schedule_index.py",
     "backend/shared/test_schedule_repository_integration.py", "backend/test_m2_intake.py",
     "backend/test_p0_stabilization.py",
