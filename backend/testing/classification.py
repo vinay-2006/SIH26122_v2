@@ -12,7 +12,7 @@ Per-test overrides use "path::test_name".
 """
 DB_FREE = {
     # v2 hardening: token verification, target guard, scale (no database)
-    "tests/v2_hardening/test_jwt_verification.py", "tests/v2_hardening/test_target_guard.py",
+    "tests/v2_hardening/test_jwt_verification.py", "tests/v2_hardening/test_target_guard.py", "tests/v2_hardening/test_reconcile_scale.py",
     # schedule import: parsers, validation, reconciliation, upload guard (pure logic, no database)
     "tests/schedule_import/test_parsers_golden.py", "tests/schedule_import/test_validation.py",
     "tests/schedule_import/test_reconcile.py", "tests/schedule_import/test_upload_guard.py",
@@ -49,7 +49,7 @@ DB_WRITE = {
     # schedule import service + v2 API against the isolated setuai_v2_integ database (commits, then truncates after each test)
     "tests/schedule_import/test_api_projects_members.py", "tests/schedule_import/test_api_schedule_flow.py",
     "tests/schedule_import/test_api_authorization.py", "tests/schedule_import/test_api_revision_reconciliation.py",
-    "tests/schedule_import/test_api_auth_hardening.py",
+    "tests/schedule_import/test_api_scale.py", "tests/schedule_import/test_api_auth_hardening.py",
     "backend/routers/test_schedules.py", "backend/shared/test_schedule_index.py",
     "backend/shared/test_schedule_repository_integration.py", "backend/test_m2_intake.py",
     "backend/test_p0_stabilization.py",

@@ -9,6 +9,7 @@ Every database write runs as the authenticated actor, so the database's own guar
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,6 +31,7 @@ from ..schedule_import.xer_parser import parse_xer
 
 WBS_TYPES = {"PROJECT", "STAGE", "AREA", "SUB_ASSET", "PACKAGE"}
 HEADER_KEYS = {"baseline_name", "label", "data_date", "planned_start", "planned_finish"}
+MAX_STAGED_BYTES = 40_000_000          # the parsed schedule is kept as JSONB while the PM reviews it
 
 
 # ------------------------------------------------------------------------------------------------------ reference + base state
@@ -161,6 +163,9 @@ def stage_import(user, project_id, filename: str, content: bytes, resources: Opt
     report = validate(ps, ref)
     if not report["valid"]:
         raise ApiError(422, "IMPORT_INVALID", "The schedule has errors; nothing was imported", report)      # no writes at all
+    payload = ps.to_dict()
+    if len(json.dumps(payload)) > MAX_STAGED_BYTES:
+        raise ApiError(413, "SCHEDULE_TOO_LARGE", "The parsed schedule is too large to stage; split it or remove unneeded detail")
     sha = hashlib.sha256(content + (b"\x00" + resources if resources else b"")).hexdigest()
     with tx(user.id) as c:
         dup = c.execute("select i.import_id from source_documents d join schedule_imports i on i.source_document_id = d.document_id "
@@ -174,7 +179,7 @@ def stage_import(user, project_id, filename: str, content: bytes, resources: Opt
         imp = c.execute("insert into schedule_imports (project_id, source_document_id, format, status, validation_report, error_count, warning_count,"
                         " uploaded_by, file_name, baseline_name, parsed_payload, decisions) values (%s,%s,%s,'PARSED',%s,0,%s,%s,%s,%s,%s,%s) "
                         "returning import_id", (project_id, doc["document_id"], fmt, Jsonb(report), len(report["warnings"]), user.id, filename,
-                                                params.get("baseline_name"), Jsonb(ps.to_dict()), Jsonb({}))).fetchone()
+                                                params.get("baseline_name"), Jsonb(payload), Jsonb({}))).fetchone()
         audit.log(c, project_id=project_id, actor_id=user.id, role="PROJECT_MANAGER", action="SCHEDULE_IMPORT_STAGED",
                   entity_type="SCHEDULE_IMPORT", entity_id=imp["import_id"], after={"file": filename, "format": fmt, "sha256": sha,
                                                                                  "activities": len(ps.activities)})
@@ -273,31 +278,31 @@ def _materialize(c, user, project_id, import_id, imp, ps: ParsedSchedule, ref: R
          base["version_id"] if base else None, user.id)).fetchone()
     vid = ver["version_id"]
 
+    # All ids are generated here, so rows go in as a few pipelined batches (one network round trip per batch, not per row).
     # ---- WBS with stable wbs_uid
-    old_wbs = c.execute("select wbs_uid, wbs_code, wbs_name, parent_wbs_id from schedule_wbs where version_id = %s", (base["version_id"],)).fetchall() if base else []
+    old_wbs = c.execute("select wbs_id, wbs_uid, wbs_code, wbs_name, parent_wbs_id from schedule_wbs where version_id = %s", (base["version_id"],)).fetchall() if base else []
     by_code = {w["wbs_code"]: w for w in old_wbs}
-    old_by_id = {}
-    if base:
-        for w in c.execute("select wbs_id, wbs_uid from schedule_wbs where version_id = %s", (base["version_id"],)).fetchall():
-            old_by_id[w["wbs_id"]] = w["wbs_uid"]
-    by_name_parent = {(w["wbs_name"].lower(), old_by_id.get(w["parent_wbs_id"])): w["wbs_uid"] for w in old_wbs}
+    old_uid_by_id = {w["wbs_id"]: w["wbs_uid"] for w in old_wbs}
+    by_name_parent = {(w["wbs_name"].lower(), old_uid_by_id.get(w["parent_wbs_id"])): w["wbs_uid"] for w in old_wbs}
     types = {**propose_wbs_types(norm), **(d.get("wbs_types") or {})}
     depth, ids, uids = wbs_depths(norm), {}, {}
     old_rules = {r["wbs_uid"]: r for r in c.execute(
         "select w.wbs_uid, r.weight_pct, r.completion_rule from wbs_stage_rules r join schedule_wbs w on w.wbs_id = r.wbs_id where w.version_id = %s",
         (base["version_id"],)).fetchall()} if base else {}
-    for w in sorted(norm.wbs, key=lambda x: (depth[x.code], x.sequence)):
+    wbs_rows, rule_rows = [], []
+    for w in sorted(norm.wbs, key=lambda x: (depth[x.code], x.sequence)):          # parents first
         parent_uid = uids.get(w.parent_code)
-        stable = (by_code[w.code]["wbs_uid"] if w.code in by_code else by_name_parent.get((w.name.lower(), parent_uid)))
-        row = c.execute(
-            "insert into schedule_wbs (project_id, version_id, wbs_uid, parent_wbs_id, wbs_code, wbs_name, node_type, sequence) "
-            "values (%s,%s,coalesce(%s, gen_random_uuid()),%s,%s,%s,%s,%s) returning wbs_id, wbs_uid",
-            (project_id, vid, stable, ids.get(w.parent_code), w.code, w.name, types[w.code], w.sequence)).fetchone()
-        ids[w.code], uids[w.code] = row["wbs_id"], row["wbs_uid"]
+        stable = by_code[w.code]["wbs_uid"] if w.code in by_code else by_name_parent.get((w.name.lower(), parent_uid))
+        ids[w.code], uids[w.code] = uuid.uuid4(), stable or uuid.uuid4()
+        wbs_rows.append((ids[w.code], project_id, vid, uids[w.code], ids.get(w.parent_code), w.code, w.name, types[w.code], w.sequence))
         if types[w.code] == "STAGE":
-            r = old_rules.get(row["wbs_uid"])
-            c.execute("insert into wbs_stage_rules (wbs_id, project_id, version_id, weight_pct, completion_rule) values (%s,%s,%s,%s,%s)",
-                      (row["wbs_id"], project_id, vid, r["weight_pct"] if r else None, Jsonb(r["completion_rule"] if r else {})))
+            r = old_rules.get(uids[w.code])
+            rule_rows.append((ids[w.code], project_id, vid, r["weight_pct"] if r else None, Jsonb(r["completion_rule"] if r else {})))
+    cur = c.cursor()
+    cur.executemany("insert into schedule_wbs (wbs_id, project_id, version_id, wbs_uid, parent_wbs_id, wbs_code, wbs_name, node_type, sequence) "
+                    "values (%s,%s,%s,%s,%s,%s,%s,%s,%s)", wbs_rows)
+    if rule_rows:
+        cur.executemany("insert into wbs_stage_rules (wbs_id, project_id, version_id, weight_pct, completion_rule) values (%s,%s,%s,%s,%s)", rule_rows)
 
     # ---- resources (project-level catalogue, reused by code)
     have = {r["resource_code"]: r for r in c.execute("select resource_id, resource_code, resource_class from project_resources where project_id = %s", (project_id,)).fetchall()}
@@ -313,49 +318,54 @@ def _materialize(c, user, project_id, import_id, imp, ps: ParsedSchedule, ref: R
                         (project_id, r.code, r.name, sample.resource_class, sample.uom)).fetchone()
         rid[r.code] = row["resource_id"]
 
-    # ---- activities (identity from reconciliation) + assignments (identity from the matched old activity)
+    # ---- identities and rows
     uid_of: Dict[str, Any] = {}
     if rec:
         for it in rec["items"]:
             if it.get("uid"):
                 uid_of[it["new"]] = uuid.UUID(it["uid"])
     old_by_uid = {uuid.UUID(o.uid): o for o in old}
-    n_assign = 0
+    ident_rows, act_rows, new_assign_rows, res_rows = [], [], [], []
     for ext, p in sorted(prepared.items(), key=lambda kv: kv[1].a.sequence):
         a = p.a
         uid = uid_of.get(ext)
         if uid is None:
-            uid = c.execute("insert into activities (project_id, first_version_id) values (%s,%s) returning activity_uid", (project_id, vid)).fetchone()["activity_uid"]
+            uid = uuid.uuid4()
+            ident_rows.append((uid, project_id, vid))
         uid_of[ext] = uid
         src = a.discipline_label if (a.discipline_label and p.discipline_how in ("ALIAS", "DECISION", "WBS")) else None
-        row = c.execute(
-            "insert into baseline_activities (project_id, version_id, activity_uid, external_activity_id, wbs_id, activity_name, description, "
-            "discipline_code, discipline_source, activity_type, location, baseline_duration, baseline_start, baseline_finish, total_float, sequence) "
-            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning activity_row_id",
-            (project_id, vid, uid, ext, ids[a.wbs_code], a.name, a.description, p.discipline, src, a.activity_type, a.location, p.duration,
-             a.start, a.finish, a.total_float_days, a.sequence)).fetchone()
+        row_id = uuid.uuid4()
+        act_rows.append((row_id, project_id, vid, uid, ext, ids[a.wbs_code], a.name, a.description, p.discipline, src, a.activity_type, a.location,
+                         p.duration, a.start, a.finish, a.total_float_days, a.sequence))
         o = old_by_uid.get(uid)
         for code, x in p.assignments.items():
-            prev = (o.assignments.get(code) if o else None)
+            prev = o.assignments.get(code) if o else None
             if prev:
                 auid = uuid.UUID(prev["assignment_uid"])
             else:
-                auid = c.execute("insert into assignments (project_id, activity_uid) values (%s,%s) returning assignment_uid", (project_id, uid)).fetchone()["assignment_uid"]
-            c.execute("insert into baseline_resources (assignment_uid, project_id, version_id, activity_row_id, activity_uid, resource_id, baseline_qty, "
-                      "unit_of_measure, measures_progress, progress_weight) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                      (auid, project_id, vid, row["activity_row_id"], uid, rid[code], x.qty, x.uom, x.measures_progress, x.weight))
-            n_assign += 1
+                auid = uuid.uuid4()
+                new_assign_rows.append((auid, project_id, uid))
+            res_rows.append((auid, project_id, vid, row_id, uid, rid[code], x.qty, x.uom, x.measures_progress, x.weight))
+    cur.executemany("insert into activities (activity_uid, project_id, first_version_id) values (%s,%s,%s)", ident_rows)
+    cur.executemany(
+        "insert into baseline_activities (activity_row_id, project_id, version_id, activity_uid, external_activity_id, wbs_id, activity_name, description, "
+        "discipline_code, discipline_source, activity_type, location, baseline_duration, baseline_start, baseline_finish, total_float, sequence) "
+        "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", act_rows)
+    cur.executemany("insert into assignments (assignment_uid, project_id, activity_uid) values (%s,%s,%s)", new_assign_rows)
+    cur.executemany("insert into baseline_resources (assignment_uid, project_id, version_id, activity_row_id, activity_uid, resource_id, baseline_qty, "
+                    "unit_of_measure, measures_progress, progress_weight) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", res_rows)
+    n_assign = len(res_rows)
 
     # ---- dependencies
-    seen, n_dep = set(), 0
+    seen, dep_rows = set(), []
     for dep in ps.dependencies:
         key = (dep.predecessor, dep.successor, dep.type)
         if key in seen or dep.predecessor not in uid_of or dep.successor not in uid_of:
             continue
         seen.add(key)
-        c.execute("insert into schedule_dependencies (project_id, version_id, predecessor_uid, successor_uid, relationship_type, lag_days) values (%s,%s,%s,%s,%s,%s)",
-                  (project_id, vid, uid_of[dep.predecessor], uid_of[dep.successor], dep.type, dep.lag_days))
-        n_dep += 1
+        dep_rows.append((project_id, vid, uid_of[dep.predecessor], uid_of[dep.successor], dep.type, dep.lag_days))
+    cur.executemany("insert into schedule_dependencies (project_id, version_id, predecessor_uid, successor_uid, relationship_type, lag_days) values (%s,%s,%s,%s,%s,%s)", dep_rows)
+    n_dep = len(dep_rows)
 
     # ---- lineage (what the PM decided), recorded as confirmed
     lin = 0
@@ -368,15 +378,15 @@ def _materialize(c, user, project_id, import_id, imp, ps: ParsedSchedule, ref: R
     for it in (rec["items"] if rec else []):
         if it["outcome"] == "RENAMED" or (it["outcome"] == "SAME" and (dec.get("accept") or {}).get(it["new"])):
             lineage(uuid.UUID(it["uid"]), uuid.UUID(it["uid"]), "RENAMED")
-    for s in dec.get("split") or []:
-        for t in s["to"]:
-            lineage(uuid.UUID(s["from"]), uid_of[t["ext"]], "SPLIT", round(float(t["fraction"]), 6))
+    for s_ in dec.get("split") or []:
+        for t in s_["to"]:
+            lineage(uuid.UUID(s_["from"]), uid_of[t["ext"]], "SPLIT", round(float(t["fraction"]), 6))
     for m in dec.get("merge") or []:
         for f in m["from"]:
             lineage(uuid.UUID(f), uid_of[m["to"]], "MERGED")
-    for u in dec.get("retire") or []:
-        lineage(uuid.UUID(u), None, "RETIRED")
-        c.execute("update activities set retired_in_version_id = %s where project_id = %s and activity_uid = %s", (vid, project_id, u))
+    for u_ in dec.get("retire") or []:
+        lineage(uuid.UUID(u_), None, "RETIRED")
+        c.execute("update activities set retired_in_version_id = %s where project_id = %s and activity_uid = %s", (vid, project_id, u_))
 
     c.execute("update schedule_versions set status = 'VALIDATED' where version_id = %s", (vid,))
     c.execute("update schedule_imports set status = 'BUILT', built_at = now() where import_id = %s", (import_id,))

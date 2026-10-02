@@ -17,6 +17,8 @@ decisions = {
 from __future__ import annotations
 
 import re
+import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,6 +29,45 @@ AUTO_NAME_FLOOR = 0.35         # same external id but names this dissimilar => t
 PROPOSE_AT = 0.80
 AMBIGUOUS_AT = 0.55
 QTY_TOLERANCE = 0.10
+MAX_FUZZY_SIDE = 4000          # more unmatched activities than this on either side: no fuzzy matching (exact ids + explicit decisions only)
+CANDIDATES_PER_ITEM = 30       # fuzzy scoring looks at the best few candidates per activity, found through an inverted index
+MAX_POSTING = 300              # a word / WBS shared by more activities than this carries no signal and is not indexed
+DEFAULT_TIME_BUDGET_S = 15.0
+_STOP = {"and", "the", "for", "with", "from", "into", "all", "per"}
+
+
+class _OutOfBudget(Exception):
+    pass
+
+
+def _sig_words(name: str) -> set:
+    return {w for w in _words(name) if len(w) > 2 and w not in _STOP}
+
+
+class _Index:
+    """inverted index so that fuzzy scoring never compares every old activity with every new one"""
+
+    def __init__(self, items):
+        self.items = items
+        self.by_word, self.by_wbs = defaultdict(list), defaultdict(list)
+        for i, it in enumerate(items):
+            for w in _sig_words(it.name):
+                self.by_word[w].append(i)
+            if it.wbs_code:
+                self.by_wbs[it.wbs_code].append(i)
+
+    def candidates(self, probe, k=CANDIDATES_PER_ITEM):
+        hits: Counter = Counter()
+        for w in _sig_words(probe.name):
+            post = self.by_word.get(w, ())
+            if len(post) <= MAX_POSTING:
+                for i in post:
+                    hits[i] += 2
+        post = self.by_wbs.get(probe.wbs_code, ()) if probe.wbs_code else ()
+        if len(post) <= MAX_POSTING:
+            for i in post:
+                hits[i] += 1
+        return [self.items[i] for i, _ in hits.most_common(k)]
 
 
 @dataclass
@@ -119,8 +160,11 @@ def _primary(a) -> Optional[Tuple[str, str, float]]:
     return best
 
 
-def reconcile(old: List[OldActivity], new: List[NewActivity], decisions: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def reconcile(old: List[OldActivity], new: List[NewActivity], decisions: Optional[Dict[str, Any]] = None,
+              time_budget_s: float = DEFAULT_TIME_BUDGET_S) -> Dict[str, Any]:
     d = decisions or {}
+    deadline = time.monotonic() + time_budget_s
+    fuzzy: Dict[str, Any] = {"skipped": False, "reason": None, "pairs_scored": 0}
     accept, force_new = dict(d.get("accept") or {}), set(d.get("new") or [])
     old_by_ext = {o.external_id: o for o in old}
     old_by_uid = {o.uid: o for o in old}
@@ -163,50 +207,70 @@ def reconcile(old: List[OldActivity], new: List[NewActivity], decisions: Optiona
             taken_old.add(f)
         merge_to.add(m["to"])
 
-    # 4. high-confidence unique rename proposals among the rest
+    # 4. high-confidence unique rename proposals among the rest (candidate pairs come from the inverted index, never from all pairs)
     pending_new = [n for n in new if n.external_id not in status and n.external_id not in force_new
                    and n.external_id not in split_to and n.external_id not in merge_to]
     free_old = [o for o in old if o.uid not in taken_old]
-    pairs = sorted(((score(o, n), o, n) for o in free_old for n in pending_new), key=lambda t: -t[0])
+    if len(free_old) > MAX_FUZZY_SIDE or len(pending_new) > MAX_FUZZY_SIDE:
+        fuzzy.update(skipped=True, reason="TOO_MANY_UNMATCHED", old_unmatched=len(free_old), new_unmatched=len(pending_new))
+    pairs: List[Tuple[float, OldActivity, NewActivity]] = []
+    if not fuzzy["skipped"]:
+        try:
+            idx = _Index(pending_new)
+            for i, o in enumerate(free_old):
+                if i % 100 == 0 and time.monotonic() > deadline:
+                    raise _OutOfBudget()
+                for n in idx.candidates(o):
+                    pairs.append((score(o, n), o, n))
+                    fuzzy["pairs_scored"] += 1
+        except _OutOfBudget:
+            pairs = []                                            # a partial search would give unfair proposals: drop fuzzy entirely
+            fuzzy.update(skipped=True, reason="TIME_BUDGET")
+    pairs.sort(key=lambda t: -t[0])
     used_old, used_new = set(), set()
     cands: Dict[str, List[Tuple[float, OldActivity]]] = {}
     for sc, o, n in pairs:
         if sc >= AMBIGUOUS_AT:
             cands.setdefault(n.external_id, []).append((sc, o))
+    scores_by_old: Dict[str, List[float]] = defaultdict(list)
+    for sc, o, n in pairs:
+        scores_by_old[o.uid].append(sc)
     for sc, o, n in pairs:
         if sc < PROPOSE_AT or o.uid in used_old or n.external_id in used_new:
             continue
-        rivals = [c for c in cands.get(n.external_id, []) if c[1].uid != o.uid and c[0] >= sc - 0.08]
-        rivals_new = [n2 for sc2, o2, n2 in pairs if o2.uid == o.uid and n2.external_id != n.external_id
-                      and sc2 >= AMBIGUOUS_AT and sc2 >= sc - 0.08]
-        if rivals or rivals_new:                                   # ambiguous on either side (several candidates / possible split)
-            continue
+        floor = max(AMBIGUOUS_AT, sc - 0.08)
+        rival_olds = [c for c in cands.get(n.external_id, []) if c[1].uid != o.uid and c[0] >= sc - 0.08]       # another old activity fits this new one
+        rival_news = sum(1 for x in scores_by_old[o.uid] if x >= floor) > 1                                    # this old one fits several new ones (a split?)
+        if rival_olds or rival_news:
+            continue                                              # a rename must be unambiguous on both sides
         status[n.external_id] = dict(new=n.external_id, outcome="PROPOSED_RENAME", uid=None, old_uid=o.uid, old_external_id=o.external_id, score=sc,
                                      message=f"'{n.name}' ({n.external_id}) looks like '{o.name}' ({o.external_id}): confirm to keep its progress history")
         used_old.add(o.uid); used_new.add(n.external_id)
 
-    # 5. split / merge PROPOSALS among what is still unmatched
+    # 5. split / merge PROPOSALS among what is still unmatched (same bounded candidate search)
     left_old = [o for o in free_old if o.uid not in used_old]
     left_new = [n for n in pending_new if n.external_id not in used_new]
     splits, merges = [], []
-    for o in left_old:
-        po = _primary(o)
-        kids = [n for n in left_new if name_similarity(o.name, n.name) >= 0.55 and (o.wbs_code == n.wbs_code or o.discipline == n.discipline)]
-        if po and len(kids) >= 2:
-            ks = [(n, (n.assignments.get(po[0]) or {}).get("qty")) for n in kids]
-            ks = [(n, q) for n, q in ks if q]
-            tot = sum(q for _, q in ks)
-            if len(ks) >= 2 and abs(tot - po[2]) <= QTY_TOLERANCE * po[2]:
-                splits.append(dict(from_uid=o.uid, from_external_id=o.external_id, resource=po[0], uom=po[1],
-                                   to=[dict(ext=n.external_id, fraction=round(q / tot, 6)) for n, q in ks]))
-    for n in left_new:
-        pn = _primary(n)
-        parents = [o for o in left_old if name_similarity(o.name, n.name) >= 0.55 and (o.wbs_code == n.wbs_code or o.discipline == n.discipline)]
-        if pn and len(parents) >= 2:
-            ps_ = [(o, (o.assignments.get(pn[0]) or {}).get("qty")) for o in parents]
-            ps_ = [(o, q) for o, q in ps_ if q]
-            if len(ps_) >= 2 and abs(sum(q for _, q in ps_) - pn[2]) <= QTY_TOLERANCE * pn[2]:
-                merges.append(dict(from_uids=[o.uid for o, _ in ps_], from_external_ids=[o.external_id for o, _ in ps_], to=n.external_id))
+    if not fuzzy["skipped"]:
+        new_idx, old_idx = _Index(left_new), _Index(left_old)
+        for o in left_old:
+            po = _primary(o)
+            kids = [n for n in new_idx.candidates(o) if name_similarity(o.name, n.name) >= 0.55 and (o.wbs_code == n.wbs_code or o.discipline == n.discipline)]
+            if po and len(kids) >= 2:
+                ks = [(n, (n.assignments.get(po[0]) or {}).get("qty")) for n in kids]
+                ks = [(n, q) for n, q in ks if q]
+                tot = sum(q for _, q in ks)
+                if len(ks) >= 2 and abs(tot - po[2]) <= QTY_TOLERANCE * po[2]:
+                    splits.append(dict(from_uid=o.uid, from_external_id=o.external_id, resource=po[0], uom=po[1],
+                                       to=[dict(ext=n.external_id, fraction=round(q / tot, 6)) for n, q in ks]))
+        for n in left_new:
+            pn = _primary(n)
+            parents = [o for o in old_idx.candidates(n) if name_similarity(o.name, n.name) >= 0.55 and (o.wbs_code == n.wbs_code or o.discipline == n.discipline)]
+            if pn and len(parents) >= 2:
+                ps_ = [(o, (o.assignments.get(pn[0]) or {}).get("qty")) for o in parents]
+                ps_ = [(o, q) for o, q in ps_ if q]
+                if len(ps_) >= 2 and abs(sum(q for _, q in ps_) - pn[2]) <= QTY_TOLERANCE * pn[2]:
+                    merges.append(dict(from_uids=[o.uid for o, _ in ps_], from_external_ids=[o.external_id for o, _ in ps_], to=n.external_id))
 
     # 6. ambiguous / new
     proposed_new = {s["to"] for s in merges} | {t["ext"] for s in splits for t in s["to"]}
@@ -288,7 +352,7 @@ def reconcile(old: List[OldActivity], new: List[NewActivity], decisions: Optiona
             blockers.append(dict(code="SPLIT_FRACTIONS", ref=s["from"], message=f"split fractions add up to {tot:g}, not 1"))
     retired_with_progress = [u for u in (d.get("retire") or []) if u in old_by_uid and old_by_uid[u].has_progress]
     return dict(items=list(status.values()), removed=removed, changes=changes, split_proposals=splits, merge_proposals=merges,
-                blockers=blockers, retired_with_progress=retired_with_progress,
+                blockers=blockers, retired_with_progress=retired_with_progress, fuzzy=fuzzy,
                 summary=dict(same=sum(v["outcome"] == "SAME" for v in status.values()),
                              renamed=sum(v["outcome"] in ("RENAMED", "PROPOSED_RENAME") for v in status.values()),
                              new=sum(v["outcome"] == "NEW" for v in status.values()), removed=len(removed), changed=len(changes),
