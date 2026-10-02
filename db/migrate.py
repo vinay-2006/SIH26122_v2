@@ -4,11 +4,12 @@
     python db/migrate.py apply  [--with-shim] [--url URL]
     python db/migrate.py status [--url URL]
 
-Safety (enforced before any statement is sent):
-  * the target must be loopback with a database named setuai_v2_*  (hosted targets are a separate, explicitly approved phase);
+Safety (enforced before any statement is sent; rules live in db/target_guard.py):
+  * the target must be a local setuai_v2_* database, or an explicitly allow-listed Supabase project (V2_ALLOW_HOSTED=1,
+    V2_ALLOWED_PROJECT_REFS, TLS) whose own marker row matches; the legacy shared project is never allowed;
   * a host equal to the DATABASE_URL host in the repo's .env (the old shared DB) is ALWAYS refused;
   * a migration that was already applied but whose file changed is an error (migrations are immutable);
-  * the database must carry the environment marker row, created here for local targets only.
+  * the database must carry a matching environment marker; only a brand-new, EMPTY database may be stamped.
 The URL comes from --url or the DB_V2_URL environment variable. It never reads DATABASE_URL, so the old stack's
 configuration cannot be picked up by accident. Credentials are never printed.
 """
@@ -19,78 +20,80 @@ import hashlib
 import os
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "db" / "migrations"
 SHIM = ROOT / "db" / "shim" / "000_supabase_shim.sql"
-LOOPBACK = {"127.0.0.1", "localhost", "::1"}
-DB_PREFIX = "setuai_v2_"
+if str(ROOT) not in sys.path:                                  # running as `python db/migrate.py`: put the repo root on the path
+    sys.path.insert(0, str(ROOT))
+from db import target_guard as _tg  # noqa: E402
 
-
-class GuardError(RuntimeError):
-    pass
+GuardError = _tg.GuardError
+LOOPBACK = _tg.LOOPBACK
+DB_PREFIX = _tg.DB_PREFIX
 
 
 def _old_shared_host() -> str | None:
-    env = ROOT / ".env"
-    if not env.exists():
-        return None
-    for line in env.read_text().splitlines():
-        if line.startswith("DATABASE_URL="):
-            return (urlparse(line.split("=", 1)[1].strip().strip('"').strip("'")).hostname or "").lower() or None
-    return None
+    return _tg.old_shared_host()
 
 
-def check_target(url: str) -> tuple[str, str]:
-    """Return (host, dbname) or raise GuardError."""
-    u = urlparse(url)
-    host, db = (u.hostname or "").lower(), (u.path or "").lstrip("/").lower()
-    if not host or not db:
-        raise GuardError("database URL must include host and database name")
-    old = _old_shared_host()
-    if old and host == old:
-        raise GuardError("target host equals the old shared database host: refusing")
-    if "supabase" in host:
-        raise GuardError("hosted Supabase targets are not allowed from this runner yet (separate approved phase)")
-    if host not in LOOPBACK:
-        raise GuardError(f"target host {host!r} is not loopback")
-    if not db.startswith(DB_PREFIX):
-        raise GuardError(f"database name {db!r} must start with {DB_PREFIX!r}")
-    return host, db
+def check_target(url: str, env=None) -> tuple[str, str]:
+    """Return (host, dbname) or raise GuardError. Local setuai_v2_* databases always; hosted Supabase only under the explicit
+    allow-list rules in db/target_guard.py. `_old_shared_host` is looked up at call time (tests patch it)."""
+    t = _tg.check_target(url, env=env, old_host_fn=lambda: _old_shared_host())
+    return t.host, t.dbname
 
 
 def checksum(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def ensure_bookkeeping(conn) -> None:
+MIN_PG = 150000          # security_invoker views and column-list ON DELETE SET NULL need PostgreSQL 15
+
+
+def require_min_pg(conn) -> None:
+    if conn.info.server_version < MIN_PG:
+        raise GuardError(f"PostgreSQL 15 or newer is required (server is {conn.info.server_version // 10000}.x)")
+
+
+def ensure_bookkeeping(conn, target: _tg.Target) -> None:
+    """Create bookkeeping + the environment marker. A LOCAL database is stamped env=integration. A HOSTED database is stamped
+    env=hosted/project_ref=<ref> only when it is brand new (no tables in public at all); otherwise it must already carry a matching marker."""
+    has_marker = conn.execute("select to_regclass('public._setuai_env') is not null").fetchone()[0]
+    if has_marker:
+        _tg.verify_fingerprint(conn, target)                      # raises if it is not the database we were told it is
+    elif target.kind == "supabase":
+        if not _tg.database_is_empty(conn):
+            raise GuardError("hosted database has tables but no fingerprint marker: refusing to stamp or modify it")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS public.schema_migrations ("
         " version TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
     )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS public._setuai_env (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-    )
-    conn.execute("INSERT INTO public._setuai_env VALUES ('env','integration') ON CONFLICT (key) DO NOTHING")
-    conn.execute("INSERT INTO public._setuai_env VALUES ('schema','sih-v2-baseline') ON CONFLICT (key) DO NOTHING")
+    conn.execute("CREATE TABLE IF NOT EXISTS public._setuai_env (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    if not has_marker:
+        rows = [("env", "integration")] if target.kind == "local" else [("env", "hosted"), ("project_ref", target.ref)]
+        for k, v in rows + [("schema", _tg.SCHEMA_ID)]:
+            conn.execute("INSERT INTO public._setuai_env VALUES (%s,%s) ON CONFLICT (key) DO NOTHING", (k, v))
     conn.execute("ALTER TABLE public._setuai_env ENABLE ROW LEVEL SECURITY")
     conn.execute("ALTER TABLE public.schema_migrations ENABLE ROW LEVEL SECURITY")
 
 
 def apply(url: str, with_shim: bool) -> int:
-    host, db = check_target(url)
+    t = _tg.check_target(url, old_host_fn=lambda: _old_shared_host())
+    if with_shim and t.kind != "local":
+        raise GuardError("the local Supabase shim must never be applied to a hosted database")
     files = sorted(MIGRATIONS.glob("*.sql"))
-    with psycopg.connect(url, autocommit=False) as conn:
+    with psycopg.connect(url, autocommit=False, prepare_threshold=None) as conn:
+        require_min_pg(conn)
         if with_shim:
             has_auth = conn.execute("SELECT to_regclass('auth.users') IS NOT NULL").fetchone()[0]
             if not has_auth:
                 conn.execute(SHIM.read_text())
                 conn.commit()
                 print("applied local Supabase shim")
-        ensure_bookkeeping(conn)
+        ensure_bookkeeping(conn, t)
         conn.commit()
         done = dict(conn.execute("SELECT version, checksum FROM public.schema_migrations").fetchall())
         applied = 0
@@ -110,18 +113,18 @@ def apply(url: str, with_shim: bool) -> int:
                 return 1
             applied += 1
             print(f"applied {ver}")
-        print(f"{db}@{host}: {applied} applied, {len(files) - applied} already current")
+        print(f"{t.dbname}@{t.kind}: {applied} applied, {len(files) - applied} already current")
     return 0
 
 
 def status(url: str) -> int:
-    host, db = check_target(url)
-    with psycopg.connect(url) as conn:
+    t = _tg.check_target(url, old_host_fn=lambda: _old_shared_host())
+    with psycopg.connect(url, prepare_threshold=None) as conn:
+        marker = _tg.verify_fingerprint(conn, t)
         rows = conn.execute("SELECT version, checksum FROM public.schema_migrations ORDER BY version").fetchall()
-        marker = conn.execute("SELECT key, value FROM public._setuai_env ORDER BY key").fetchall()
     on_disk = {f.stem: checksum(f) for f in sorted(MIGRATIONS.glob("*.sql"))}
     applied = dict(rows)
-    print(f"target {db}@{host}  marker={dict(marker)}")
+    print(f"target {t.dbname}@{t.kind}  marker={ {k: v for k, v in marker.items() if k != 'project_ref'} }")
     for ver, cs in on_disk.items():
         state = "pending" if ver not in applied else ("ok" if applied[ver] == cs else "CHECKSUM MISMATCH")
         print(f"  {ver}: {state}")

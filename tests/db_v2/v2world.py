@@ -1,8 +1,10 @@
 """Shared builders for the clean-schema tests. Everything runs inside one transaction that the fixture rolls back."""
 from __future__ import annotations
 
+import os
 import re
 import uuid
+from urllib.parse import urlparse
 from datetime import date, timedelta
 from types import SimpleNamespace
 
@@ -10,6 +12,12 @@ import psycopg
 import pytest
 
 TODAY = date.today()
+
+
+def server_base() -> str:
+    """'postgresql://user@host:port/' of the server under test (from DATABASE_URL), so scratch-database tests follow it to any server."""
+    u = urlparse(os.environ.get("DATABASE_URL") or "")
+    return f"{u.scheme}://{u.netloc}/" if u.netloc else "postgresql://postgres@127.0.0.1:54329/"
 
 
 def u() -> uuid.UUID:

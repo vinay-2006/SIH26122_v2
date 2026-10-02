@@ -13,7 +13,9 @@ spec = importlib.util.spec_from_file_location("migrate_v2", ROOT / "db" / "migra
 migrate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(migrate)
 
-BASE = "postgresql://postgres@127.0.0.1:54329/"
+from v2world import server_base
+
+BASE = server_base()
 
 
 @pytest.mark.parametrize("url,why", [

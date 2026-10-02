@@ -6,7 +6,10 @@ left untouched until the backend is ported).
 ```
 db/shim/000_supabase_shim.sql   local-only stand-in for Supabase auth (roles, auth.users, auth.uid()). Never applied to Supabase.
 db/migrations/0001..0008_*.sql  immutable, checksummed migrations
-db/migrate.py                   runner: `apply` / `status`; refuses anything but a local setuai_v2_* database (for now)
+db/migrate.py                   runner: `apply` / `status`; target + fingerprint rules in db/target_guard.py (local, or an allow-listed project)
+db/target_guard.py              which database may be touched; fingerprint (marker row) verification
+db/posture.py                   read-only security-posture verifier (`DB_V2_URL=... python db/posture.py`)
+db/HOSTED_SETUP.md              hosted checklist: what only the owner can do, env names, order of operations
 scripts/db_v2.sh                up | migrate | status | reset | url | psql   (database `setuai_v2_integ` on the local :54329 cluster)
 tests/db_v2/                    schema, authorization, ledger, versioning, RLS and runner/isolation tests
 ```
