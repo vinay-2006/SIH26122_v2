@@ -12,7 +12,7 @@ Per-test overrides use "path::test_name".
 """
 DB_FREE = {
     # v2 hardening: token verification, target guard, scale (no database)
-    "tests/v2_hardening/test_target_guard.py",
+    "tests/v2_hardening/test_jwt_verification.py", "tests/v2_hardening/test_target_guard.py",
     # schedule import: parsers, validation, reconciliation, upload guard (pure logic, no database)
     "tests/schedule_import/test_parsers_golden.py", "tests/schedule_import/test_validation.py",
     "tests/schedule_import/test_reconcile.py", "tests/schedule_import/test_upload_guard.py",
@@ -45,10 +45,11 @@ DB_WRITE = {
     "tests/db_v2/test_schema_and_constraints.py", "tests/db_v2/test_ledger_and_progress.py",
     "tests/db_v2/test_roles_and_authorization.py", "tests/db_v2/test_versioning.py", "tests/db_v2/test_rls.py",
     "tests/db_v2/test_runner_and_isolation.py", "tests/db_v2/test_import_staging_migrations.py",
-    "tests/db_v2/test_profile_sync.py", "tests/db_v2/test_posture.py", "tests/db_v2/test_hosted_stamping.py",
+    "tests/db_v2/test_profile_sync.py", "tests/db_v2/test_pool.py", "tests/db_v2/test_posture.py", "tests/db_v2/test_hosted_stamping.py",
     # schedule import service + v2 API against the isolated setuai_v2_integ database (commits, then truncates after each test)
     "tests/schedule_import/test_api_projects_members.py", "tests/schedule_import/test_api_schedule_flow.py",
     "tests/schedule_import/test_api_authorization.py", "tests/schedule_import/test_api_revision_reconciliation.py",
+    "tests/schedule_import/test_api_auth_hardening.py",
     "backend/routers/test_schedules.py", "backend/shared/test_schedule_index.py",
     "backend/shared/test_schedule_repository_integration.py", "backend/test_m2_intake.py",
     "backend/test_p0_stabilization.py",

@@ -90,6 +90,11 @@ def revoke(user_id: uuid.UUID, capability: str, user: CurrentUser = Depends(get_
     svc.revoke_capability(user, user_id, capability)
 
 
+@router.post("/platform/users/{user_id}/revoke-sessions")
+def revoke_sessions(user_id: uuid.UUID, user: CurrentUser = Depends(get_current_user)):
+    return svc.revoke_sessions(user, user_id)
+
+
 @router.get("/me")
 def me(user: CurrentUser = Depends(get_current_user)):
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "capabilities": sorted(user.capabilities),

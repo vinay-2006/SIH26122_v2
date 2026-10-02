@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from conftest import build_and_activate, connect, file_bytes, ledger_fingerprint, seed_progress, upload
+from v2api import build_and_activate, connect, file_bytes, ledger_fingerprint, seed_progress, upload
 from backend.v2 import audit
 
 P = "/api/v2/projects"

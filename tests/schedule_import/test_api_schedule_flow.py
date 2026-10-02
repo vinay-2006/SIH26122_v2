@@ -2,7 +2,7 @@
 without writing anything."""
 import pytest
 
-from conftest import build_and_activate, connect, file_bytes, upload
+from v2api import build_and_activate, connect, file_bytes, upload
 from backend.v2 import audit
 
 P = "/api/v2/projects"
@@ -198,7 +198,7 @@ def test_unreadable_files_get_a_specific_actionable_error(world, api, name, body
 
 # ---------------------------------------------------------------------------------------------------- atomic build, duplicates, discard
 def test_a_failure_during_build_leaves_no_partial_schedule(world, client_500, monkeypatch):
-    from conftest import Api
+    from v2api import Api
     from backend.v2.services import schedules as svc
     api = Api(client_500)
     iid = upload(api, world.pm, world.project, "csv").json()["import_id"]

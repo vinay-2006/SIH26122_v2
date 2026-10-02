@@ -3,7 +3,7 @@ import datetime as dt
 
 import pytest
 
-from conftest import connect, make_user, token
+from v2api import connect, make_user, token
 from backend.v2 import audit
 
 P = "/api/v2/projects"

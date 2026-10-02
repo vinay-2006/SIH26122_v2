@@ -223,6 +223,18 @@ def revoke_capability(admin: CurrentUser, user_id, capability: str) -> None:
                   entity_id=user_id, after={"capability": capability})
 
 
+def revoke_sessions(admin: CurrentUser, user_id) -> Dict[str, Any]:
+    """Reject every token issued to this user before now (stateless tokens cannot otherwise be revoked)."""
+    if not admin.can("PLATFORM_ADMIN"):
+        raise forbidden("Only a platform admin can revoke sessions", "ADMIN_REQUIRED")
+    with tx(admin.id) as c:
+        r = c.execute("update profiles set tokens_valid_after = now() where id = %s returning id, tokens_valid_after", (user_id,)).fetchone()
+        if r is None:
+            raise ApiError(404, "USER_NOT_FOUND", "No such user")
+        audit.log(c, project_id=None, actor_id=admin.id, role="PLATFORM_ADMIN", action="SESSIONS_REVOKED", entity_type="PROFILE", entity_id=user_id)
+    return {"user_id": r["id"], "tokens_valid_after": r["tokens_valid_after"]}
+
+
 # ------------------------------------------------------------------------------------------------ site engineer report / evidence upload
 def upload_document(user, project_id, kind: str, filename: str, content: bytes, mime: Optional[str]) -> Dict[str, Any]:
     if kind not in DOC_KINDS:

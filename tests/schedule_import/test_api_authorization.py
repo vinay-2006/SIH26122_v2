@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from conftest import connect, file_bytes, upload
+from v2api import connect, file_bytes, upload
 from test_api_schedule_flow import counts
 
 P = "/api/v2/projects"
@@ -116,7 +116,7 @@ def test_project_ids_in_the_url_are_not_proof_of_anything(ready, api):
 
 def test_expired_and_forged_tokens_are_rejected(world, api, monkeypatch):
     import jwt, datetime as dt
-    from conftest import SECRET
+    from v2api import SECRET
     now = dt.datetime.now(dt.timezone.utc)
     expired = jwt.encode({"sub": str(world.pm.id), "exp": now - dt.timedelta(hours=1)}, SECRET, algorithm="HS256")
     forged = jwt.encode({"sub": str(world.pm.id), "exp": now + dt.timedelta(hours=1)}, "a different secret entirely!!!!!!!!!!", algorithm="HS256")
@@ -124,7 +124,8 @@ def test_expired_and_forged_tokens_are_rejected(world, api, monkeypatch):
     for tok in (expired, forged, unsigned, "garbage"):
         r = api.c.get(f"{P}/{world.project}", headers={"Authorization": f"Bearer {tok}"})
         assert r.status_code == 401, tok[:20]
-    ghost = jwt.encode({"sub": str(uuid.uuid4()), "exp": now + dt.timedelta(hours=1)}, SECRET, algorithm="HS256")
+    ghost = jwt.encode({"sub": str(uuid.uuid4()), "aud": "authenticated", "role": "authenticated", "iat": now, "exp": now + dt.timedelta(hours=1)},
+                       SECRET, algorithm="HS256")
     assert api.c.get(f"{P}/{world.project}", headers={"Authorization": f"Bearer {ghost}"}).status_code == 401      # valid token, no profile
 
 

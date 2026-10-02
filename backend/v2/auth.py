@@ -11,8 +11,7 @@ from typing import Optional, Set
 from fastapi import Depends, Path
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from backend.auth.jwt import decode_supabase_jwt
-
+from . import jwt_verify
 from .db import tx
 from .errors import ApiError, forbidden
 from .permissions import ROLE_PERMISSIONS
@@ -51,17 +50,21 @@ class ProjectAccess:
 def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer)) -> CurrentUser:
     if creds is None or not creds.credentials:
         raise ApiError(401, "UNAUTHENTICATED", "Missing bearer token")
-    payload = decode_supabase_jwt(creds.credentials)               # raises 401 itself on a bad / expired token
     try:
-        uid = uuid.UUID(str(payload.get("sub")))
-    except ValueError:
-        raise ApiError(401, "UNAUTHENTICATED", "Invalid token subject")
+        claims = jwt_verify.get_verifier().verify(creds.credentials)
+    except jwt_verify.TokenError as e:
+        raise ApiError(401, e.code, e.message)
+    except jwt_verify.JwksUnavailable:
+        raise ApiError(503, "AUTH_UNAVAILABLE", "Sign-in keys are temporarily unavailable; try again shortly")
+    uid = claims.sub
     with tx() as c:
-        p = c.execute("select id, email, full_name, is_active from profiles where id = %s", (uid,)).fetchone()
+        p = c.execute("select id, email, full_name, is_active, tokens_valid_after from profiles where id = %s", (uid,)).fetchone()
         if p is None:
             raise ApiError(401, "NO_PROFILE", "No profile exists for this identity")
         if not p["is_active"]:
             raise forbidden("This account is deactivated", "ACCOUNT_DISABLED")
+        if p["tokens_valid_after"] is not None and claims.iat < p["tokens_valid_after"].timestamp():
+            raise ApiError(401, "TOKEN_REVOKED", "This session was revoked; sign in again")
         caps = {r["capability"] for r in c.execute(
             "select capability from platform_grants where user_id = %s and revoked_at is null", (uid,)).fetchall()}
     return CurrentUser(id=uid, email=p["email"], full_name=p["full_name"], capabilities=caps)

@@ -8,6 +8,13 @@ scripts/db_v2.sh up
 DB_V2_URL="$(scripts/db_v2.sh url)" SUPABASE_JWT_SECRET=<local-secret> uvicorn backend.v2.app:app --port 8020
 ```
 
+## Configuration (names only; see db/HOSTED_SETUP.md)
+`DB_V2_URL` (never `DATABASE_URL`) · `V2_DB_POOL_MAX` · `V2_DB_ACQUIRE_TIMEOUT_S` · token verification: `V2_JWKS_URL` (ES256/RS256) and/or
+`SUPABASE_JWT_SECRET` (HS256), `SUPABASE_URL` / `V2_JWT_ISSUER`, `V2_JWT_AUDIENCE` · hosted opt-in: `V2_ALLOW_HOSTED=1`, `V2_ALLOWED_PROJECT_REFS`.
+Tokens must carry `aud=authenticated`, `role=authenticated`, `exp`, `iat`, a UUID `sub`, and (when configured / hosted) the right issuer; the key is chosen
+by the token's algorithm, `alg=none` and anonymous users are refused, and an admin can revoke earlier sessions. The API refuses to start with no
+verification key, with a hosted target but no issuer, or with a database whose fingerprint marker does not match.
+
 ## Authorization model
 * Identity: verified JWT. Authority: an ACTIVE `project_memberships` row, looked up per request (the URL's project id proves nothing).
 * Roles: `PROJECT_MANAGER` (projects, settings, members, schedules), `SUPERVISOR` (read; claims/decisions arrive with the execution phase),
