@@ -1,0 +1,115 @@
+ERMHDR	19.12	2026-01-05	Project	admin	primavera	Project Management	USD
+%T	CURRTYPE
+%F	curr_id	curr_short_name
+%R	1	USD
+%T	CALENDAR
+%F	clndr_id	clndr_name	day_hr_cnt	week_hr_cnt
+%R	10	Six-day site calendar	8	48
+%T	PROJECT
+%F	proj_id	proj_short_name	clndr_id	plan_start_date	scd_end_date	last_recalc_date
+%R	1001	NSP-TEST	10	2026-01-12 08:00	2026-07-31 17:00	2026-01-05 00:00
+%T	PROJWBS
+%F	wbs_id	proj_id	wbs_short_name	wbs_name	parent_wbs_id	proj_node_flag	seq_num
+%R	5001	1001	NSP	Northern Spur Test Pipeline		Y	1
+%R	5002	1001	S1	Civil & ROW Preparation	5001	N	2
+%R	5003	1001	ROW	Right of Way	5002	N	3
+%R	5004	1001	FND	Foundations	5002	N	4
+%R	5005	1001	S2	Pipeline Construction	5001	N	5
+%R	5006	1001	ML1	Mainline Section 1	5005	N	6
+%R	5007	1001	S3	Commissioning	5001	N	7
+%T	ACTVTYPE
+%F	actv_code_type_id	actv_code_type	proj_id
+%R	701	Discipline	1001
+%T	ACTVCODE
+%F	actv_code_id	actv_code_type_id	short_name	actv_code_name
+%R	801	701	CIVIL	CIVIL
+%R	802	701	Civil Works	Civil Works
+%R	803	701	Electrical	Electrical
+%R	804	701	Instrumentation	Instrumentation
+%R	805	701	Piping Works	Piping Works
+%R	806	701	Process	Process
+%R	807	701	Safety	Safety
+%T	TASK
+%F	task_id	proj_id	wbs_id	clndr_id	task_code	task_name	task_type	status_code	target_drtn_hr_cnt	total_float_hr_cnt	target_start_date	target_end_date
+%R	9001	1001	5002	10	A0100	Statutory approvals and clearances	TT_Task	TK_NotStart	336.0	24	2026-01-12 08:00	2026-02-28 17:00
+%R	9002	1001	5003	10	A1000	Survey and stake right of way	TT_Task	TK_NotStart	144.0	0	2026-01-12 08:00	2026-01-31 17:00
+%R	9003	1001	5003	10	A1010	Clear and grade right of way	TT_Task	TK_NotStart	288.0	0	2026-02-02 08:00	2026-03-14 17:00
+%R	9004	1001	5004	10	A1020	Pour pump station foundations	TT_Task	TK_NotStart	144.0	96	2026-02-16 08:00	2026-03-07 17:00
+%R	9005	1001	5006	10	A2000	Pipe stringing	TT_Task	TK_NotStart	192.0	0	2026-03-16 08:00	2026-04-11 17:00
+%R	9006	1001	5006	10	A2010	Welding mainline	TT_Task	TK_NotStart	336.0	0	2026-03-30 08:00	2026-05-16 17:00
+%R	9007	1001	5006	10	A2030	Lower-in and backfill	TT_Task	TK_NotStart	240.0	0	2026-05-04 08:00	2026-06-06 17:00
+%R	9008	1001	5007	10	A3000	Hydrostatic test section 1	TT_Task	TK_NotStart	48.0	0	2026-06-08 08:00	2026-06-13 17:00
+%R	9009	1001	5007	10	A3001	Hydrostatic test section 2	TT_Task	TK_NotStart	48.0	0	2026-06-15 08:00	2026-06-20 17:00
+%R	9010	1001	5007	10	A3010	Instrument loop checks	TT_Task	TK_NotStart	144.0	32	2026-06-08 08:00	2026-06-27 17:00
+%R	9011	1001	5007	10	A3020	Electrical energisation	TT_Task	TK_NotStart	48.0	32	2026-06-22 08:00	2026-06-27 17:00
+%R	9012	1001	5007	10	A3030	Commissioning complete	TT_FinMile	TK_NotStart	0	0	2026-07-31 08:00	2026-07-31 17:00
+%T	TASKACTV
+%F	task_id	actv_code_type_id	actv_code_id	proj_id
+%R	9001	701	807	1001
+%R	9002	701	802	1001
+%R	9003	701	802	1001
+%R	9004	701	801	1001
+%R	9005	701	805	1001
+%R	9006	701	805	1001
+%R	9007	701	802	1001
+%R	9008	701	806	1001
+%R	9009	701	806	1001
+%R	9010	701	804	1001
+%R	9011	701	803	1001
+%R	9012	701	806	1001
+%T	TASKPRED
+%F	task_pred_id	task_id	pred_task_id	proj_id	pred_proj_id	pred_type	lag_hr_cnt
+%R	7001	9003	9002	1001	1001	PR_FS	0
+%R	7002	9004	9002	1001	1001	PR_SS	40
+%R	7003	9005	9003	1001	1001	PR_FS	0
+%R	7004	9006	9005	1001	1001	PR_SS	80
+%R	7005	9007	9006	1001	1001	PR_FF	0
+%R	7006	9008	9007	1001	1001	PR_FS	0
+%R	7007	9009	9008	1001	1001	PR_FS	0
+%R	7008	9010	9007	1001	1001	PR_FS	0
+%R	7009	9011	9010	1001	1001	PR_SS	24
+%R	7010	9012	9009	1001	1001	PR_FS	0
+%R	7011	9012	9011	1001	1001	PR_FS	0
+%T	UMEASURE
+%F	unit_id	unit_abbrev	unit_name
+%R	301	joints	joints
+%R	302	km	km
+%R	303	m3	m3
+%R	304	nos	nos
+%R	305	tonne	tonne
+%T	RSRC
+%F	rsrc_id	rsrc_short_name	rsrc_name	rsrc_type	unit_id
+%R	101	ROW_SURVEY_KM	Right of way survey	RT_Mat	302
+%R	102	CLEARED_ROW_KM	Cleared and graded ROW	RT_Mat	302
+%R	103	EXCAVATOR_HOURS	Excavator hours	RT_Equip	
+%R	104	MANHOURS	Manhours	RT_Labor	
+%R	105	CONCRETE_M3	Concrete	RT_Mat	303
+%R	106	STEEL_TONNES	Reinforcement steel	RT_Mat	305
+%R	107	PIPE_STRUNG_KM	Pipe strung	RT_Mat	302
+%R	108	WELD_JOINTS	Weld joints	RT_Mat	301
+%R	109	BACKFILL_M3	Backfill	RT_Mat	303
+%R	110	TEST_SECTIONS	Hydrotest sections	RT_Mat	304
+%R	111	LOOP_CHECKS	Instrument loop checks	RT_Mat	304
+%T	TASKRSRC
+%F	taskrsrc_id	task_id	rsrc_id	proj_id	target_qty
+%R	8001	9002	101	1001	24
+%R	8002	9002	104	1001	800
+%R	8003	9003	102	1001	24
+%R	8004	9003	103	1001	1200
+%R	8005	9003	104	1001	3000
+%R	8006	9004	105	1001	480
+%R	8007	9004	106	1001	36
+%R	8008	9004	104	1001	2400
+%R	8009	9005	107	1001	24
+%R	8010	9005	104	1001	2600
+%R	8011	9006	108	1001	2000
+%R	8012	9006	104	1001	9000
+%R	8013	9007	109	1001	14000
+%R	8014	9007	104	1001	5200
+%R	8015	9008	110	1001	2
+%R	8016	9008	104	1001	300
+%R	8017	9009	110	1001	2
+%R	8018	9009	104	1001	300
+%R	8019	9010	111	1001	64
+%R	8020	9010	104	1001	900
+%E

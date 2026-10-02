@@ -1,0 +1,13 @@
+Activity ID,Activity Name,WBS Path,Discipline,Activity Type,Baseline Duration,Baseline Start,Baseline Finish,Total Float,Predecessors
+A0100,Statutory approvals and clearances,Northern Spur Test Pipeline > Civil & ROW Preparation,Safety,Task,42.0,12-01-2026,28-02-2026,3,
+A1000,Survey and stake right of way,Northern Spur Test Pipeline > Civil & ROW Preparation > Right of Way,Civil Works,Task,18.0,19-01-2026,07-02-2026,0,
+CG-1010,Clear and grade right of way,Northern Spur Test Pipeline > Civil & ROW Preparation > Right of Way,Civil Works,Task,36.0,02-02-2026,14-03-2026,0,A1000FS
+A1020,Pour pump station foundations,Northern Spur Test Pipeline > Civil & ROW Preparation > Foundations,CIVIL,Task,18.0,16-02-2026,07-03-2026,12,A1000SS+5
+A2000-1,Pipe stringing - section 1,Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1,Piping Works,Task,12.0,16-03-2026,28-03-2026,0,CG-1010FS
+A2000-2,Pipe stringing - section 2,Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1,Piping Works,Task,12.0,30-03-2026,11-04-2026,0,A2000-1FS
+A2010,Welding mainline,Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1,Piping Works,Task,42.0,30-03-2026,16-05-2026,0,A2000-1SS+10
+A3000M,Hydrostatic test sections 1 and 2,Northern Spur Test Pipeline > Commissioning,Process,Task,12.0,08-06-2026,20-06-2026,0,A2010FS
+A3010,Instrument loop checks,Northern Spur Test Pipeline > Commissioning,Instrumentation,Task,18.0,08-06-2026,27-06-2026,4,A2010FS
+A3020,Electrical energisation,Northern Spur Test Pipeline > Commissioning,Electrical,Task,6.0,22-06-2026,27-06-2026,4,A3010SS+3
+A4000,Cathodic protection installation,Northern Spur Test Pipeline > Commissioning,Electrical,Task,24.0,22-06-2026,18-07-2026,6,A3020SS
+A3030,Commissioning complete,Northern Spur Test Pipeline > Commissioning,Process,Milestone,0,31-07-2026,31-07-2026,0,A3000MFS;A3020FS

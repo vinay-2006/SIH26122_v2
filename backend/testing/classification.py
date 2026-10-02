@@ -11,6 +11,9 @@ Anything not listed here is UNCLASSIFIED and is treated as DB_WRITE (fail closed
 Per-test overrides use "path::test_name".
 """
 DB_FREE = {
+    # schedule import: parsers, validation, reconciliation, upload guard (pure logic, no database)
+    "tests/schedule_import/test_parsers_golden.py", "tests/schedule_import/test_validation.py",
+    "tests/schedule_import/test_reconcile.py",
     # pure logic
     "backend/routers/test_matching_semantic.py", "backend/shared/test_llm_extraction.py",
     "backend/shared/test_schedule.py", "backend/shared/test_tabular_extraction.py",

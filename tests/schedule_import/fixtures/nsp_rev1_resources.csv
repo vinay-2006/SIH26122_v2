@@ -1,0 +1,20 @@
+Activity ID,Resource ID,Resource Name,Resource Class,Baseline Qty,Unit
+A1000,ROW_SURVEY_KM,Right of way survey,Material,24,km
+A1000,MANHOURS,Manhours,Labor,800,mh
+CG-1010,CLEARED_ROW_KM,Cleared and graded ROW,Material,24,km
+CG-1010,EXCAVATOR_HOURS,Excavator hours,Equipment,1200,hr
+CG-1010,MANHOURS,Manhours,Labor,3000,mh
+A1020,CONCRETE_M3,Concrete,Material,600,m3
+A1020,STEEL_TONNES,Reinforcement steel,Material,36,tonne
+A1020,MANHOURS,Manhours,Labor,2400,mh
+A2000-1,PIPE_STRUNG_KM,Pipe strung,Material,12,km
+A2000-1,MANHOURS,Manhours,Labor,1300,mh
+A2000-2,PIPE_STRUNG_KM,Pipe strung,Material,12,km
+A2000-2,MANHOURS,Manhours,Labor,1300,mh
+A2010,WELD_JOINTS,Weld joints,Material,2000,joints
+A2010,MANHOURS,Manhours,Labor,9000,mh
+A3000M,TEST_SECTIONS,Hydrotest sections,Material,4,nos
+A3000M,MANHOURS,Manhours,Labor,600,mh
+A3010,LOOP_CHECKS,Instrument loop checks,Material,64,nos
+A3010,MANHOURS,Manhours,Labor,900,mh
+A4000,MANHOURS,Manhours,Labor,700,mh

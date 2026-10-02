@@ -1,0 +1,331 @@
+{
+ "activities": {
+  "A0100": {
+   "discipline": "HSE",
+   "duration_days": 42.0,
+   "finish": "2026-02-28",
+   "name": "Statutory approvals and clearances",
+   "predecessors": [],
+   "resources": [],
+   "start": "2026-01-12",
+   "total_float_days": 3.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Civil & ROW Preparation"
+  },
+  "A1000": {
+   "discipline": "CIVIL",
+   "duration_days": 18.0,
+   "finish": "2026-02-07",
+   "name": "Survey and stake right of way",
+   "predecessors": [],
+   "resources": [
+    [
+     "MANHOURS",
+     800.0,
+     "MH"
+    ],
+    [
+     "ROW_SURVEY_KM",
+     24.0,
+     "KM"
+    ]
+   ],
+   "start": "2026-01-19",
+   "total_float_days": 0.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Civil & ROW Preparation > Right of Way"
+  },
+  "A1020": {
+   "discipline": "CIVIL",
+   "duration_days": 18.0,
+   "finish": "2026-03-07",
+   "name": "Pour pump station foundations",
+   "predecessors": [
+    [
+     "A1000",
+     "SS",
+     5.0
+    ]
+   ],
+   "resources": [
+    [
+     "CONCRETE_M3",
+     600.0,
+     "M3"
+    ],
+    [
+     "MANHOURS",
+     2400.0,
+     "MH"
+    ],
+    [
+     "STEEL_TONNES",
+     36.0,
+     "TONNE"
+    ]
+   ],
+   "start": "2026-02-16",
+   "total_float_days": 12.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Civil & ROW Preparation > Foundations"
+  },
+  "A2000-1": {
+   "discipline": "PIPING",
+   "duration_days": 12.0,
+   "finish": "2026-03-28",
+   "name": "Pipe stringing - section 1",
+   "predecessors": [
+    [
+     "CG-1010",
+     "FS",
+     0.0
+    ]
+   ],
+   "resources": [
+    [
+     "MANHOURS",
+     1300.0,
+     "MH"
+    ],
+    [
+     "PIPE_STRUNG_KM",
+     12.0,
+     "KM"
+    ]
+   ],
+   "start": "2026-03-16",
+   "total_float_days": 0.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1"
+  },
+  "A2000-2": {
+   "discipline": "PIPING",
+   "duration_days": 12.0,
+   "finish": "2026-04-11",
+   "name": "Pipe stringing - section 2",
+   "predecessors": [
+    [
+     "A2000-1",
+     "FS",
+     0.0
+    ]
+   ],
+   "resources": [
+    [
+     "MANHOURS",
+     1300.0,
+     "MH"
+    ],
+    [
+     "PIPE_STRUNG_KM",
+     12.0,
+     "KM"
+    ]
+   ],
+   "start": "2026-03-30",
+   "total_float_days": 0.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1"
+  },
+  "A2010": {
+   "discipline": "PIPING",
+   "duration_days": 42.0,
+   "finish": "2026-05-16",
+   "name": "Welding mainline",
+   "predecessors": [
+    [
+     "A2000-1",
+     "SS",
+     10.0
+    ]
+   ],
+   "resources": [
+    [
+     "MANHOURS",
+     9000.0,
+     "MH"
+    ],
+    [
+     "WELD_JOINTS",
+     2000.0,
+     "JOINT"
+    ]
+   ],
+   "start": "2026-03-30",
+   "total_float_days": 0.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1"
+  },
+  "A3000M": {
+   "discipline": "PROCESS",
+   "duration_days": 12.0,
+   "finish": "2026-06-20",
+   "name": "Hydrostatic test sections 1 and 2",
+   "predecessors": [
+    [
+     "A2010",
+     "FS",
+     0.0
+    ]
+   ],
+   "resources": [
+    [
+     "MANHOURS",
+     600.0,
+     "MH"
+    ],
+    [
+     "TEST_SECTIONS",
+     4.0,
+     "NOS"
+    ]
+   ],
+   "start": "2026-06-08",
+   "total_float_days": 0.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Commissioning"
+  },
+  "A3010": {
+   "discipline": "INSTRUMENTATION",
+   "duration_days": 18.0,
+   "finish": "2026-06-27",
+   "name": "Instrument loop checks",
+   "predecessors": [
+    [
+     "A2010",
+     "FS",
+     0.0
+    ]
+   ],
+   "resources": [
+    [
+     "LOOP_CHECKS",
+     64.0,
+     "NOS"
+    ],
+    [
+     "MANHOURS",
+     900.0,
+     "MH"
+    ]
+   ],
+   "start": "2026-06-08",
+   "total_float_days": 4.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Commissioning"
+  },
+  "A3020": {
+   "discipline": "ELECTRICAL",
+   "duration_days": 6.0,
+   "finish": "2026-06-27",
+   "name": "Electrical energisation",
+   "predecessors": [
+    [
+     "A3010",
+     "SS",
+     3.0
+    ]
+   ],
+   "resources": [],
+   "start": "2026-06-22",
+   "total_float_days": 4.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Commissioning"
+  },
+  "A3030": {
+   "discipline": "PROCESS",
+   "duration_days": 0.0,
+   "finish": "2026-07-31",
+   "name": "Commissioning complete",
+   "predecessors": [
+    [
+     "A3000M",
+     "FS",
+     0.0
+    ],
+    [
+     "A3020",
+     "FS",
+     0.0
+    ]
+   ],
+   "resources": [],
+   "start": "2026-07-31",
+   "total_float_days": 0.0,
+   "type": "MILESTONE",
+   "wbs_path": "Northern Spur Test Pipeline > Commissioning"
+  },
+  "A4000": {
+   "discipline": "ELECTRICAL",
+   "duration_days": 24.0,
+   "finish": "2026-07-18",
+   "name": "Cathodic protection installation",
+   "predecessors": [
+    [
+     "A3020",
+     "SS",
+     0.0
+    ]
+   ],
+   "resources": [
+    [
+     "MANHOURS",
+     700.0,
+     "MH"
+    ]
+   ],
+   "start": "2026-06-22",
+   "total_float_days": 6.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Commissioning"
+  },
+  "CG-1010": {
+   "discipline": "CIVIL",
+   "duration_days": 36.0,
+   "finish": "2026-03-14",
+   "name": "Clear and grade right of way",
+   "predecessors": [
+    [
+     "A1000",
+     "FS",
+     0.0
+    ]
+   ],
+   "resources": [
+    [
+     "CLEARED_ROW_KM",
+     24.0,
+     "KM"
+    ],
+    [
+     "EXCAVATOR_HOURS",
+     1200.0,
+     "HR"
+    ],
+    [
+     "MANHOURS",
+     3000.0,
+     "MH"
+    ]
+   ],
+   "start": "2026-02-02",
+   "total_float_days": 0.0,
+   "type": "TASK",
+   "wbs_path": "Northern Spur Test Pipeline > Civil & ROW Preparation > Right of Way"
+  }
+ },
+ "project": {
+  "data_date": "2026-01-05",
+  "planned_finish": "2026-07-31",
+  "planned_start": "2026-01-12"
+ },
+ "wbs_paths": [
+  "Northern Spur Test Pipeline",
+  "Northern Spur Test Pipeline > Civil & ROW Preparation",
+  "Northern Spur Test Pipeline > Civil & ROW Preparation > Foundations",
+  "Northern Spur Test Pipeline > Civil & ROW Preparation > Right of Way",
+  "Northern Spur Test Pipeline > Commissioning",
+  "Northern Spur Test Pipeline > Pipeline Construction",
+  "Northern Spur Test Pipeline > Pipeline Construction > Mainline Section 1"
+ ]
+}
