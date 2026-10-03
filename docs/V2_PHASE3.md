@@ -40,6 +40,8 @@ uvicorn backend.v2.app:app --port 8020                # API; docs at http://127.
 TOKEN=$(python3 scripts/v2_dev_token.py rohit.menon)  # local dev token for a seeded person
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8020/api/v2/projects
 ```
+The existing frontend (`frontend/`) runs against this API in v2 mode - see `docs/V2_FRONTEND.md` (`scripts/v2_dev_stack.sh up`, then `npm run dev:v2`).
+
 Seeded people (all `@seed.setuai.local`): PMs `anita.bora` (A, D), `rohit.menon` (B), `farah.khan` (C); Supervisors `kabir.sarma` (A, D), `lakshmi.iyer` (B), `imran.hussain` (B, C), `meera.das` (C);
 Site Engineers `debojit.gogoi`, `nirmali.saikia`, `pranav.rao` (A, D), `arun.nair`, `sneha.pillai` (B), `tenzin.bhutia`, `ritu.baruah`, `manoj.kalita` (C).
 
@@ -47,7 +49,7 @@ Tests need the isolated test database: `SETUAI_ALLOW_DB_TESTS=1 SETUAI_TEST_ENV=
 DB-free repository tests: `pytest -m 'not db_read and not db_write and not db_destructive' tests backend`.
 
 ## Known limitations and deferred work (Phase 4 and later)
-* No frontend is part of this phase (a frontend needs separate approval). The legacy demo UI and database are untouched.
+* The frontend integration is documented separately in `docs/V2_FRONTEND.md`; the legacy demo UI and database are untouched.
 * Extraction covers CSV, XLSX, text and text-layer PDF only. Scanned / handwritten documents, photographs and voice need OCR / vision / speech and are Phase 4. Live LLM
   extraction does not exist in the v2 code; there is nothing to switch on.
 * Splitting one claim across the children of a split activity (`claim_activity_splits`) is not implemented; nothing is allocated automatically.
