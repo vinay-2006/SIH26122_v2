@@ -57,7 +57,7 @@ def decide_outcome(candidates, *, eligible_empty_reason: Optional[str] = None) -
             "confidence": candidates[0].composite_confidence if candidates else 0.0, "ambiguous": ambiguous, "reason": reason}
 
 
-def rank_claim(project_id, version_id, claim: Dict[str, Any], quantities: List[Dict[str, Any]], activities: List[Dict[str, Any]]) -> Dict[str, Any]:
+def rank_claim(project_id, version_id, claim: Dict[str, Any], quantities: List[Dict[str, Any]], activities: List[Dict[str, Any]], batch_context=None) -> Dict[str, Any]:
     """the engine call itself, with no database writes: eligibility -> optional semantic retrieval -> match_claim -> outcome"""
     m, ExecutionClaim, Elig = _engine()
     ec = ExecutionClaim(**adapter.claim_for_engine(claim, quantities, version_id))
@@ -69,7 +69,7 @@ def rank_claim(project_id, version_id, claim: Dict[str, Any], quantities: List[D
         except Exception as e:                                     # same degradation as the legacy pipeline: no semantic signal, everything else still runs
             semantic_error = f"{type(e).__name__}: {e}"
             logger.warning("semantic retrieval unavailable, matching without it: %s", semantic_error)
-    candidates = m.match_claim(ec, eligible, semantic_results=semantic, batch_context=None)
+    candidates = m.match_claim(ec, eligible, semantic_results=semantic, batch_context=batch_context)
     empty_reason = None
     if not candidates:
         rid = ec.reported_activity_id
@@ -82,7 +82,7 @@ def rank_claim(project_id, version_id, claim: Dict[str, Any], quantities: List[D
     return out
 
 
-def auto_match(c, actor, claim_id, ver, *, overwrite_pick: bool = False) -> Dict[str, Any]:
+def auto_match(c, actor, claim_id, ver, *, overwrite_pick: bool = False, batch_context=None) -> Dict[str, Any]:
     """Match one claim of `actor`'s project against that project's ACTIVE version, inside the caller's transaction `c`.
     Without `overwrite_pick`, a claim that already has an activity (an explicit choice) is left exactly as it is."""
     from ..domain import claims as dc
@@ -94,7 +94,7 @@ def auto_match(c, actor, claim_id, ver, *, overwrite_pick: bool = False) -> Dict
         return {"skipped": "ACTIVITY_ALREADY_CHOSEN", "matched": False}
     activities = adapter.load_activities(c, actor.project_id, ver["version_id"])
     quantities = c.execute("select reported_qty, reported_uom from claim_quantities where event_id = %s order by claim_quantity_id", (claim_id,)).fetchall()
-    res = rank_claim(actor.project_id, ver["version_id"], claim, quantities, activities)
+    res = rank_claim(actor.project_id, ver["version_id"], claim, quantities, activities, batch_context=batch_context)
     by_ext = {a["activity_id"]: a["activity_uid"] for a in activities}
     top3 = res["candidates"][:3]
 

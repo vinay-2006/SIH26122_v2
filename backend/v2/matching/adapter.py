@@ -15,6 +15,8 @@ select ba.activity_uid, ba.external_activity_id, ba.activity_name, ba.descriptio
        ba.baseline_start, ba.baseline_finish, ba.total_float, ba.is_critical, sw.wbs_code,
        (select st.wbs_name from schedule_wbs st where st.version_id = ba.version_id and st.node_type = 'STAGE'
            and sw.wbs_path like st.wbs_path || '%%' order by length(st.wbs_path) desc limit 1) as stage_name,
+       (select st.wbs_uid from schedule_wbs st where st.version_id = ba.version_id and st.node_type = 'STAGE'
+           and sw.wbs_path like st.wbs_path || '%%' order by length(st.wbs_path) desc limit 1) as stage_uid,
        (select count(*) from baseline_resources br where br.version_id = ba.version_id and br.activity_uid = ba.activity_uid and br.measures_progress) as n_measured,
        (select br.baseline_qty from baseline_resources br where br.version_id = ba.version_id and br.activity_uid = ba.activity_uid and br.measures_progress limit 1) as m_qty,
        (select br.unit_of_measure from baseline_resources br where br.version_id = ba.version_id and br.activity_uid = ba.activity_uid and br.measures_progress limit 1) as m_uom,
@@ -42,7 +44,7 @@ def load_activities(conn, project_id, version_id, as_of: Optional[date] = None) 
             "schedule_id": str(version_id), "project_id": str(project_id),
             "activity_id": r["external_activity_id"], "activity_uid": r["activity_uid"],
             "activity_name": r["activity_name"], "description": r["description"], "wbs_code": r["wbs_code"],
-            "discipline": r["discipline_code"], "location": r["location"], "asset_tag": r["asset_tag"], "stage_name": r["stage_name"],
+            "discipline": r["discipline_code"], "location": r["location"], "asset_tag": r["asset_tag"], "stage_name": r["stage_name"], "stage_id": str(r["stage_uid"]) if r["stage_uid"] else None,
             "planned_start": r["baseline_start"], "planned_finish": r["baseline_finish"],
             "planned_quantity": _f(r["m_qty"]) if single else None, "uom": r["m_uom"] if single else None,
             "baseline_pct_complete": 0.0, "total_float": _f(r["total_float"]), "is_critical": r["is_critical"],

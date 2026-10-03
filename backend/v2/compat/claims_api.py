@@ -171,6 +171,14 @@ def submit_extracted(ctx: Ctx, ex, raw_text: str, *, channel: str, document_id=N
     return res
 
 
+def _claim_text(draft, multi: bool) -> str:
+    """The text matching should see for ONE claim: its own line / summary, not the whole document it came from (original batch-intake rule)."""
+    action = (draft.extracted.action or "").strip()
+    if action and (multi or len(draft.raw_text) > 400):
+        return action
+    return draft.raw_text
+
+
 def _legacy_one(ctx: Ctx, claim_id) -> Dict[str, Any]:
     with actor_tx(ctx.actor, readonly=True) as c:
         return one_claim(c, ctx, claim_id)

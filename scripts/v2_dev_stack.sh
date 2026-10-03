@@ -41,6 +41,7 @@ case "${1:-status}" in
     if running; then echo "API already running (pid $(cat "$PIDF"))"; exit 0; fi
     if lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN >/dev/null 2>&1; then echo "refusing: port $API_PORT is already in use by another process" >&2; exit 1; fi
     export V2_CORS_ORIGINS="${V2_CORS_ORIGINS:-http://127.0.0.1:5190,http://localhost:5190}"
+    export EXTRACTION_FALLBACK="${EXTRACTION_FALLBACK:-rules}"      # the original extraction: provider when configured, deterministic rules otherwise
     nohup python3 -m uvicorn backend.v2.app:app --host 127.0.0.1 --port "$API_PORT" >"$LOGF" 2>&1 &
     echo $! >"$PIDF"
     for _ in $(seq 1 60); do

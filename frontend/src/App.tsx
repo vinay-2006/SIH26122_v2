@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthProvider';
 import { ThemeProvider } from './theme/ThemeProvider';
@@ -10,6 +10,7 @@ import { IS_V2 } from './config';
 import { AuthProviderV2 } from './v2/AuthProviderV2';
 import { ProjectProviderV2 } from './v2/ProjectProviderV2';
 import { v2Routes } from './v2/routes';
+import { ScheduleRequired } from './v2/ScheduleRequired';
 
 // Pages
 import LoginScreen from './pages/LoginScreen';
@@ -57,7 +58,7 @@ function App() {
                   </Route>
 
                   {IS_V2 && v2Routes()}
-                  <>
+                  <Route element={IS_V2 ? <ScheduleRequired /> : <Outlet />}>
                   {/* Reviewers (REVIEW_CLAIM: supervisor / planner / project manager / owner) */}
                   <Route element={<ProtectedRoute requires={['REVIEW_CLAIM']} />}>
                     <Route path="/time-agent" element={<TimeAgent />} />
@@ -100,7 +101,7 @@ function App() {
                   <Route element={<ProtectedRoute requires={['MANAGE_BLOCKERS']} />}>
                     <Route path="/root-cause" element={<RootCauseMemory />} />
                   </Route>
-                  </>
+                  </Route>
                 </Route>
 
                 <Route path="*" element={<Navigate to="/" replace />} />

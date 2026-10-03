@@ -58,7 +58,7 @@ def _exif(content: bytes) -> Dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------------------ upload
-def upload_document(user, project_id, role: str, kind: str, filename: str, content: bytes) -> Dict[str, Any]:
+def upload_document(user, project_id, role: str, kind: str, filename: str, content: bytes, batch_id=None) -> Dict[str, Any]:
     allowed = DOC_KINDS if role == SE else SUP_KINDS if role == SUP else ()
     if kind not in DOC_KINDS:
         raise ApiError(422, "BAD_KIND", f"kind must be one of {', '.join(DOC_KINDS)}")
@@ -85,9 +85,9 @@ def upload_document(user, project_id, role: str, kind: str, filename: str, conte
                 c.execute("savepoint ins")
                 row = c.execute(
                     "insert into source_documents (project_id, kind, file_name, mime_type, storage_path, storage_backend, sha256, size_bytes, uploaded_by, extraction_status, "
-                    "captured_at, gps_lat, gps_lon, exif) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) returning document_id, uploaded_at",
+                    "captured_at, gps_lat, gps_lon, exif, batch_id) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s) returning document_id, uploaded_at",
                     (project_id, kind, name, det.mime, key, store.backend, sha, len(content), user.id, "PENDING" if det.family != "image" else None,
-                     meta.get("captured_at"), meta.get("gps_lat"), meta.get("gps_lon"), json.dumps(meta["exif"]) if meta.get("exif") else None)).fetchone()
+                     meta.get("captured_at"), meta.get("gps_lat"), meta.get("gps_lon"), json.dumps(meta["exif"]) if meta.get("exif") else None, batch_id)).fetchone()
             except pge.UniqueViolation as e:
                 c.execute("rollback to savepoint ins")
                 dup = c.execute("select document_id, uploaded_by from source_documents where project_id = %s and kind = %s and sha256 = %s", (project_id, kind, sha)).fetchone()
