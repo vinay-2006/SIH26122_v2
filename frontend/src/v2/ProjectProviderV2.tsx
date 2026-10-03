@@ -17,6 +17,7 @@ import { V2Error } from '@/v2/api/http';
 import type { ProjectDetail, V2Role, VersionRow } from '@/v2/api/types';
 import { toUiPermissions } from '@/v2/permissions';
 import { v2Session } from '@/v2/session';
+import { apiContext } from '@/lib/apiContext';
 
 export interface V2Extra {
   projectId: string;
@@ -70,6 +71,14 @@ export function ProjectProviderV2({ children }: { children: React.ReactNode }) {
   const versions = useMemo(() => (versionsQ.data ?? []).filter((v) => v.status === 'ACTIVE' || v.status === 'SUPERSEDED').map(toVersion), [versionsQ.data]);
   const active = versions.find((v) => v.isCurrent) ?? null;
   const viewing = versions.find((v) => v.id === viewVersion) ?? active;
+
+  // the legacy pages call the legacy API contract (served by the v2 server): it needs the explicit project + schedule-version context on every request
+  const viewingId = (versionsQ.data ?? []).find((v) => v.version_id === viewVersion && (v.status === 'ACTIVE' || v.status === 'SUPERSEDED'))?.version_id
+    ?? (versionsQ.data ?? []).find((v) => v.status === 'ACTIVE')?.version_id ?? null;
+  useEffect(() => {
+    apiContext.set(projectId ?? null, viewingId);
+    return () => apiContext.clear();
+  }, [projectId, viewingId]);
 
   const detail = detailQ.data;
   const currentProject: Project | null = useMemo(() => {

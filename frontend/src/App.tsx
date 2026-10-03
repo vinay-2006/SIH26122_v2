@@ -56,7 +56,8 @@ function App() {
                     <Route path="/" element={<PermissionRedirect />} />
                   </Route>
 
-                  {IS_V2 ? v2Routes() : (<>
+                  {IS_V2 && v2Routes()}
+                  <>
                   {/* Reviewers (REVIEW_CLAIM: supervisor / planner / project manager / owner) */}
                   <Route element={<ProtectedRoute requires={['REVIEW_CLAIM']} />}>
                     <Route path="/time-agent" element={<TimeAgent />} />
@@ -99,7 +100,7 @@ function App() {
                   <Route element={<ProtectedRoute requires={['MANAGE_BLOCKERS']} />}>
                     <Route path="/root-cause" element={<RootCauseMemory />} />
                   </Route>
-                  </>)}
+                  </>
                 </Route>
 
                 <Route path="*" element={<Navigate to="/" replace />} />

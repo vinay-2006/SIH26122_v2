@@ -28,12 +28,12 @@ export function toUiPermissions(serverPermissions: string[]): Permission[] {
   return Array.from(new Set(serverPermissions.flatMap((p) => MAP[p] ?? [])));
 }
 
-/** Where each role lands after sign-in (decided from capabilities, which came from the server). */
+/** Where each role lands after sign-in (decided from capabilities, which came from the server). Supervisors and Site Engineers land exactly where they did in the original demo. */
 export function landingForV2(can: (p: Permission) => boolean): string {
   if (can('MANAGE_PROJECT')) return '/portfolio';
-  if (can('REVIEW_CLAIM')) return '/review';
-  if (can('CREATE_EXECUTION_EVENT')) return '/claims/new';
-  return '/overview';
+  if (can('REVIEW_CLAIM')) return '/dashboard';
+  if (can('CREATE_EXECUTION_EVENT')) return '/intake';
+  return '/wbs';
 }
 
 export const ROLE_LABEL: Record<V2Role, string> = {

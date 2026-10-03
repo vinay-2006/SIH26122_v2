@@ -6,8 +6,11 @@
  *  - centralizes session-expiry handling
  */
 import { apiContext, requestHeaders } from '@/lib/apiContext';
+import { clearAuthToken, getAuthToken } from '@/lib/authToken';
+import { IS_V2, V2_BASE_URL } from '@/config';
 
-export const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+/** legacy builds talk to the legacy backend; v2 builds serve the same /api/v1 contract from the v2 server (backend/v2/compat) */
+export const BASE_URL: string = IS_V2 ? V2_BASE_URL : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
 
 export interface ApiFetchOptions extends RequestInit {
   responseType?: 'json' | 'blob' | 'text';
@@ -99,7 +102,7 @@ export async function apiFetch<T>(path: string, options?: ApiFetchOptions): Prom
     ...(noContext ? {} : apiContext.headers()),
     ...((init.headers as Record<string, string>) ?? {}),
   };
-  const token = localStorage.getItem('supabase_access_token') || localStorage.getItem('auth_token');
+  const token = getAuthToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   let res: Response;
@@ -116,8 +119,7 @@ export async function apiFetch<T>(path: string, options?: ApiFetchOptions): Prom
     const errorText = await res.text().catch(() => '');
     console.error(`[api] ${init.method || 'GET'} ${path} -> ${res.status}`, errorText);
     if (res.status === 401) {
-      localStorage.removeItem('supabase_access_token');
-      localStorage.removeItem('auth_token');
+      clearAuthToken();
       window.dispatchEvent(new Event('auth:unauthorized'));
     }
     const { message, code } = parseError(res.status, errorText);

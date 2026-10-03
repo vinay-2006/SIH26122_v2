@@ -70,7 +70,7 @@ export default function AppShell() {
   const { data: pendingClaims } = useQuery({
     queryKey: ['sidebar-pending-count', projectStatus],
     queryFn: () => digestApi.getAll(),
-    enabled: !IS_V2 && isAuthenticated && isReviewer && projectStatus === 'ready',
+    enabled: isAuthenticated && isReviewer && projectStatus === 'ready',
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -80,7 +80,7 @@ export default function AppShell() {
   const { data: unreadUpdates } = useQuery({
     queryKey: ['v7', 'notifications', selectedProjectId, 'sidebar'],
     queryFn: () => updatesApi.notifications(selectedProjectId!, { unreadOnly: true, limit: 1 }),
-    enabled: !IS_V2 && isAuthenticated && isEngineer && projectStatus === 'ready' && !!selectedProjectId,
+    enabled: isAuthenticated && isEngineer && projectStatus === 'ready' && !!selectedProjectId,
     staleTime: 20_000,
     refetchInterval: 30_000,
   });
@@ -119,7 +119,7 @@ export default function AppShell() {
     { label: 'Project Intelligence',    path: '/intelligence', icon: Bot,          requires: ['VIEW_PROJECT'] },
     { label: 'Audit Trail',             path: '/audit',     icon: Fingerprint,     requires: ['VIEW_AUDIT'] },
   ];
-  const allNavItems = IS_V2 ? v2Nav.items : legacyNavItems;
+  const allNavItems = IS_V2 ? [...v2Nav.items, ...legacyNavItems] : legacyNavItems;
   const navItems = projectStatus === 'ready' ? allNavItems.filter((i) => i.requires.some((p) => can(p))) : [];
 
   const handleLogout = () => {

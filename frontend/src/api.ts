@@ -7,6 +7,7 @@
  */
 import { apiFetch, ApiError, BASE_URL } from './api/client';
 import { apiContext, requestHeaders } from '@/lib/apiContext';
+import { getAuthToken } from '@/lib/authToken';
 
 export { ApiError, apiFetch, BASE_URL };
 
@@ -729,8 +730,8 @@ export const claimsApi = {
     form.append('file', file);
     if (options?.purpose) form.append('purpose', options.purpose);
     if (options?.rawClaimText) form.append('raw_claim_text', options.rawClaimText);
-    const token = localStorage.getItem('supabase_access_token') || localStorage.getItem('auth_token');
-    const headers: Record<string, string> = {};
+    const token = getAuthToken();
+    const headers: Record<string, string> = { ...apiContext.headers() };   // explicit project / schedule context, like every other request
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     const res = await fetch(`${BASE_URL}/api/v1/claims/file`, {

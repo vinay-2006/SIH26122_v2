@@ -5,6 +5,8 @@
  * can forget the context (the backend rejects project-owned requests without it). It is written only by
  * ProjectProvider when the user selects a project / schedule version.
  */
+import { getAuthToken } from '@/lib/authToken';
+
 export const SELECTED_PROJECT_KEY = 'setu_selected_project_id_v7';
 export const SELECTED_VERSION_KEY = 'setu_selected_sched_version_v7';
 
@@ -42,7 +44,7 @@ export const apiContext = {
 /** Auth + context headers for the few call sites that use fetch directly (multipart uploads, blobs). */
 export function requestHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...apiContext.headers(), ...(extra ?? {}) };
-  const token = localStorage.getItem('supabase_access_token') || localStorage.getItem('auth_token');
+  const token = getAuthToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
