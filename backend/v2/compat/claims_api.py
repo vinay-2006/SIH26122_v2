@@ -164,7 +164,7 @@ def submit_extracted(ctx: Ctx, ex, raw_text: str, *, channel: str, document_id=N
         claimed_start=ev_date if et == "ACTUAL_START" else None, claimed_finish=ev_date if et == "ACTUAL_FINISH" else None,
         evidence_document_ids=list(evidence_ids or []), document_id=document_id, batch_id=batch_id, field_provenance=_provenance(ex, schedule=schedule),
         incomplete_ok=bool(question), clarification_question=question, **f)
-    if source_snippet is not None and document_id is not None:
+    if source_snippet is not None:
         with actor_tx(ctx.actor, write=True) as c:
             c.execute("insert into source_references (project_id, event_id, document_id, sheet_name, row_cell_ref, raw_snippet) values (%s,%s,%s,%s,%s,%s)",
                       (ctx.project_id, res["claim_id"], document_id, sheet, cell_ref, source_snippet[:4000]))
@@ -268,6 +268,29 @@ def create_file_claim(file: UploadFile = File(...), purpose: str = Form("EVIDENC
         return load_claims(c, ctx, "e.event_id = any(%(ids)s)", {"ids": out}, order="e.created_at asc")
 
 
+def _xer_progress_claims(ctx: Ctx, name: str, contents: bytes):
+    from backend.routers import intake as li
+    try:
+        drafts = li._xer_claim_drafts(contents)
+    except li.FileParseError as e:
+        raise ApiError(422, "FILE_PARSE_ERROR", str(e))
+    # v2 stores no schedule-format file as a report (those are the Project Manager's); the progress rows are read in memory and each claim records where it came from
+    import hashlib
+    origin = f"{name} (sha256 {hashlib.sha256(contents).hexdigest()[:16]})"
+    out = []
+    for i, d in enumerate(drafts, 1):
+        try:
+            out.append(submit_extracted(ctx, d.extracted, d.raw_text, channel="API", document_id=None, evidence_ids=[], schedule=True, ask=False,
+                                        source_snippet=f"{origin}: {d.raw_text[:3500]}", cell_ref=f"task {i}")["claim_id"])
+        except ApiError as e:
+            if e.code not in ("DUPLICATE_CLAIM", "EMPTY_CLAIM"):             # a row that reports nothing is not a progress report
+                raise
+    if not out:
+        raise ApiError(422, "NO_PROGRESS_ROWS", "The file has no activities with reportable progress (or every claim already exists).")
+    with actor_tx(ctx.actor, readonly=True) as c:
+        return load_claims(c, ctx, "e.event_id = any(%(ids)s)", {"ids": out}, order="e.created_at asc")
+
+
 @router.post("/claims/schedule-export")
 def create_schedule_export_claims(file: UploadFile = File(...), schedule_id: Optional[str] = Form(None), ctx: Ctx = Depends(legacy_ctx(P.SUBMIT_CLAIM, writable=True))):
     """P6 / MS Project progress export used as a SOURCE OF PROGRESS CLAIMS (not a new baseline): every row names its activity, so no LLM is involved."""
@@ -277,6 +300,11 @@ def create_schedule_export_claims(file: UploadFile = File(...), schedule_id: Opt
     if not contents:
         raise ApiError(422, "EMPTY_FILE", "Uploaded file is empty.")
     name = Path(file.filename or "upload").name
+    ext = Path(name).suffix.lower()
+    if ext == ".xer":                                     # a Primavera P6 progress export: the ORIGINAL XER progress reader (the original UI sends .xer here)
+        return _xer_progress_claims(ctx, name, contents)
+    if ext == ".xml":
+        raise ApiError(415, "UNSUPPORTED_FILE", "MS Project XML cannot be read as a progress export; export the progress as CSV / XLSX, or send a Primavera .xer export.")
     try:
         sheets = read_tabular_file(name, contents)
     except ValueError as e:
@@ -305,7 +333,7 @@ def create_schedule_export_claims(file: UploadFile = File(...), schedule_id: Opt
                                        source_snippet=str(row.to_dict()), sheet=sheet or None, cell_ref=f"row {int(idx) + 2}")
                 out.append(res["claim_id"])
             except ApiError as e:
-                if e.code != "DUPLICATE_CLAIM":
+                if e.code not in ("DUPLICATE_CLAIM", "EMPTY_CLAIM"):
                     raise
     if not out:
         raise ApiError(422, "NO_PROGRESS_ROWS", "The file has no rows with reportable progress (or every claim already exists).")

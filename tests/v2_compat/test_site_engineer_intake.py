@@ -108,3 +108,12 @@ def test_a_text_report_file_is_ingested_through_the_original_batch_extractor(kit
     r = lg.post("/api/v1/claims/file", kit.world.se, files={"file": ("dpr.txt", txt, "text/plain")}, data={"purpose": "SCANNED_DIARY"})
     assert r.status_code == 200, r.text
     assert len(r.json()) >= 2 and all(c["input_channel"] == "FILE_UPLOAD" for c in r.json())
+
+
+def test_a_primavera_xer_progress_export_is_read_by_the_original_xer_reader(kit, lg):
+    xer = open("sample_data/demo/sih26122_progress_2026-08-16.xer", "rb").read()
+    r = lg.post("/api/v1/claims/schedule-export", kit.world.se, files={"file": ("progress.xer", xer, "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    claims = r.json()
+    assert len(claims) >= 1 and all(c["input_channel"] == "SCHEDULE_EXPORT" and c["status"] not in ("APPROVED", "EDITED") for c in claims)
+    assert lg.post("/api/v1/claims/schedule-export", kit.world.se, files={"file": ("p.xml", b"<Project/>", "application/xml")}).status_code == 415
