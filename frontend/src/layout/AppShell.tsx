@@ -41,12 +41,14 @@ import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { ProjectGate } from '@/components/ProjectGate';
 import { useProjectState, SELECTED_PROJECT_KEY } from '@/context/ProjectContext';
 import type { Permission } from '@/api/projects';
+import { IS_V2 } from '@/config';
+import { useV2NavData } from '@/v2/nav';
 
 const SIDEBAR_COLLAPSED_KEY = 'setu_sidebar_collapsed_v1';
 
 export default function AppShell() {
   const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
-  const { can, role, status: projectStatus } = useProjectState();
+  const { can, role, status: projectStatus, currentProject } = useProjectState();
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation();
   const location = useLocation();
@@ -68,7 +70,7 @@ export default function AppShell() {
   const { data: pendingClaims } = useQuery({
     queryKey: ['sidebar-pending-count', projectStatus],
     queryFn: () => digestApi.getAll(),
-    enabled: isAuthenticated && isReviewer && projectStatus === 'ready',
+    enabled: !IS_V2 && isAuthenticated && isReviewer && projectStatus === 'ready',
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -78,11 +80,12 @@ export default function AppShell() {
   const { data: unreadUpdates } = useQuery({
     queryKey: ['v7', 'notifications', selectedProjectId, 'sidebar'],
     queryFn: () => updatesApi.notifications(selectedProjectId!, { unreadOnly: true, limit: 1 }),
-    enabled: isAuthenticated && isEngineer && projectStatus === 'ready' && !!selectedProjectId,
+    enabled: !IS_V2 && isAuthenticated && isEngineer && projectStatus === 'ready' && !!selectedProjectId,
     staleTime: 20_000,
     refetchInterval: 30_000,
   });
   const unreadCount = unreadUpdates?.unread_count ?? 0;
+  const v2Nav = useV2NavData(IS_V2 && isAuthenticated && projectStatus === 'ready', currentProject?.id ?? null, can);
   const pendingCount = (pendingClaims || []).filter(
     (c) => c.status === 'REVIEW_REQUIRED' || c.status === 'VALIDATED'
   ).length;
@@ -100,7 +103,7 @@ export default function AppShell() {
   }
 
   // Navigation is driven by the caller's PROJECT permissions (the same RBAC table the backend enforces).
-  const allNavItems: { label: string; path: string; icon: any; badge?: number; requires: Permission[] }[] = [
+  const legacyNavItems: { label: string; path: string; icon: any; badge?: number; requires: Permission[] }[] = [
     { label: t('nav.claimIntake'),      path: '/intake',    icon: PlusCircle,      requires: ['CREATE_EXECUTION_EVENT'] },
     { label: 'Issues & Delays',         path: '/issues',    icon: AlertOctagon,    requires: ['REPORT_ISSUE'] },
     { label: 'My Updates',              path: '/updates',   icon: BellRing,        badge: unreadCount, requires: ['CREATE_EXECUTION_EVENT'] },
@@ -116,6 +119,7 @@ export default function AppShell() {
     { label: 'Project Intelligence',    path: '/intelligence', icon: Bot,          requires: ['VIEW_PROJECT'] },
     { label: 'Audit Trail',             path: '/audit',     icon: Fingerprint,     requires: ['VIEW_AUDIT'] },
   ];
+  const allNavItems = IS_V2 ? v2Nav.items : legacyNavItems;
   const navItems = projectStatus === 'ready' ? allNavItems.filter((i) => i.requires.some((p) => can(p))) : [];
 
   const handleLogout = () => {
@@ -125,6 +129,7 @@ export default function AppShell() {
 
   const userInitials = (user.full_name || user.email || 'U').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const isSupervisor = isReviewer;
+  const isProjectManager = IS_V2 && role === 'PROJECT_MANAGER';
 
   return (
     <div className="min-h-screen flex text-foreground font-sans antialiased selection:bg-[#FF7A18] selection:text-white transition-colors duration-200 relative bg-background">
@@ -270,9 +275,11 @@ export default function AppShell() {
                 <div
                   className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 border border-[#1E3A5F] bg-[#0A2340]"
                 >
-                  {isSupervisor
-                    ? <ShieldCheck className="w-4 h-4 text-[#14B8A6]" />
-                    : <HardHat className="w-4 h-4 text-[#FF8A25]" />}
+                  {isProjectManager
+                    ? <Briefcase className="w-4 h-4 text-[#0284C7]" />
+                    : isSupervisor
+                      ? <ShieldCheck className="w-4 h-4 text-[#14B8A6]" />
+                      : <HardHat className="w-4 h-4 text-[#FF8A25]" />}
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span className="text-xs font-semibold text-[#F5F7FA] truncate">
@@ -281,7 +288,7 @@ export default function AppShell() {
                   <span className="text-[10px] font-medium truncate flex items-center gap-1 text-[#94A8B8]">
                     <span
                       className="w-1.5 h-1.5 rounded-full"
-                      style={{ backgroundColor: isSupervisor ? '#14B8A6' : '#FF8A25' }}
+                      style={{ backgroundColor: isProjectManager ? '#0284C7' : isSupervisor ? '#14B8A6' : '#FF8A25' }}
                     />
                     {role ?? '—'}
                   </span>

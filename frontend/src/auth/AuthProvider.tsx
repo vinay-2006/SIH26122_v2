@@ -3,16 +3,18 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { authApi } from '@/api';
 import { BASE_URL } from '@/api/client';
 
-export type UserRole = 'SITE_ENGINEER' | 'SUPERVISOR';
+export type UserRole = 'SITE_ENGINEER' | 'SUPERVISOR' | 'PROJECT_MANAGER';
 
 export interface User {
   id: string;
   email: string;
   full_name: string;
   role: UserRole;
+  /** v2 only: platform grants from the server (e.g. CREATE_PROJECT). Never trusted from the browser. */
+  capabilities?: string[];
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   loading: boolean;
@@ -61,7 +63,7 @@ function mintDevToken(userId: string): string {
   return `${header}.${payload}.`;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);

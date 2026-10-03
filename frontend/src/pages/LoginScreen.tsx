@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 
 import GlobalIndustrialBackground from '@/components/GlobalIndustrialBackground';
+import { IS_V2, V2_LOCAL_LOGIN_HINTS } from '@/config';
 
 // Local integration demo (isolated DB only): the two prototype identities provisioned by backend/prototype_seed. Enabled by
 // VITE_LOCAL_DEMO_AUTH=true; the backend refuses local-login anywhere except the isolated integration database.
@@ -30,6 +31,14 @@ const LOCAL_DEMO_AUTH = import.meta.env.VITE_LOCAL_DEMO_AUTH === 'true';
 const LOCAL_IDENTITIES = [
   { label: 'Supervisor', email: 'supervisor@setuai.demo' },
   { label: 'Site Engineer', email: 'engineer@setuai.demo' },
+];
+
+// v2 mode: shortcuts that only fill in the EMAIL of a seeded demo person (see docs/V2_PHASE3.md). No password is ever prefilled; the operator who enabled
+// local sign-in on the server chose it. Shown only when VITE_V2_LOCAL_LOGIN=true.
+const V2_IDENTITIES = [
+  { label: 'Project Manager', email: 'anita.bora@seed.setuai.local', Icon: ShieldCheck, color: '#0284C7' },
+  { label: 'Supervisor', email: 'lakshmi.iyer@seed.setuai.local', Icon: ShieldCheck, color: '#0D9488' },
+  { label: 'Site Engineer', email: 'arun.nair@seed.setuai.local', Icon: HardHat, color: '#EA580C' },
 ];
 
 export default function LoginScreen() {
@@ -44,12 +53,15 @@ export default function LoginScreen() {
   const [fieldError, setFieldError] = useState('');
 
   if (isAuthenticated && user) {
-    const defaultRoute = user.role === 'SUPERVISOR' ? '/digest' : '/intake';
+    const defaultRoute = IS_V2 ? '/' : user.role === 'SUPERVISOR' ? '/digest' : '/intake';
     const fromLocation = (location.state as any)?.from;
     const fromPath = fromLocation?.pathname;
     const fullFrom = fromLocation ? `${fromLocation.pathname}${fromLocation.search || ''}` : null;
     let targetRoute = defaultRoute;
-    if (fromPath && fromPath !== '/' && fromPath !== '/login') {
+    if (IS_V2) {
+      // v2: every route guard decides from the SERVER's project permissions, so return to where the person was headed (or the landing page)
+      targetRoute = fullFrom && fromPath !== '/login' ? fullFrom : '/';
+    } else if (fromPath && fromPath !== '/' && fromPath !== '/login') {
       if (user.role === 'SITE_ENGINEER' && fromPath === '/intake') {
         targetRoute = fullFrom || '/intake';
       } else if (user.role === 'SUPERVISOR' && fromPath !== '/intake') {
@@ -77,7 +89,7 @@ export default function LoginScreen() {
 
   const fillDemo = (demoEmail: string) => {
     setEmail(demoEmail);
-    setPassword('Demo123456!');
+    setPassword(IS_V2 ? '' : 'Demo123456!');
     setFieldError('');
     clearError();
   };
@@ -268,7 +280,7 @@ export default function LoginScreen() {
             </form>
 
             {/* Demo Credentials — Level 3 Nested Surfaces */}
-            <div className="pt-2 space-y-3">
+            {(!IS_V2 || V2_LOCAL_LOGIN_HINTS) && <div className="pt-2 space-y-3">
               <div className="flex items-center gap-3">
                 <div className="flex-1 h-px bg-slate-300 dark:bg-[#1E3A5F]" />
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#334155] dark:text-[#94A8B8]">
@@ -276,8 +288,23 @@ export default function LoginScreen() {
                 </span>
                 <div className="flex-1 h-px bg-slate-300 dark:bg-[#1E3A5F]" />
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
-                {LOCAL_DEMO_AUTH
+              <div className={IS_V2 ? 'grid grid-cols-3 gap-2.5' : 'grid grid-cols-2 gap-2.5'}>
+                {IS_V2 ? V2_IDENTITIES.map(({ label, email: e, Icon, color }) => (
+                      <button
+                        key={e}
+                        type="button"
+                        onClick={() => fillDemo(e)}
+                        data-testid={`identity-${e.split('@')[0]}`}
+                        className="p-3 rounded-xl text-left transition-all border bg-[#F1F5F9] dark:bg-[#0A2340] border-slate-300 dark:border-[#1E3A5F] hover:border-[#FF7A18] dark:hover:border-[#FF7A18] hover:bg-white dark:hover:bg-[#0B2D4A] shadow-2xs group cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#071A2D] dark:text-[#F5F7FA] group-hover:text-[#FF7A18] transition-colors">
+                          <Icon className="w-4 h-4" style={{ color }} />
+                          {label}
+                        </div>
+                        <div className="text-[10px] font-mono mt-0.5 truncate text-[#334155] dark:text-[#94A8B8] font-semibold">{e.split('@')[0]}</div>
+                      </button>
+                    ))
+                  : LOCAL_DEMO_AUTH
                   ? LOCAL_IDENTITIES.map((id) => (
                       <button
                         key={id.email}
@@ -320,7 +347,7 @@ export default function LoginScreen() {
                     </>
                   )}
               </div>
-            </div>
+            </div>}
           </div>
         </div>
 

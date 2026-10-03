@@ -4,6 +4,7 @@ import { useProjectState } from '@/context/ProjectContext';
 import { Button } from '@/components/ui/button';
 import { ScheduleImportModal } from '@/components/ScheduleImportModal';
 import { cn } from '@/lib/utils';
+import { IS_V2 } from '@/config';
 
 /** Project + schedule-version selectors. Both choices are explicit and are what every API call carries. */
 export function ProjectSwitcher() {
@@ -34,7 +35,7 @@ export function ProjectSwitcher() {
 
   if (!projects.length) return null;
 
-  const canManageSchedule = can('MANAGE_SCHEDULE');
+  const canManageSchedule = !IS_V2 && can('MANAGE_SCHEDULE'); // v2 schedule management has its own page (Schedule)
   const selectedProjectId = currentProject?.id ?? null;
   const menu =
     'absolute left-0 top-11 w-80 p-2 rounded-2xl bg-white dark:bg-[#071B2D] border border-slate-200 dark:border-[#1E3A5F] shadow-2xl space-y-1 z-50';
@@ -189,7 +190,7 @@ export function ProjectSwitcher() {
                         </div>
                         <div className="flex items-center justify-between w-full text-[10px] text-muted-foreground font-mono">
                           <span>
-                            {ver.activitiesCount} act · {ver.dependenciesCount} deps · {ver.sourceType}
+                            {ver.activitiesCount} act{ver.dependenciesCount >= 0 ? ` · ${ver.dependenciesCount} deps` : ''} · {ver.sourceType}
                           </span>
                           <span>{ver.effectiveDate}</span>
                         </div>

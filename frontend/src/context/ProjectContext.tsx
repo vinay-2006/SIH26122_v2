@@ -77,7 +77,7 @@ export interface Project {
 
 export type ProjectStatus = 'unauthenticated' | 'loading' | 'error' | 'no-projects' | 'needs-schedule' | 'ready';
 
-interface ProjectStateType {
+export interface ProjectStateType {
   status: ProjectStatus;
   error: string | null;
   projects: ProjectListItem[];
@@ -102,7 +102,7 @@ export interface ProjectContextType extends ProjectStateType {
   role: ProjectRole;
 }
 
-const ProjectContext = createContext<ProjectStateType | undefined>(undefined);
+export const ProjectContext = createContext<ProjectStateType | undefined>(undefined);
 
 const versionKey = (projectId: string) => `${SELECTED_VERSION_KEY}:${projectId}`;
 

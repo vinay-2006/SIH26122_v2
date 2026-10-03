@@ -31,7 +31,9 @@ export type Permission =
   | 'WAIVE_QUALITY'
   | 'VIEW_AUDIT'
   | 'MANAGE_BLOCKERS'
-  | 'REPORT_ISSUE';
+  | 'REPORT_ISSUE'
+  /** v2 only: create / edit projects, settings and members (Project Manager) */
+  | 'MANAGE_PROJECT';
 
 export interface ProjectListItem {
   project_id: string;

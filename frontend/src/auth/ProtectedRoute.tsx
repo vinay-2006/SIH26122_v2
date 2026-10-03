@@ -4,6 +4,8 @@ import { useAuth } from '@/auth/AuthProvider';
 import { useProjectState } from '@/context/ProjectContext';
 import type { Permission } from '@/api/projects';
 import { Loader2 } from 'lucide-react';
+import { IS_V2 } from '@/config';
+import { landingForV2 } from '@/v2/permissions';
 
 interface ProtectedRouteProps {
   /** Any-of. The caller's PROJECT permissions (server-authoritative), not a global role. */
@@ -12,6 +14,7 @@ interface ProtectedRouteProps {
 
 /** Where a user with these permissions lands. */
 export function landingFor(can: (p: Permission) => boolean): string {
+  if (IS_V2) return landingForV2(can);
   if (can('REVIEW_CLAIM')) return '/dashboard';
   if (can('CREATE_EXECUTION_EVENT')) return '/intake';
   if (can('VIEW_AUDIT') && !can('MANAGE_QUALITY')) return '/audit'; // auditor: read-only oversight

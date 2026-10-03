@@ -6,6 +6,10 @@ import { ThemeProvider } from './theme/ThemeProvider';
 import { ProjectProvider, useProjectState } from './context/ProjectContext';
 import ProtectedRoute, { landingFor } from './auth/ProtectedRoute';
 import AppShell from './layout/AppShell';
+import { IS_V2 } from './config';
+import { AuthProviderV2 } from './v2/AuthProviderV2';
+import { ProjectProviderV2 } from './v2/ProjectProviderV2';
+import { v2Routes } from './v2/routes';
 
 // Pages
 import LoginScreen from './pages/LoginScreen';
@@ -26,6 +30,10 @@ import RootCauseMemory from './pages/RootCauseMemory';
 
 const queryClient = new QueryClient();
 
+// One build talks to exactly one backend (see config.ts): the providers are chosen once, at start-up.
+const AuthProv = IS_V2 ? AuthProviderV2 : AuthProvider;
+const ProjectProv = IS_V2 ? ProjectProviderV2 : ProjectProvider;
+
 function PermissionRedirect() {
   const { can, status } = useProjectState();
   if (status !== 'ready') return null; // ProjectGate shows the loading / selection state
@@ -36,8 +44,8 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AuthProvider>
-          <ProjectProvider>
+        <AuthProv>
+          <ProjectProv>
             <Router>
               <Routes>
                 <Route path="/login" element={<LoginScreen />} />
@@ -48,6 +56,7 @@ function App() {
                     <Route path="/" element={<PermissionRedirect />} />
                   </Route>
 
+                  {IS_V2 ? v2Routes() : (<>
                   {/* Reviewers (REVIEW_CLAIM: supervisor / planner / project manager / owner) */}
                   <Route element={<ProtectedRoute requires={['REVIEW_CLAIM']} />}>
                     <Route path="/time-agent" element={<TimeAgent />} />
@@ -90,13 +99,14 @@ function App() {
                   <Route element={<ProtectedRoute requires={['MANAGE_BLOCKERS']} />}>
                     <Route path="/root-cause" element={<RootCauseMemory />} />
                   </Route>
+                  </>)}
                 </Route>
 
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Router>
-          </ProjectProvider>
-        </AuthProvider>
+          </ProjectProv>
+        </AuthProv>
       </ThemeProvider>
     </QueryClientProvider>
   );
