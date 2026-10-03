@@ -102,7 +102,11 @@ def _bind(units: Dict[str, Unit], ref: RefData, assigns: List[dict], quantities:
 def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_channel: str = "TYPED", activity_uid=None, reported_activity_ref: Optional[str] = None,
                  quantities: Optional[List[dict]] = None, claimed_pct=None, claimed_start: Optional[date] = None, claimed_finish: Optional[date] = None,
                  location: Optional[str] = None, evidence_document_ids: Optional[List[uuid.UUID]] = None, document_id=None, batch_id=None,
-                 resubmits_event_id=None, field_provenance: Optional[dict] = None, asset_tag: Optional[str] = None) -> Dict[str, Any]:
+                 resubmits_event_id=None, field_provenance: Optional[dict] = None, asset_tag: Optional[str] = None,
+                 incomplete_ok: bool = False, clarification_question: Optional[str] = None, language_detected: Optional[str] = None, delay_reason: Optional[str] = None,
+                 discipline_code: Optional[str] = None, event_type: Optional[str] = None) -> Dict[str, Any]:
+    """File a claim. With `incomplete_ok` and a question, a report that lacks required details (the legacy Field Copilot case: event type, discipline or progress) is kept
+    as REPORTED with that question for the engineer (clarification ASKED); it is not matched, not reviewable and not announced to Supervisors until the answer completes it."""
     require_role(actor, SE, what="submitting a claim")
     require_writable(actor)
     quantities = [dict(q) for q in (quantities or [])]
@@ -121,7 +125,8 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
         raise ApiError(422, "BAD_PERCENT", "claimed_pct must be between 0 and 100")
     if claimed_start and claimed_finish and claimed_finish < claimed_start:
         raise ApiError(422, "BAD_DATES", "claimed_finish is before claimed_start")
-    if not (quantities or claimed_pct is not None or claimed_start or claimed_finish):
+    has_content = bool(quantities or claimed_pct is not None or claimed_start or claimed_finish)
+    if not has_content and not (incomplete_ok and clarification_question):
         raise ApiError(422, "EMPTY_CLAIM", "A claim must report a quantity, a percentage, or an actual start / finish date")
 
     with actor_tx(actor, write=True) as c:
@@ -147,6 +152,9 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
                 raise ApiError(409, "NOT_A_REJECTED_CLAIM", "A correction must be linked to your own REJECTED claim")
         mode = "CUMULATIVE_PCT" if (claimed_pct is not None and not quantities) else ("INCREMENTAL_QTY" if any(q["basis"] == "INCREMENTAL" for q in quantities) else "CUMULATIVE_QTY")
         etype = "PROGRESS" if (quantities or claimed_pct is not None) else ("FINISH" if claimed_finish else "START")
+        if event_type in ("PROGRESS", "START", "FINISH", "DELAY_NOTE"):
+            etype = event_type
+        pending_question = clarification_question if incomplete_ok else None               # a report missing required details waits for its engineer (legacy Field Copilot)
         errors = sum(1 for _, s, _ in findings if s == "ERROR")
         warns = sum(1 for _, s, _ in findings if s == "WARNING")
         priority = Decimal(10 * errors + 3 * warns) + (Decimal(5) if (act_row and act_row["is_critical"]) else Decimal(0))
@@ -156,11 +164,14 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
             ev = c.execute(
                 "insert into execution_events (project_id, filed_in_version_id, document_id, batch_id, event_date, raw_claim_text, input_channel, reported_activity_ref, "
                 "matched_activity_uid, event_type, claim_mode, location, asset_tag, claimed_pct, claimed_start, claimed_finish, filed_by, status, field_provenance, priority_score, "
-                "priority_reasons, claim_fingerprint, resubmits_event_id) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s) returning event_id, status",
+                "priority_reasons, claim_fingerprint, resubmits_event_id, language_detected, discipline_code, delay_reason, clarification_status, clarification_question) "
+                "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning event_id, status",
                 (actor.project_id, ver["version_id"], document_id, batch_id, event_date, text, input_channel, reported_activity_ref, activity_uid, etype, mode, location,
-                 (asset_tag or "").strip() or None, claimed_pct, claimed_start, claimed_finish, actor.user_id, "MATCHED" if activity_uid else "EXTRACTED",
+                 (asset_tag or "").strip() or None, claimed_pct, claimed_start, claimed_finish, actor.user_id,
+                 "REPORTED" if pending_question else ("MATCHED" if activity_uid else "EXTRACTED"),
                  json.dumps(field_provenance or {"activity": "ENGINEER" if activity_uid else None}), priority,
-                 "; ".join(f"{k}" for k, _, _ in findings) or None, fp, resubmits_event_id)).fetchone()
+                 "; ".join(f"{k}" for k, _, _ in findings) or None, fp, resubmits_event_id, language_detected, discipline_code, delay_reason,
+                 "ASKED" if pending_question else "NONE", pending_question)).fetchone()
         except pge.UniqueViolation as e:
             c.execute("rollback to savepoint ins")
             if "uq_event_fingerprint" in str(e):
@@ -185,7 +196,7 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
         for d_id in dict.fromkeys((evidence_document_ids or [])):
             c.execute("insert into claim_evidence (project_id, event_id, document_id) values (%s,%s,%s)", (actor.project_id, eid, d_id))
         auto = None
-        if activity_uid is None:                                             # no explicit choice: the existing matching engine proposes (it never decides or approves)
+        if activity_uid is None and not pending_question:                    # no explicit choice: the existing matching engine proposes (it never decides or approves)
             from ..matching import service as matching
             try:                                                             # a matching failure must never lose the engineer's report: it simply stays for a Supervisor to match
                 c.execute("savepoint automatch")
@@ -215,7 +226,7 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
                 if claimed_pct is not None and o["claimed_pct"] != D(claimed_pct):
                     c.execute("insert into conflict_records (project_id, activity_uid, reporting_period, event_id_a, event_id_b, value_a, value_b, variance_pct) values (%s,%s,%s,%s,%s,%s,%s,%s)",
                               (actor.project_id, activity_uid, event_date, o["event_id"], eid, o["claimed_pct"], D(claimed_pct), abs(D(claimed_pct) - o["claimed_pct"])))
-        for sup in supervisors_of(c, actor.project_id):
+        for sup in ([] if pending_question else supervisors_of(c, actor.project_id)):
             notify(c, project_id=actor.project_id, recipient_id=sup, ntype="CLAIM_SUBMITTED", event_id=eid, created_by=actor.user_id,
                    title="New claim to review" + (f": {act_row['external_activity_id']}" if act_row else ""), body=text[:300])
         audit.log(c, project_id=actor.project_id, actor_id=actor.user_id, role=SE, action="CLAIM_SUBMITTED", entity_type="CLAIM", entity_id=eid, version_id=ver["version_id"],
@@ -241,6 +252,88 @@ def withdraw_claim(actor: ProjectActor, claim_id, reason: str) -> Dict[str, Any]
         audit.log(c, project_id=actor.project_id, actor_id=actor.user_id, role=SE, action="CLAIM_WITHDRAWN", entity_type="CLAIM", entity_id=claim_id,
                   before={"status": claim["status"]}, after={"status": "WITHDRAWN", "reason": reason.strip()})
     return {"claim_id": claim_id, "status": "WITHDRAWN"}
+
+
+def complete_reported_claim(actor: ProjectActor, claim_id, *, answer: str, quantities: Optional[List[dict]] = None, claimed_pct=None, claimed_start=None, claimed_finish=None,
+                            location=None, asset_tag=None, discipline_code=None, delay_reason=None, event_type=None, reported_activity_ref=None, language_detected=None,
+                            field_provenance: Optional[dict] = None) -> Dict[str, Any]:
+    """The engineer answers the Field Copilot's question about their own incomplete (REPORTED) report. Fields found in the answer fill the gaps; the original report text
+    and date stay as filed (claim provenance is immutable), and the answer is stored beside them. Once the report states progress it becomes a normal EXTRACTED claim:
+    it is matched automatically (never approved) and announced to the Supervisors."""
+    require_role(actor, SE, what="answering the clarification of a report")
+    require_writable(actor)
+    if len((answer or "").strip()) < 2:
+        raise ApiError(422, "ANSWER_REQUIRED", "An answer is required")
+    quantities = [dict(q) for q in (quantities or [])]
+    for q in quantities:
+        if q.get("basis") not in BASES or q.get("qty") is None or D(q["qty"]) < 0 or not str(q.get("uom") or "").strip():
+            raise ApiError(422, "BAD_QUANTITY", "Each quantity needs qty >= 0, a unit, and basis CUMULATIVE or INCREMENTAL")
+        q["qty"] = D(q["qty"])
+    if claimed_pct is not None and not (0 <= D(claimed_pct) <= 100):
+        raise ApiError(422, "BAD_PERCENT", "claimed_pct must be between 0 and 100")
+    with actor_tx(actor, write=True) as c:
+        claim = _claim_row(c, actor.project_id, claim_id, lock=True)
+        _own_or_404(actor, claim)
+        if claim["status"] != "REPORTED" or claim["clarification_status"] != "ASKED":
+            raise ApiError(409, "NO_CLARIFICATION_PENDING", "This report is not waiting for a clarification from you")
+        ver = active_version(c, actor.project_id)
+        units, ref = load_units(c), RefData(set(), {}, {k: v.dimension for k, v in load_units(c).items()})
+        bound, findings = _bind(units, ref, [], quantities)
+        existing_q = c.execute("select count(*) n from claim_quantities where event_id = %s", (claim_id,)).fetchone()["n"]
+        has_content = bool(quantities or claimed_pct is not None or claimed_start or claimed_finish or existing_q or claim["claimed_pct"] is not None
+                           or claim["claimed_start"] or claim["claimed_finish"])
+        if existing_q:                                                       # quantities already recorded with the report are never duplicated by the answer
+            bound, quantities = [], []
+        prov = dict(claim.get("field_provenance") or {})
+        prov.update(field_provenance or {})
+        mode = "CUMULATIVE_PCT" if (claimed_pct is not None and not quantities) else ("INCREMENTAL_QTY" if any(q["basis"] == "INCREMENTAL" for q in quantities) else "CUMULATIVE_QTY")
+        etype = event_type if event_type in ("PROGRESS", "START", "FINISH", "DELAY_NOTE") else ("PROGRESS" if (quantities or claimed_pct is not None) else claim["event_type"])
+        errors = sum(1 for _, s_, _ in findings if s_ == "ERROR")
+        warns = sum(1 for _, s_, _ in findings if s_ == "WARNING")
+        fp = _fingerprint(actor.project_id, None, reported_activity_ref or claim["reported_activity_ref"], claim["event_date"], quantities, claimed_pct, claimed_start, claimed_finish, claim["raw_claim_text"])
+        try:
+            c.execute("savepoint cmp")
+            c.execute("update execution_events set status = %s, clarification_status = 'ANSWERED', clarification_answer = %s, event_type = %s, claim_mode = %s, "
+                      "claimed_pct = coalesce(%s, claimed_pct), claimed_start = coalesce(%s, claimed_start), claimed_finish = coalesce(%s, claimed_finish), "
+                      "location = coalesce(%s, location), asset_tag = coalesce(%s, asset_tag), discipline_code = coalesce(%s, discipline_code), delay_reason = coalesce(%s, delay_reason), "
+                      "reported_activity_ref = coalesce(%s, reported_activity_ref), language_detected = coalesce(%s, language_detected), field_provenance = %s::jsonb, "
+                      "priority_score = %s, priority_reasons = %s, claim_fingerprint = %s where project_id = %s and event_id = %s",
+                      ("EXTRACTED" if has_content else "REPORTED", answer.strip(), etype, mode, claimed_pct, claimed_start, claimed_finish, location,
+                       (asset_tag or "").strip() or None, discipline_code, delay_reason, reported_activity_ref, language_detected, json.dumps(prov),
+                       Decimal(10 * errors + 3 * warns), "; ".join(k for k, _, _ in findings) or None, fp if has_content else claim["claim_fingerprint"], actor.project_id, claim_id))
+        except pge.UniqueViolation as e:
+            c.execute("rollback to savepoint cmp")
+            raise ApiError(409, "DUPLICATE_CLAIM", "An identical claim already exists") from e
+        qrows = []
+        for b in bound:
+            cq = c.execute("insert into claim_quantities (project_id, event_id, assignment_uid, reported_resource, qty_basis, reported_qty, reported_uom, normalized_uom, normalized_qty) "
+                           "values (%s,%s,%s,%s,%s,%s,%s,%s,%s) returning claim_quantity_id",
+                           (actor.project_id, claim_id, None, b.get("resource_hint"), b["basis"], b["qty"], b["uom"], b["normalized_uom"], b["normalized_qty"])).fetchone()
+            qrows.append({"claim_quantity_id": cq["claim_quantity_id"], "reported_qty": b["qty"], "reported_uom": b["uom"], "basis": b["basis"]})
+        for code, sev, msg in findings:
+            c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,%s,%s,%s)", (actor.project_id, claim_id, code, sev, msg))
+        auto = None
+        if has_content:
+            from ..matching import service as matching
+            try:
+                c.execute("savepoint automatch")
+                auto = matching.auto_match(c, actor, claim_id, ver)
+            except Exception as e:                                           # noqa: BLE001  (matching must never lose the answered report)
+                c.execute("rollback to savepoint automatch")
+                import logging
+                logging.getLogger(__name__).exception("automatic matching failed for claim %s", claim_id)
+                c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,'AUTOMATIC_MATCH_UNAVAILABLE','INFO',%s)",
+                          (actor.project_id, claim_id, f"Automatic matching could not run ({type(e).__name__}); a Supervisor will match this claim."))
+                auto = {"matched": False, "error": type(e).__name__}
+            for sup in supervisors_of(c, actor.project_id):
+                notify(c, project_id=actor.project_id, recipient_id=sup, ntype="CLAIM_SUBMITTED", event_id=claim_id, created_by=actor.user_id,
+                       title="New claim to review", body=claim["raw_claim_text"][:300])
+        else:
+            c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,'INCOMPLETE_REPORT','ERROR',%s)",
+                      (actor.project_id, claim_id, "The report still does not state progress (a percentage, a quantity or a start / finish)."))
+        audit.log(c, project_id=actor.project_id, actor_id=actor.user_id, role=SE, action="CLAIM_CLARIFICATION_ANSWERED_BY_ENGINEER", entity_type="CLAIM", entity_id=claim_id,
+                  version_id=ver["version_id"], before={"status": "REPORTED"}, after={"status": "EXTRACTED" if has_content else "REPORTED", "completed": has_content})
+    return {"claim_id": claim_id, "completed": has_content, "match": auto, "quantities": qrows}
 
 
 def answer_clarification(actor: ProjectActor, claim_id, answer: str, evidence_document_ids: Optional[List[uuid.UUID]] = None) -> Dict[str, Any]:

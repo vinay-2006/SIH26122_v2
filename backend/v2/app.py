@@ -34,7 +34,7 @@ def create_app() -> FastAPI:
         raise RuntimeError("V2_CORS_ORIGINS must list explicit origins, not '*'")
     if origins:
         app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-                           allow_headers=["Authorization", "Content-Type", "Idempotency-Key"], expose_headers=["Idempotent-Replay", "Content-Disposition"], max_age=600)
+                           allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Project-ID", "X-Schedule-ID"], expose_headers=["Idempotent-Replay", "Content-Disposition"], max_age=600)
     app.include_router(auth_local.router)
     app.include_router(projects.router)
     app.include_router(schedules.router)
@@ -42,6 +42,9 @@ def create_app() -> FastAPI:
     app.include_router(claims.router)
     app.include_router(issues.router)
     app.include_router(dashboard.router)
+    from . import compat                                             # the original SetuAI /api/v1 contract served on v2 data (documented in docs/V2_COMPAT.md, not in the v2 API reference)
+    for r in compat.routers():
+        app.include_router(r, include_in_schema=False)
 
     @app.get("/health")
     def health():
