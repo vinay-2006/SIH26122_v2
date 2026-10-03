@@ -32,6 +32,7 @@ import {
   claimsApi,
   schedulesApi,
   dashboardApi,
+  timeAgentApi,
   ExecutionEvent,
   ScheduleActivity,
   EventType,
@@ -40,6 +41,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/auth/AuthProvider';
 import { useProject } from '@/context/ProjectContext';
+import { IS_V2 } from '@/config';
 import { Building2 } from 'lucide-react';
 
 interface ActionLink {
@@ -68,6 +70,7 @@ interface ChatMessage {
   };
   actionLinks?: ActionLink[];
   submittedEvent?: ExecutionEvent;
+  handedOff?: boolean;
   isSubmitting?: boolean;
 }
 
@@ -532,6 +535,12 @@ export default function TimeAgent() {
     );
 
     try {
+      // v2: a Supervisor never files an execution claim -- the drafted claim is handed to a Site Engineer, who files it through the ordinary intake.
+      if (IS_V2 && isSupervisor) {
+        await timeAgentApi.handOff(claimData, 'Drafted in the Time Agent');
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, isSubmitting: false, handedOff: true } : m)));
+        return;
+      }
       // 1. Submit text to Intake pipeline
       const submitRes = await claimsApi.submitText(claimData.rawText);
       const event = submitRes.event;
@@ -768,7 +777,7 @@ export default function TimeAgent() {
                   )}
 
                   {/* Structured Claim Proposal Card (Field Claims) */}
-                  {msg.suggestedClaim && !msg.submittedEvent && (
+                  {msg.suggestedClaim && !msg.submittedEvent && !msg.handedOff && (
                     <div className="p-3.5 rounded-xl border border-orange-500/30 bg-orange-50/50 dark:bg-orange-950/20 space-y-2.5 text-xs">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5 text-[11px]">
@@ -827,8 +836,22 @@ export default function TimeAgent() {
                         className="w-full h-8 text-xs font-bold bg-gradient-to-r from-[#FF7A18] to-[#FF941F] hover:from-[#E06810] hover:to-[#FF7A18] text-white shadow-xs"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-                        {msg.isSubmitting ? 'Routing to Validation Pipeline...' : 'Submit Claim for Supervisor Review'}
+                        {msg.isSubmitting
+                          ? (IS_V2 && isSupervisor ? 'Handing off...' : 'Routing to Validation Pipeline...')
+                          : (IS_V2 && isSupervisor ? 'Hand Off Draft to Site Engineer' : 'Submit Claim for Supervisor Review')}
                       </Button>
+                    </div>
+                  )}
+
+                  {msg.handedOff && (
+                    <div className="p-3.5 rounded-xl border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/30 text-xs space-y-1">
+                      <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 text-[11px]">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Draft handed off to the Site Engineer
+                      </span>
+                      <p className="text-[11px] text-muted-foreground">
+                        The draft is waiting on the engineer's Intake page. It becomes a claim only when the engineer files it; you will review it here once they do.
+                      </p>
                     </div>
                   )}
 

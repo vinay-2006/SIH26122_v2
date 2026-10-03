@@ -1498,6 +1498,17 @@ export const executionSummaryApi = {
   },
 };
 
+/** v2 only: the Supervisor's Time Agent drafts a claim and hands it to a Site Engineer (a Supervisor never files an execution claim). */
+export interface ClaimHandoff { handoff_id: string; status: 'OPEN' | 'FILED' | 'DISMISSED'; draft: Record<string, any>; note: string | null; created_at: string; filed_event_id: string | null; }
+export const timeAgentApi = {
+  handOff: (draft: Record<string, any>, note?: string): Promise<ClaimHandoff> =>
+    apiFetch('/api/v1/time-agent/handoffs', { method: 'POST', body: JSON.stringify({ draft, note }) }),
+  list: (): Promise<ClaimHandoff[]> => apiFetch('/api/v1/time-agent/handoffs'),
+  filed: (id: string, eventId: string): Promise<ClaimHandoff> =>
+    apiFetch(`/api/v1/time-agent/handoffs/${id}/filed`, { method: 'POST', body: JSON.stringify({ event_id: eventId }) }),
+  dismiss: (id: string): Promise<ClaimHandoff> => apiFetch(`/api/v1/time-agent/handoffs/${id}/dismiss`, { method: 'POST' }),
+};
+
 export const mockP6Api = {
   getReceived: async (): Promise<{ count: number; payloads: any[] }> => {
     return apiFetch('/api/v1/mock-p6/received');

@@ -8,5 +8,5 @@ explicitly: legacy `activity_id` = `external_activity_id` of the viewed schedule
 
 def routers():
     """all legacy-contract routers (imported lazily: they pull in the original extraction / evaluator modules)"""
-    from . import agent_api, batches_api, claims_api, dossier_api, impact_api, intelligence_api, issues_api, knowledge_api, quality_api, reopen_api, review_api, schedule_api, updates_api
-    return [knowledge_api.router, knowledge_api.p6, agent_api.router, dossier_api.router, intelligence_api.router, review_api.router, impact_api.router, claims_api.router, updates_api.router, issues_api.router, schedule_api.router, batches_api.router, quality_api.router, reopen_api.router]
+    from . import agent_api, batches_api, claims_api, dossier_api, impact_api, intelligence_api, issues_api, knowledge_api, quality_api, reopen_api, review_api, schedule_api, time_agent_api, updates_api
+    return [time_agent_api.router, knowledge_api.router, knowledge_api.p6, agent_api.router, dossier_api.router, intelligence_api.router, review_api.router, impact_api.router, claims_api.router, updates_api.router, issues_api.router, schedule_api.router, batches_api.router, quality_api.router, reopen_api.router]

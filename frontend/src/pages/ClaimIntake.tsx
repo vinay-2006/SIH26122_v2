@@ -40,11 +40,15 @@ import {
   ExecutionState,
   QualityGate,
   CompoundImpact,
+  timeAgentApi,
+  ClaimHandoff,
 } from '@/api';
 import { cn } from '@/lib/utils';
 import { useProject } from '@/context/ProjectContext';
 import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
 import { ReopenRequestModal } from '@/components/ReopenRequestModal';
+import { HandoffDrafts } from '@/components/HandoffDrafts';
+import { IS_V2 } from '@/config';
 
 type InputTab = 'batch' | 'text' | 'voice' | 'file';
 
@@ -105,6 +109,9 @@ export default function ClaimIntake() {
   const [reopenModalActivity, setReopenModalActivity] = useState<ScheduleActivity | null>(null);
   const [reopenModalEventId, setReopenModalEventId] = useState<string | undefined>(undefined);
   const [reopenedActivityIds, setReopenedActivityIds] = useState<Set<string>>(new Set());
+  // v2: a draft handed off by the Supervisor's Time Agent that this engineer is filing
+  const handoffRef = useRef<string | null>(null);
+  const [handoffTick, setHandoffTick] = useState(0);
 
   // Web Speech API Initialization
   useEffect(() => {
@@ -399,6 +406,11 @@ export default function ClaimIntake() {
       }
 
       setCreatedEvents(events);
+      if (handoffRef.current && events[0]) {
+        const hid = handoffRef.current;
+        handoffRef.current = null;
+        timeAgentApi.filed(hid, events[0].event_id).then(() => setHandoffTick((n) => n + 1)).catch(() => {});
+      }
 
       // Feature 29: If clarification is required, STOP BEFORE MATCHING
       const hasPending = events.some((ev) => ev.clarification_status === 'PENDING');
@@ -487,6 +499,18 @@ export default function ClaimIntake() {
           </p>
         </div>
       </div>
+
+      {IS_V2 && (
+        <HandoffDrafts
+          refreshKey={handoffTick}
+          onUse={(h) => {
+            handoffRef.current = h.handoff_id;
+            setTextValue(String(h.draft.rawText || ''));
+            setTextError(null);
+            setActiveTab('text');
+          }}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* LEFT COLUMN: Input Form (7 Cols) */}

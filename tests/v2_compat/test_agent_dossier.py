@@ -98,3 +98,28 @@ def test_mock_p6_is_a_development_stand_in(kit, lg, monkeypatch):
     assert lg.post("/api/v1/mock-p6/activities/A2020", kit.world.sup, json=body).status_code == 400   # the original id-mismatch rule
     assert lg.get("/api/v1/mock-p6/received", kit.world.sup).json()["count"] >= 1
     assert lg.get("/api/v1/mock-p6/received", kit.world.se).status_code == 403
+
+
+def test_time_agent_hand_off_goes_to_the_site_engineer_and_a_supervisor_never_files(kit, lg):
+    draft = {"rawText": "Welding mainline A2010: 120 joints completed", "reportedActivityId": "A2010", "eventType": "PROGRESS_UPDATE"}
+    assert lg.post("/api/v1/claims/text", kit.world.sup, json={"raw_claim_text": draft["rawText"]}).status_code == 403            # the role rule stands
+    r = lg.post("/api/v1/time-agent/handoffs", kit.world.sup, json={"draft": draft, "note": "from my walk-round"})
+    assert r.status_code == 200, r.text
+    hid = r.json()["handoff_id"]
+    for who in (kit.world.pm, kit.world.outsider):
+        assert lg.post("/api/v1/time-agent/handoffs", who, json={"draft": draft}).status_code == 403
+        assert lg.get("/api/v1/time-agent/handoffs", who).status_code == 403
+    assert lg.post("/api/v1/time-agent/handoffs", kit.world.se, json={"draft": draft}).status_code == 403                          # an engineer cannot hand off
+    mine = lg.get("/api/v1/time-agent/handoffs", kit.world.se).json()
+    assert [h["handoff_id"] for h in mine] == [hid] and mine[0]["draft"]["reportedActivityId"] == "A2010"
+    with connect() as c:
+        assert c.execute("select count(*) n from execution_events").fetchone()["n"] == 0                                           # a draft is not a claim
+    claim = kit.submit("A2010", qty=120, text=draft["rawText"])
+    assert lg.post(f"/api/v1/time-agent/handoffs/{hid}/filed", kit.world.sup, json={"event_id": str(claim["claim_id"])}).status_code == 403
+    ok = lg.post(f"/api/v1/time-agent/handoffs/{hid}/filed", kit.world.se, json={"event_id": str(claim["claim_id"])})
+    assert ok.status_code == 200 and ok.json()["status"] == "FILED", ok.text
+    assert lg.post(f"/api/v1/time-agent/handoffs/{hid}/dismiss", kit.world.se).status_code == 409
+    assert lg.get("/api/v1/time-agent/handoffs", kit.world.se).json() == []
+    with connect() as c:
+        acts = [r["action"] for r in c.execute("select action from audit_logs where entity_type = 'CLAIM_HANDOFF' order by log_id").fetchall()]
+    assert acts == ["CLAIM_DRAFT_HANDED_OFF", "CLAIM_DRAFT_FILED"]
