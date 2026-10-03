@@ -114,6 +114,11 @@ export default function ReviewWorkspace() {
   const [approvedPct, setApprovedPct] = useState<number | ''>('');
   const [approvedQty, setApprovedQty] = useState<number | ''>('');
   const [justification, setJustification] = useState<string>('');
+  // v2: when the server requires an explicit acknowledgement (approved quantity beyond the baseline tolerance, or a finish below the completion threshold) the decision is
+  // refused with a code; the note is collected here and sent WITH the same decision. It never approves anything by itself.
+  const [ackCode, setAckCode] = useState<'OVERRUN_ACK_REQUIRED' | 'FINISH_BELOW_THRESHOLD' | null>(null);
+  const [ackNote, setAckNote] = useState<string>('');
+  useEffect(() => { setAckCode(null); setAckNote(''); }, [eventIdParam]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [decisionSuccess, setDecisionSuccess] = useState<boolean>(false);
@@ -305,6 +310,11 @@ export default function ReviewWorkspace() {
       return;
     }
 
+    if (ackCode && ackNote.trim().length < 3) {
+      setSubmitError('Add the acknowledgement note below to proceed with this decision.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await decisionsApi.submit({
@@ -314,11 +324,15 @@ export default function ReviewWorkspace() {
         approved_pct: approvedPct !== '' ? Number(approvedPct) : null,
         approved_qty: approvedQty !== '' ? Number(approvedQty) : null,
         justification: justification.trim(),
+        ...(ackCode === 'OVERRUN_ACK_REQUIRED' ? { overrun_ack_note: ackNote.trim() } : {}),
+        ...(ackCode === 'FINISH_BELOW_THRESHOLD' ? { short_close_note: ackNote.trim() } : {}),
       });
       setDecisionSuccess(true);
       loadQueue();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : t('review.errDecisionFailed');
+      const code = (err as { code?: string })?.code;
+      if (code === 'OVERRUN_ACK_REQUIRED' || code === 'FINISH_BELOW_THRESHOLD') setAckCode(code);
       setSubmitError(msg);
     } finally {
       setIsSubmitting(false);
@@ -1353,6 +1367,21 @@ export default function ReviewWorkspace() {
                     className="text-xs"
                   />
                 </div>
+
+                {ackCode && (
+                  <div data-testid="ack-note" className="space-y-1.5 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">
+                    <Label className="text-xs text-foreground font-bold flex items-center justify-between">
+                      <span>{ackCode === 'OVERRUN_ACK_REQUIRED' ? 'Acknowledge the baseline overrun' : 'Short-close note'}</span>
+                      <span className="text-[10px] text-destructive uppercase font-bold">{t('review.mandatory')}</span>
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      {ackCode === 'OVERRUN_ACK_REQUIRED'
+                        ? 'The approved quantity exceeds the baseline beyond the project tolerance. Your note is recorded with this decision and in the audit trail; it does not approve anything by itself.'
+                        : 'Finishing below the project completion threshold needs a note. It is recorded with this decision.'}
+                    </p>
+                    <Textarea rows={2} value={ackNote} onChange={(e) => setAckNote(e.target.value)} className="text-xs" />
+                  </div>
+                )}
 
                 {/* Completed Activity Lock Notice in Decision Form */}
                 {(() => {

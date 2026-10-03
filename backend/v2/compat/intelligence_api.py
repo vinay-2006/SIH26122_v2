@@ -195,6 +195,25 @@ def execution_summary(start: Optional[str] = None, end: Optional[str] = None, di
                    "key_highlights": highlights, "aggregate": agg, "generated_at": datetime.now(timezone.utc).isoformat()})
 
 
+@router.get("/api/v1/execution-summary")
+def execution_summary_phase7(period: str = "last_7_days", start_date: Optional[str] = None, end_date: Optional[str] = None, discipline: str = "ALL", language: str = "en",
+                             schedule_id: Optional[str] = None, ctx: Ctx = Depends(legacy_ctx(P.REVIEW_CLAIMS))):
+    """The original Phase 7 summary (the Dashboard's AI summary card): the original handler's three steps -- deterministic aggregate, canonical English text, optional
+    translation -- over the project's v2 data."""
+    from backend.routers.summary import SUPPORTED_LANGUAGES, build_deterministic_aggregate, generate_llm_summary, translate_dynamic_text
+    lang = (language or "en").strip().lower()[:2]
+    if lang not in SUPPORTED_LANGUAGES:
+        lang = "en"
+    aggregate = _run(ctx, lambda c, v: build_deterministic_aggregate(period=period, start_date=start_date, end_date=end_date, discipline=discipline, conn=c, schedule_id=v))
+    canonical, generated_by = generate_llm_summary(aggregate)
+    cached = False
+    text = canonical
+    if lang != "en":
+        text, cached = translate_dynamic_text(canonical, lang)
+    return _clean({"period": aggregate["period"], "discipline": aggregate["discipline"], "aggregate": aggregate, "canonical_summary": canonical, "summary": text, "language": lang,
+                   "cached": cached, "generated_by": generated_by})
+
+
 class TranslateIn(BaseModel):
     texts: List[str] = Field(max_length=40)
     target_language: str

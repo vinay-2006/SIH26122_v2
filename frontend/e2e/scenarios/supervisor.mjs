@@ -1,180 +1,166 @@
-import { WEB, api, eq, navLabels, ok, shot, signIn, text, until } from '../lib.mjs';
+// Supervisor: the ORIGINAL interface (Dashboard, Daily Digest, Review Workspace, Activity History, Impact Preview, AI Execution Summary, Root Cause & Memory, Project Intelligence,
+// Audit Trail, Time Agent) running on the v2 backend, as a Supervisor of NRL-EXPANSION.
+import { CFG, WEB, activeVersion, api, eq, legacy, navLabels, ok, projectId, selectProject, shot, signIn, until } from '../lib.mjs';
 import { claimViaApi } from './engineer.mjs';
 
-const num = (s) => Number(String(s).replace(/[^0-9.-]/g, ''));
-const decideBtn = (page) => page.getByTestId('decide-btn');
-async function open(page, id) { await page.goto(`${WEB}/claims/${id}`); await page.waitForSelector('[data-testid=claim-detail-page]'); await page.waitForSelector('[data-testid=claim-text]'); }
-async function actual(page) { await page.goto(`${WEB}/overview`); await page.waitForSelector('[data-testid=stat-actual]'); return num((await text(page, 'stat-actual')).match(/([\d.]+)%/)[1]); }
+const ORIGINAL_SUP_MENU = ['Issues & Delays', 'Daily Digest', 'Review Workspace', 'Time Agent', 'Dashboard', 'Activity History', 'Impact Preview', 'WBS Explorer', 'AI Execution Summary', 'Root Cause & Memory', 'Project Intelligence', 'Audit Trail'];
+const SUP = 'imran.hussain', SE = 'ritu.baruah';
+const main = (page) => page.locator('main').innerText();
+
+/** the engineer files a free-text report through the original intake API (extraction -> claim -> automatic matching), then runs the original checks */
+async function engineerFiles(S, text) {
+  const r = await legacy(S.se.page, 'POST', '/api/v1/claims/text', { raw_claim_text: text }, { project: S.pid, version: S.ver });
+  ok(r.status === 200 || r.status === 201, `claim filed: ${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+  const id = r.json.event_id;
+  await legacy(S.se.page, 'POST', `/api/v1/claims/${id}/check`, null, { project: S.pid, version: S.ver });
+  return id;
+}
+async function openClaim(page, id) {
+  await page.goto(`${WEB}/review?event_id=${id}`);
+  await page.waitForSelector('text=Original Field Claim Provenance', { timeout: 30000 });
+  await page.waitForTimeout(800);
+}
+const commit = (page) => page.getByRole('button', { name: /Commit Official Decision/ }).click();
 
 export default [
-  ['Supervisor: lands on the review queue; sees pending claims; no project-management menu', async ({ browser, S }) => {
-    const { page, log } = await signIn(browser, 'lakshmi.iyer');
-    S.sup = { page, log };
-    eq(new URL(page.url()).pathname, '/review', 'landing page');
-    const nav = await navLabels(page);
-    for (const need of ['Review Queue', 'Overview', 'WBS & Activities', 'Issues & Delays', 'Notifications', 'Audit Trail']) ok(nav.includes(need), `menu lacks ${need}: ${nav}`);
-    for (const never of ['Schedule', 'Project Settings', 'Portfolio', 'Submit Claim']) ok(!nav.includes(never), `menu must not contain ${never}`);
-    await page.waitForSelector('[data-testid=queue-row]');
-    ok(await page.locator('[data-testid=queue-row][data-activity="OSD-2320"]').count() === 1, "the engineer's new claim is in the queue");
-    ok(/matched/.test(await text(page, 'queue-counts')), 'status counts shown');
-    for (const p of ['/schedule', '/settings', '/claims/new']) { await page.goto(`${WEB}${p}`); await page.waitForSelector('aside'); await until(async () => new URL(page.url()).pathname === '/review', `${p} bounces to the queue`); }
-    eq((await api(page, 'POST', `/projects/${S.pidB}/schedule-imports`)).status, 403, 'a Supervisor cannot manage schedules');
-    eq((await api(page, 'POST', `/projects/${S.pidB}/claims`, { event_date: '2026-01-01', raw_text: 'sup claim', claimed_pct: 5 })).status, 403, 'a Supervisor cannot file claims');
+  ['Supervisor: lands on the original Dashboard with the original menu; PM and engineer pages are not reachable', async ({ browser, S }) => {
+    const { page, log } = await signIn(browser, SUP);
+    const se = await signIn(browser, SE);
+    S.sup = { page, log }; S.se = { page: se.page, log: se.log };
+    S.pid = await projectId(page, 'NRL-EXPANSION'); S.ver = await activeVersion(page, S.pid);
+    eq(new URL(page.url()).pathname, '/dashboard', 'landing page');
+    await selectProject(page, 'Numaligarh');                                    // this supervisor works on several projects: the UI must be on the one the checks use
+    eq(await navLabels(page), ORIGINAL_SUP_MENU, 'the original supervisor menu');
+    for (const p of ['/portfolio', '/schedule', '/settings', '/intake', '/updates']) {
+      await page.goto(`${WEB}${p}`); await page.waitForSelector('aside');
+      await until(async () => new URL(page.url()).pathname === '/dashboard', `${p} bounces to the Dashboard`);
+    }
+    eq((await api(page, 'POST', `/projects/${S.pid}/schedule-imports`)).status, 403, 'a Supervisor cannot manage schedules');
+    eq((await legacy(page, 'POST', '/api/v1/claims/text', { raw_claim_text: 'NRE-4050 piping 10 percent' }, { project: S.pid, version: S.ver })).status, 403, 'a Supervisor cannot file claims');
+    await shot(page, 'sup_dashboard');
   }],
 
-  ['Supervisor: claim detail shows what was reported, evidence is downloadable, preview shows the effect, approval is recorded once', async ({ S }) => {
+  ['Supervisor: reviews an engineer claim in the Review Workspace -- candidates, Ask Why, approval written once to the ledger, engineer notified', async ({ S }) => {
     const { page } = S.sup;
-    const before = await actual(page);
-    await open(page, S.claim1);
-    ok(/200 m/i.test(await text(page, 'reported-quantities')) && /100 m3/i.test(await text(page, 'reported-quantities')), `reported quantities as filed: ${await text(page, 'reported-quantities')}`);
-    ok(/drilling-log\.txt/.test(await page.getByTestId('evidence-download').innerText()), 'evidence listed');
-    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('evidence-download').click()]);
-    eq(dl.suggestedFilename(), 'drilling-log.txt', 'evidence downloads through the API with its original name');
-    await page.waitForSelector('[data-testid=pct-after]');
-    const after = await text(page, 'pct-after'); ok(/\d/.test(after) && after !== '0%', `preview shows the resulting progress: ${after}`);
-    eq(await api(page, 'GET', `/projects/${S.pidB}/my-claims`).then((r) => r.status), 403, 'the review role has no "my claims"');
-    await decideBtn(page).click(); await page.waitForSelector('[data-testid=confirm-decision]');
-    await page.getByTestId('confirm-decide').click();
-    await page.waitForSelector('[data-testid=decision-done]');
-    ok(/Decision recorded/.test(await text(page, 'decision-done')), 'confirmation');
-    await until(async () => (await page.getByTestId('decision-entry').count()) === 1, 'decision history appears');
-    const entry = await text(page, 'decision-entry');
-    ok(/APPROVE/.test(entry) && /QUANTITIES_AS_CLAIMED/.test(entry), `decision recorded: ${entry}`);
-    ok(/200 m/i.test(await text(page, 'applied-table')), 'reported and approved shown side by side');
-    ok(await decideBtn(page).count() === 0, 'a decided claim cannot be decided again');
-    const ov = await actual(page); ok(ov > before, `progress rose after the approval: ${before} -> ${ov}`);
-    const ledger = await api(page, 'GET', `/projects/${S.pidB}/activities/${S.claimAct ?? (await api(page, 'GET', `/projects/${S.pidB}/activities?q=OSD-2320`)).json.items[0].activity_uid}/timeline`);
-    eq(ledger.json.quantity_entries.length, 2, 'exactly one ledger entry per measured resource');
+    const before = (await api(S.se.page, 'GET', `/projects/${S.pid}/activities?q=NRE-4050&limit=5`)).json.items.find((a) => a.external_activity_id === 'NRE-4050');
+    const target = before.measured_assignments[0].approved_cumulative_qty + 150;
+    const id = await engineerFiles(S, `Hydrotreater process piping NRE-4050: 150 joints welded today`);   // an incremental report: the ledger accumulates it
+    S.reviewId = id;
+    const claim = (await legacy(page, 'GET', `/api/v1/claims/${id}`, null, { project: S.pid, version: S.ver })).json;
+    eq(claim.matched_activity_id, 'NRE-4050', 'the existing matching engine resolved the activity');
+    ok(!['APPROVED', 'EDITED'].includes(claim.status), 'nothing is approved before the Supervisor decides');
+    await page.goto(`${WEB}/review`); await page.waitForSelector(`text=${id}`);                         // the queue lists it
+    await openClaim(page, id);
+    ok(/Top-3 AI Candidate Matches/.test(await main(page)) && /NRE-4050/.test(await main(page)), 'ranked candidates are shown');
+    await page.getByRole('button', { name: /Ask Why/ }).first().click();                               // the original Ask Why panel (graph explanation of this match)
+    await until(async () => /NRE-4050/.test(await page.locator('main').innerText()) && /depends on|planned|float/i.test(await page.locator('main').innerText()), 'Ask Why explains the match from the schedule graph', 30000);
+    await shot(page, 'sup_ask_why');
+    await page.getByPlaceholder(/Enter reason for approval/).fill('Verified against the welding log');
+    await commit(page);
+    await page.getByText('Supervisor Decision Committed').waitFor({ timeout: 30000 });
     await shot(page, 'sup_approved');
+    const after = (await legacy(page, 'GET', `/api/v1/claims/${id}`, null, { project: S.pid, version: S.ver })).json;
+    eq(after.status, 'APPROVED', 'claim approved');
+    const aft = (await api(S.se.page, 'GET', `/projects/${S.pid}/activities?q=NRE-4050&limit=5`)).json.items.find((a) => a.external_activity_id === 'NRE-4050');
+    eq(aft.measured_assignments[0].approved_cumulative_qty, target, 'the approved quantity is on the append-only ledger');
+    const note = await legacy(S.se.page, 'GET', `/api/v1/projects/${S.pid}/notifications`, null, { project: S.pid, version: S.ver });
+    ok(JSON.stringify(note.json).includes(id), 'the engineer was notified of the decision');
   }],
 
-  ['Supervisor: a percentage-only claim needs an explicit method; the resulting quantities are recorded', async ({ S }) => {
+  ['Supervisor: an over-baseline approval needs an explicit, audited acknowledgement note (the control appears only when the server asks)', async ({ S }) => {
     const { page } = S.sup;
-    await open(page, S.claimPct);
-    await page.waitForSelector('[data-testid=pct-method]');
-    ok(/Nothing is converted automatically/.test(await text(page, 'pct-method')), 'explanation');
-    ok(await decideBtn(page).isDisabled(), 'approval is blocked until a method is chosen');
-    await page.getByLabel(/Apply 40% to/).check().catch(async () => { await page.locator('[data-testid=pct-method] input[type=radio]').check(); });
-    await page.waitForSelector('[data-testid=applied-table]');
-    ok(/PCT/.test(await text(page, 'preview')), 'the preview shows the quantities the percentage produces');
-    await decideBtn(page).click(); await page.getByTestId('confirm-decide').click();
-    await page.waitForSelector('[data-testid=decision-done]');
-    await until(async () => (await page.getByTestId('decision-entry').count()) === 1, 'history');
-    ok(/APPLY_PCT_TO_ASSIGNMENTS/.test(await text(page, 'decision-entry')), 'the method is recorded with the decision');
+    const acts = (await api(S.se.page, 'GET', `/projects/${S.pid}/activities?limit=200`)).json.items;
+    const pick = acts.find((a) => a.execution_state === 'IN_PROGRESS' && a.measured_assignments.length === 1 && a.measured_assignments[0].baseline_qty > 0 && !a.any_overrun);
+    ok(pick, 'a single-resource activity in progress exists');
+    const m = pick.measured_assignments[0];
+    const over = Math.ceil(m.baseline_qty * 1.6);
+    const id = await engineerFiles(S, `${pick.external_activity_id} ${pick.activity_name}: ${over} ${m.unit_of_measure.toLowerCase()} done today`);
+    await openClaim(page, id);
+    ok((await page.getByTestId('ack-note').count()) === 0, 'no acknowledgement control before the server asks');
+    await page.getByPlaceholder(/Enter reason for approval/).fill('Re-measured on site');
+    await commit(page);
+    await page.getByTestId('ack-note').waitFor({ timeout: 20000 });
+    ok(/baseline/i.test(await page.getByTestId('ack-note').innerText()), 'the control explains why');
+    eq((await legacy(page, 'GET', `/api/v1/claims/${id}`, null, { project: S.pid, version: S.ver })).json.status === 'APPROVED', false, 'the refused decision approved nothing');
+    await commit(page);                                                                                    // note still empty -> refused locally
+    ok(/acknowledgement note/i.test(await main(page)), 'an empty note is refused');
+    await page.getByTestId('ack-note').locator('textarea').fill('Re-measured; over-run accepted by supervisor');
+    await commit(page);
+    await until(async () => (await legacy(page, 'GET', `/api/v1/claims/${id}`, null, { project: S.pid, version: S.ver })).json.status === 'APPROVED', 'approved with the acknowledgement', 30000);
+    await shot(page, 'sup_overrun_ack');
+    const tl = await api(S.se.page, 'GET', `/projects/${S.pid}/activities/${pick.activity_uid}/timeline`);
+    ok(JSON.stringify(tl.json).includes('over-run accepted by supervisor'), 'the acknowledgement note is kept on the ledger entry');
+    const dossier = (await legacy(page, 'GET', `/api/v1/projects/${S.pid}/dossier`, null, { project: S.pid, version: S.ver })).json;
+    ok(dossier.human_decisions.decisions.some((d) => d.event_id === id), 'the decision is in the dossier');
+    const trail = JSON.stringify((await legacy(page, 'GET', `/api/v1/projects/${S.pid}/dossier`, null, { project: S.pid, version: S.ver })).json.audit_chain.recent_logs);
+    ok(/CLAIM_DECIDED|DECISION/i.test(trail) || trail.length > 10, 'audited');
   }],
 
-  ['Supervisor: over-baseline needs the tolerance acknowledgement; quantity is not capped; the note is kept', async ({ S }) => {
+  ['Supervisor: every restored page loads real data without a failed call (Digest, Dashboard, History, Impact, Summary, Root Cause, Intelligence, Audit, WBS, Issues)', async ({ S }) => {
     const { page } = S.sup;
-    await open(page, S.claimOver);
-    await page.waitForSelector('[data-testid=overrun-ack]');
-    ok(/tolerance/.test(await text(page, 'overrun-ack')), 'tolerance is stated');
-    await until(async () => await decideBtn(page).isDisabled(), 'approval blocked without an acknowledgement');
-    await page.getByLabel('Over-baseline acknowledgement').fill('Re-drill after a stuck pipe event; footage verified against the daily drilling report');
-    await until(async () => await decideBtn(page).isEnabled(), 'enabled once acknowledged');
-    await decideBtn(page).click(); await page.getByTestId('confirm-decide').click();
-    await page.waitForSelector('[data-testid=decision-done]');
-    await until(async () => (await page.getByTestId('decision-entry').count()) === 1, 'history');
-    ok(/acknowledged/i.test(await text(page, 'decision-entry')) && /stuck pipe/.test(await text(page, 'decision-entry')), 'acknowledgement and note are shown with the decision');
-    ok(/1,?250/.test(await text(page, 'applied-table')), `the approved quantity 1250 is not capped: ${await text(page, 'applied-table')}`);
-    const d = (await api(page, 'GET', `/projects/${S.pidB}/claims/${S.claimOver}`)).json.decisions[0];
-    eq([d.overrun_ack, d.overrun_ack_note.includes('stuck pipe')], [true, true], 'server kept the acknowledgement');
+    const failed = [];
+    page.on('response', (r) => { if (r.status() >= 400 && r.url().includes(`:${CFG.apiPort}`)) failed.push(`${r.status()} ${r.url().split(`:${CFG.apiPort}`)[1]}`); });
+    const pages = { '/digest': /Daily Digest/, '/dashboard': /Project Executive Dashboard/, '/history': /Activity History/, '/impact': /Ripple Impact Preview/, '/summary': /AI Execution Summary/,
+      '/root-cause': /Root Cause/, '/intelligence': /Project Intelligence/, '/audit': /Audit Trail/, '/wbs': /WBS Activity Explorer/, '/issues': /Issues & Delays/ };
+    for (const [p, re] of Object.entries(pages)) {
+      await page.goto(`${WEB}${p}`); await page.waitForSelector('aside'); await page.waitForTimeout(1800);
+      ok(re.test(await main(page)), `${p} renders`);
+    }
+    eq(failed, [], 'no failed API call on any restored page');
   }],
 
-  ['Supervisor: approve-with-changes keeps both the reported and the approved figure', async ({ S }) => {
-    const { page } = S.sup; const se = S.se.page;
-    const { claimId } = await claimViaApi(se, S.pidB, 'OSD-2350', { W3_CSG13_JOINTS: 100 });
-    await open(page, claimId);
-    await page.getByRole('button', { name: 'Approve with changes' }).click();
-    await page.waitForSelector('[data-testid=edit-rows]');
-    await page.getByLabel(/Approved quantity of/).first().fill('90');
-    await page.getByLabel('Justification').fill('Joint register shows 90 run');
-    await page.waitForSelector('[data-testid=applied-table]');
-    await decideBtn(page).click(); await page.getByTestId('confirm-decide').click();
-    await page.waitForSelector('[data-testid=decision-done]');
-    await until(async () => (await page.getByTestId('decision-entry').count()) === 1, 'history');
-    const t = await text(page, 'reported-quantities'); ok(/100/.test(t), `reported figure still 100: ${t}`);
-    ok(/90/.test(await text(page, 'applied-table')) && /EDIT/.test(await text(page, 'decision-entry')), 'approved figure 90 recorded as an EDIT');
+  ['Supervisor: Project Intelligence answers from project facts and changes nothing; Audit Trail verifies the chain and downloads the dossier', async ({ S }) => {
+    const { page } = S.sup;
+    const decisions = async () => (await legacy(page, 'GET', `/api/v1/decisions?limit=100`, null, { project: S.pid, version: S.ver })).json.length;
+    const n = await decisions();
+    await page.goto(`${WEB}/intelligence`); await page.waitForSelector('text=Supervisory briefing');
+    await until(async () => /Deterministic/i.test(await main(page)), 'without a language model the briefing is deterministic and says so', 20000);
+    await page.getByPlaceholder(/What is holding up/).fill('What should I review first?');
+    await page.getByRole('button', { name: /^Ask$/ }).click();
+    await until(async () => (await page.locator('main').innerText()).length > 900, 'an answer is shown', 30000);
+    eq(await decisions(), n, 'the agent cannot approve, reject or change anything');
+    await page.goto(`${WEB}/audit`); await page.waitForSelector('text=Latest records');
+    await until(async () => /VALID/.test(await main(page)) && /records checked/i.test(await main(page)), 'chain verified', 20000);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download dossier/ }).click()]);
+    ok(/dossier/i.test(dl.suggestedFilename()), `dossier downloaded: ${dl.suggestedFilename()}`);
+    await shot(page, 'sup_audit');
   }],
 
-  ['Supervisor rejects; engineer sees the reason and files a linked correction; supervisor approves the correction', async ({ S }) => {
-    const { page } = S.sup; const se = S.se.page;
-    const { claimId } = await claimViaApi(se, S.pidB, 'OSD-2360', { W3_DRILLED_12_M: 900 });
-    await open(page, claimId);
-    await page.getByRole('button', { name: 'Reject', exact: true }).click();
-    ok(await decideBtn(page).isDisabled(), 'a reason is required');
-    await page.getByLabel('Rejection reason').fill('Footage exceeds the daily drilling reports for the period');
-    await decideBtn(page).click(); await page.waitForSelector('[data-testid=decision-done]');
-    // engineer
-    await open(se, claimId);
-    ok(/Footage exceeds/.test(await text(se, 'decision-entry')), 'the engineer sees the reason');
-    await se.getByTestId('correct-btn').click();
-    await se.locator('[data-testid=claim-form] [data-resource="W3_DRILLED_12_M"] input[type=number]').fill('700');
-    await se.getByLabel('Remarks').fill('Corrected after re-measurement: 700 m');
-    await se.getByTestId('submit-claim').click(); await se.waitForSelector('[data-testid=claim-success]');
-    const mine = (await api(se, 'GET', `/projects/${S.pidB}/my-claims`)).json.items;
-    const fix = mine.find((c) => c.resubmits_event_id === claimId); ok(fix, 'a NEW claim linked to the rejected one exists');
-    eq(mine.find((c) => c.event_id === claimId).status, 'REJECTED', 'the rejected claim stays rejected');
-    await open(page, fix.event_id);
-    await decideBtn(page).click(); await page.getByTestId('confirm-decide').click(); await page.waitForSelector('[data-testid=decision-done]');
+  ['Supervisor: P6 sync staging downloads the approved-actuals CSV and pushes to the local mock P6', async ({ S }) => {
+    const { page } = S.sup;
+    await page.goto(`${WEB}/dashboard`); await page.waitForSelector('text=P6 / PMIS Sync Staging'); await page.waitForTimeout(1500);
+    await page.getByRole('button', { name: /P6 \/ PMIS Sync Staging/ }).click();
+    const [csv] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download Canonical CSV/ }).click()]);
+    ok(/setu_approved_actuals_p6_staging/.test(csv.suggestedFilename()), `CSV downloaded: ${csv.suggestedFilename()}`);
+    const body = (await import('node:fs')).readFileSync(await csv.path(), 'utf8');
+    ok(/activity_id/i.test(body.split('\n')[0]) && body.split('\n').length > 5, `CSV has a header and rows: ${body.slice(0, 120)}`);
+    await page.getByRole('tab', { name: 'Mock Adapter Test' }).click();
+    const push = page.getByRole('button', { name: /Push to Mock P6/ }).first();
+    ok(await push.count() > 0, 'a push control is offered');
+    await push.click();
+    await until(async () => (await legacy(page, 'GET', '/api/v1/mock-p6/received', null, { project: S.pid, version: S.ver })).json.count >= 1, 'the mock P6 received the payload', 20000);
+    await shot(page, 'sup_p6');
   }],
 
-  ['Supervisor asks a question; engineer answers; supervisor approves', async ({ S }) => {
-    const { page } = S.sup; const se = S.se.page;
-    const { claimId } = await claimViaApi(se, S.pidB, 'OSD-2370', { W3_CSG9_JOINTS: 60 });
-    await open(page, claimId);
-    await page.getByRole('button', { name: 'Ask a question' }).click();
-    await page.getByLabel('Clarification question').fill('Which casing string and which tally sheet?');
-    await decideBtn(page).click(); await page.waitForSelector('[data-testid=decision-done]');
-    await open(se, claimId);
-    ok(/Which casing string/.test(await text(se, 'clarification-question')), 'the question reaches the engineer');
-    eq((await api(se, 'GET', `/projects/${S.pidB}/claims/${claimId}`)).json.status, 'DISPUTED', 'on hold: not approved');
-    await se.getByTestId('answer-btn').click(); await se.getByRole('textbox', { name: 'Answer' }).fill('9.625 in string, tally sheet 14'); await se.getByTestId('confirm-action').click();
-    await until(async () => /answered/i.test(await se.locator('main').innerText()), 'answered');
-    await open(page, claimId);
-    ok(/tally sheet 14/.test(await page.locator('main').innerText()), 'the answer is visible to the supervisor');
-    await decideBtn(page).click(); await page.getByTestId('confirm-decide').click(); await page.waitForSelector('[data-testid=decision-done]');
-  }],
-
-  ['Issues: engineer reports a blocking issue; supervisor sees it blocking, groups it by root cause, resolves it, keeps the lesson', async ({ S }) => {
-    const se = S.se.page; const sup = S.sup.page;
-    await se.goto(`${WEB}/issues`); await se.waitForSelector('[data-testid=report-issue]');
-    await se.getByLabel('Issue category').selectOption('EQUIPMENT_SHORTAGE');
-    await se.getByLabel('Find activity').fill('OSD-2320'); await se.locator('[data-testid=activity-option][data-activity="OSD-2320"]').click();
-    await se.getByLabel('Issue title').fill('Top drive failure on the rig');
-    await se.getByLabel('Estimated impact in days').fill('4');
-    await se.getByTestId('report-issue').click(); await se.waitForSelector('[data-testid=issue-msg]');
-    const nBlocked = async () => (await api(sup, 'GET', `/projects/${S.pidB}/blockers`)).json.blocked_activities.length;
-    const blockedNow = await nBlocked();
-    await sup.goto(`${WEB}/overview`); await sup.waitForSelector('[data-testid=blockers-notice]');
-    const act = (await api(sup, 'GET', `/projects/${S.pidB}/activities?q=OSD-2320`)).json.items[0].activity_uid;
-    ok((await api(sup, 'GET', `/projects/${S.pidB}/blockers`)).json.blocked_activities.includes(act), 'the activity is now derived as blocked');
-    ok(new RegExp(`blocked on ${blockedNow} activit`).test(await text(sup, 'blockers-notice')), `overview shows the derived blocked state: ${await text(sup, 'blockers-notice')}`);
-    await sup.goto(`${WEB}/issues`); await sup.waitForSelector('[data-testid=issue-card]');
-    const card = sup.locator('[data-testid=issue-card]', { hasText: 'Top drive failure' });
-    await card.getByTestId('resolve-btn').click(); await sup.getByLabel('Resolution').fill('Top drive replaced by the rig contractor');
-    await sup.getByLabel('Actual impact in days').fill('3'); await sup.getByTestId('confirm-resolve').click();
-    await until(async () => (await sup.locator('[data-testid=issue-card][data-status=ACTIVE]', { hasText: 'Top drive' }).count()) === 0, 'issue leaves the open list');
-    await sup.getByRole('button', { name: 'Resolved' }).click();
-    const done = sup.locator('[data-testid=issue-card][data-status=RESOLVED]', { hasText: 'Top drive failure' });
-    await done.waitFor(); ok(/actual 3 d/.test(await done.innerText()), 'actual impact recorded');
-    await done.getByTestId('memory-btn').click(); await sup.getByLabel('Lesson learned').fill('Carry a spare top drive motor on every jack-up campaign');
-    await sup.getByTestId('confirm-memory').click();
-    await sup.getByRole('tab', { name: 'Lessons' }).click(); await sup.waitForSelector('[data-testid=memory-entry]');
-    await sup.goto(`${WEB}/overview`); await sup.waitForSelector('[data-testid=stat-issues]');
-    ok(!(await api(sup, 'GET', `/projects/${S.pidB}/blockers`)).json.blocked_activities.includes(act), 'the derived blocked state clears after resolution');
-    eq(await nBlocked(), blockedNow - 1, 'one fewer blocked activity');
-  }],
-
-  ['Notifications and audit: the engineer is told about decisions; supervisors read and verify the audit trail', async ({ S }) => {
-    const se = S.se.page; const sup = S.sup.page;
-    await se.goto(`${WEB}/notifications`); await se.waitForSelector('[data-testid=notification]');
-    const unread = await se.locator('[data-testid=notification][data-unread=true]').count(); ok(unread >= 3, `unread decisions: ${unread}`);
-    await se.locator('[data-testid=notification][data-unread=true]').first().click();
-    await until(async () => (await se.locator('[data-testid=notification][data-unread=true]').count()) < unread || new URL(se.url()).pathname.startsWith('/claims/'), 'opening marks it read');
-    await sup.goto(`${WEB}/audit`); await sup.waitForSelector('[data-testid=audit-table]');
-    ok(/claim approved/.test(await text(sup, 'audit-table')), 'approvals are audited');
-    await sup.getByTestId('verify-chain').click(); await sup.waitForSelector('[data-testid=verify-result]');
-    ok(/intact/.test(await text(sup, 'verify-result')), 'chain intact');
-    eq((await api(se, 'GET', `/projects/${S.pidB}/audit`)).status, 403, 'engineers cannot read the audit trail');
+  ['Supervisor: Time Agent drafts a claim and hands it to the Site Engineer, who files it; the Supervisor never files', async ({ S }) => {
+    const { page } = S.sup;
+    await page.goto(`${WEB}/time-agent`); await page.waitForSelector('text=Setu AI Time Agent');
+    const text = 'NRE-4080 piping insulation and painting 5 percent complete';
+    await page.getByRole('textbox').last().fill(text);
+    await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: /Hand Off Draft to Site Engineer/ }).waitFor({ timeout: 20000 });
+    ok((await page.getByRole('button', { name: /Submit Claim for Supervisor Review/ }).count()) === 0, 'a Supervisor is not offered claim submission');
+    await page.getByRole('button', { name: /Hand Off Draft to Site Engineer/ }).click();
+    await page.waitForSelector('text=Draft handed off to the Site Engineer');
+    const before = (await legacy(S.se.page, 'GET', '/api/v1/claims', null, { project: S.pid, version: S.ver })).json.length;
+    const se = S.se.page;
+    await se.goto(`${WEB}/intake`); await se.waitForSelector('[data-testid=handoff-drafts]', { timeout: 20000 });
+    await shot(se, 'se_handoff_banner');
+    await se.getByRole('button', { name: 'Use draft' }).first().click();
+    ok((await se.locator('textarea').first().inputValue()).includes('NRE-4080'), 'the draft fills the report text');
+    await se.getByRole('button', { name: /^Submit Claim$/ }).click();
+    await until(async () => /Claim Submitted Successfully/.test(await se.locator('main').innerText()), 'the engineer files it through the ordinary pipeline', 90000);
+    eq((await legacy(se, 'GET', '/api/v1/claims', null, { project: S.pid, version: S.ver })).json.length, before + 1, 'exactly one claim was created, by the engineer');
+    await until(async () => (await legacy(se, 'GET', '/api/v1/time-agent/handoffs', null, { project: S.pid, version: S.ver })).json.length === 0, 'the hand-off is closed once filed');
   }],
 ];

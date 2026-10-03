@@ -123,3 +123,13 @@ def test_time_agent_hand_off_goes_to_the_site_engineer_and_a_supervisor_never_fi
     with connect() as c:
         acts = [r["action"] for r in c.execute("select action from audit_logs where entity_type = 'CLAIM_HANDOFF' order by log_id").fetchall()]
     assert acts == ["CLAIM_DRAFT_HANDED_OFF", "CLAIM_DRAFT_FILED"]
+
+
+def test_phase7_execution_summary_runs_the_original_aggregate(kit, lg):
+    kit.approve(kit.submit("A2010", qty=100)["claim_id"])
+    r = lg.get("/api/v1/execution-summary?period=last_7_days&discipline=ALL&language=en", kit.world.sup)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["aggregate"]["period"] and b["canonical_summary"] and b["language"] == "en"
+    for who in (kit.world.pm, kit.world.se):
+        assert lg.get("/api/v1/execution-summary", who).status_code == 403

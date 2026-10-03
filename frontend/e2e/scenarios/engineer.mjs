@@ -117,6 +117,6 @@ export default [
     ok(/My claims|DECISIONS/i.test(await page.locator('main').innerText()), 'My Updates content');
     await page.goto(`${WEB}/wbs`); await page.waitForSelector('text=WBS Activity Explorer');
     await until(async () => /WBS groups/.test(await page.locator('main').innerText()), 'WBS groups load');
-    ok(S.se.log.errors.filter((e) => !/agent\/briefing|api\/v1\/.*-> 404/.test(e)).length === 0, `no unexpected console errors: ${S.se.log.errors.slice(0, 3)}`);
+    ok(S.se.log.errors.length === 0, `no unexpected console errors: ${S.se.log.errors.slice(0, 3)}`);
   }],
 ];

@@ -44,7 +44,7 @@ export function useV2Project(): V2Extra {
 function toVersion(v: VersionRow): ScheduleVersion {
   return {
     id: v.version_id, versionNumber: `v${v.version_no}`, name: `v${v.version_no}${v.baseline_name ? ` · ${v.baseline_name}` : ''}`,
-    status: v.status === 'ACTIVE' ? 'ACTIVE' : 'ARCHIVED', isCurrent: v.status === 'ACTIVE', isImmutable: !!v.locked_at,
+    status: v.status === 'ACTIVE' ? 'ACTIVE' : 'ARCHIVED', isCurrent: v.status === 'ACTIVE', isImmutable: v.status !== 'ACTIVE',
     effectiveDate: v.data_date ?? '', sourceType: v.kind, activitiesCount: v.activities, dependenciesCount: -1, supersedes: v.parent_version_id,
   };
 }

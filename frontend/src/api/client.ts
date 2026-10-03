@@ -82,7 +82,8 @@ function parseError(status: number, bodyText: string): ParsedError {
       return { message: message || fallback, code };
     }
     if (typeof detail === 'string' && detail.trim() && !detail.trim().startsWith('Traceback')) {
-      return { message: detail };
+      // the v2 error envelope carries a machine code beside the message ({"error": {"code", "message"}}); keep it so screens can react to it
+      return { message: detail, code: typeof parsed?.error?.code === 'string' ? parsed.error.code : undefined };
     }
     if (Array.isArray(detail) && detail.length) {
       const first = detail[0];

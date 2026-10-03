@@ -834,6 +834,9 @@ export const decisionsApi = {
     approved_pct?: number | null;
     approved_qty?: number | null;
     justification: string;
+    /** v2: the server asks for an explicit note (409 OVERRUN_ACK_REQUIRED / FINISH_BELOW_THRESHOLD); it is kept with the decision */
+    overrun_ack_note?: string;
+    short_close_note?: string;
   }): Promise<PlannerDecision> => {
     const data: any = await apiFetch('/api/v1/decisions', {
       method: 'POST',
