@@ -67,3 +67,34 @@ def test_dossier_has_the_original_sections_and_hides_claim_content_from_the_pm(k
     assert one["scope"] == "ACTIVITY" and len(one["activities"]["activities"]) == 1
     assert lg.get(P(kit, "/dossier"), kit.world.se).status_code == 403
     assert lg.get(P(kit, "/dossier/audit-verification"), kit.world.pm).json()["status"] == "VALID"
+
+
+def test_ask_why_knowledge_graph_and_investigation_run_the_original_code(kit, lg, ver):
+    c = kit.submit("A2010", qty=100, text="Welding A2010 WHY-MARKER")
+    eid = c["claim_id"]
+    why = lg.get(f"/api/v1/graph/explain/A2010?event_id={eid}&depth=2", kit.world.sup)
+    assert why.status_code == 200, why.text
+    w = why.json()
+    assert w["activity_id"] == "A2010" and w["reasoning_steps"] and w["entities_involved"][0]["name"] == "A2010"
+    assert any("depends on" in s for s in w["reasoning_steps"])                       # the upstream dependency walk ran on v2 dependencies
+    kg = lg.get(f"/api/v1/claims/{eid}/knowledge-graph", kit.world.sup)
+    assert kg.status_code == 200, kg.text
+    assert kg.json()["nodes"]
+    ag = lg.get("/api/v1/graph/activity/A2010?depth=1", kit.world.sup)
+    assert ag.status_code == 200 and ag.json()["nodes"], ag.text
+    inv = lg.get("/api/v1/investigation/activity/A2010?depth=1", kit.world.sup)
+    assert inv.status_code == 200 and inv.json()["root_activity_id"] == "A2010", inv.text
+    for who in (kit.world.pm, kit.world.se, kit.world.outsider):                       # claim content: Supervisor only
+        for url in (f"/api/v1/graph/explain/A2010?event_id={eid}", f"/api/v1/claims/{eid}/knowledge-graph", "/api/v1/graph/activity/A2010", "/api/v1/investigation/activity/A2010"):
+            assert lg.get(url, who).status_code == 403, (url, who.name)
+
+
+def test_mock_p6_is_a_development_stand_in(kit, lg, monkeypatch):
+    assert lg.get("/api/v1/mock-p6/received", kit.world.sup).status_code == 404         # off unless local sign-in is enabled
+    monkeypatch.setenv("V2_LOCAL_LOGIN_PASSWORD", "x" * 14)
+    body = {"Id": "A2010", "PercentComplete": 40.0}
+    r = lg.post("/api/v1/mock-p6/activities/A2010", kit.world.sup, json=body)
+    assert r.status_code == 200 and r.json()["status"] == "success", r.text
+    assert lg.post("/api/v1/mock-p6/activities/A2020", kit.world.sup, json=body).status_code == 400   # the original id-mismatch rule
+    assert lg.get("/api/v1/mock-p6/received", kit.world.sup).json()["count"] >= 1
+    assert lg.get("/api/v1/mock-p6/received", kit.world.se).status_code == 403
