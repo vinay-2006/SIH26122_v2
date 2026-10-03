@@ -118,8 +118,13 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
     assigns = measured_assignments(conn, ver["version_id"], uid)
     by_uid = {a["assignment_uid"]: a for a in assigns}
     heads, head_act = _heads(conn, assigns, uid)
-    if head_act is not None and head_act["actual_finish"] is not None and not rw and p.get("action", "APPROVE") in ("APPROVE", "EDIT"):
-        raise ApiError(409, "REOPEN_NOT_ALLOWED", "This activity is completed. Request a governed reopen before changing it.", {"actual_finish": str(head_act["actual_finish"])})
+    # ---- a completed activity (100%) can only be changed through the governed reopen (decision D7), never by an ordinary approval
+    if not rw and p.get("action", "APPROVE") in ("APPROVE", "EDIT"):
+        done_pct = weighted_pct((a["progress_weight"], heads[a["assignment_uid"]][0], a["baseline_qty"]) for a in assigns) if assigns else D(head_act["reported_pct"] if head_act and head_act["reported_pct"] is not None else 0)
+        if done_pct >= 100 or (head_act is not None and head_act["actual_finish"] is not None):
+            raise ApiError(409, "REOPEN_NOT_ALLOWED", "This activity is completed. A completed activity cannot be changed by an ordinary approval; request a governed reopen first.",
+                           {"activity_pct": str(done_pct)})
+
     units = load_units(conn)
     quantities = conn.execute("select * from claim_quantities where event_id = %s order by claim_quantity_id", (claim["event_id"],)).fetchall()
     bound = [q for q in quantities if q["assignment_uid"] is not None]

@@ -20,8 +20,7 @@ select ba.activity_uid, ba.external_activity_id, ba.activity_name, ba.descriptio
        (select count(*) from baseline_resources br where br.version_id = ba.version_id and br.activity_uid = ba.activity_uid and br.measures_progress) as n_measured,
        (select br.baseline_qty from baseline_resources br where br.version_id = ba.version_id and br.activity_uid = ba.activity_uid and br.measures_progress limit 1) as m_qty,
        (select br.unit_of_measure from baseline_resources br where br.version_id = ba.version_id and br.activity_uid = ba.activity_uid and br.measures_progress limit 1) as m_uom,
-       p.physical_pct, p.actual_start, p.actual_finish,
-       (select ar.status from activity_reopens ar where ar.project_id = ba.project_id and ar.activity_uid = ba.activity_uid and ar.status in ('REQUESTED','APPROVED')) as reopen_status
+       p.physical_pct, p.actual_start, p.actual_finish
   from baseline_activities ba
   join schedule_wbs sw on sw.wbs_id = ba.wbs_id
   left join activity_progress_as_of(%(version)s, %(asof)s) p on p.activity_uid = ba.activity_uid
@@ -37,6 +36,8 @@ def _f(v) -> Optional[float]:
 def load_activities(conn, project_id, version_id, as_of: Optional[date] = None) -> List[Dict[str, Any]]:
     """Activities of one version as legacy `schedule_activities` dicts. activity_id is the external id (unique within a version);
     `activity_uid` rides along so results can be mapped back to the stable identity."""
+    from ..domain.workflow import workflow_flags
+    flags = workflow_flags(conn, project_id, version_id)
     rows = conn.execute(_ACTIVITIES_SQL, {"project": project_id, "version": version_id, "asof": as_of or date.today()}).fetchall()
     out = []
     for r in rows:
@@ -52,8 +53,8 @@ def load_activities(conn, project_id, version_id, as_of: Optional[date] = None) 
             # canonical execution state inputs (read by the engine's eligibility rule: >= 100% => completed, never offered)
             "actual_pct_complete": _f(r["physical_pct"]) if r["physical_pct"] is not None else 0.0,
             "actual_start": r["actual_start"], "actual_finish": r["actual_finish"],
-            # governed reopen (D7): a pending request keeps the activity out of matching; an approved one puts it in rework (matched only by rework claims)
-            "reopen_status": "REQUESTED" if r["reopen_status"] == "REQUESTED" else ("APPROVED" if r["reopen_status"] == "APPROVED" else None), "is_reopened": r["reopen_status"] == "APPROVED",
+            # derived workflow facts for the original eligibility rules: quality hold (D8), blockers, governed reopen (D7)
+            **flags.get(r["activity_uid"], {}),
         })
     return out
 
