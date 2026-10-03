@@ -74,3 +74,22 @@ def test_csv_export_of_approved_actuals(kit, lg, ver):
     assert lg.get("/api/v1/export/csv", kit.world.pm).status_code == 200 and "claim" not in lg.get("/api/v1/export/csv", kit.world.pm).text.lower()
     assert lg.get("/api/v1/export/csv", kit.world.se).status_code == 403
     assert lg.get("/api/v1/export/csv", kit.world.outsider).status_code == 403
+
+
+def test_activity_directory_and_history(kit, lg, ver):
+    seed_progress(kit.project, "A2000", {"PIPE_STRUNG_KM": 12}, kit.world.sup, kit.world.se)
+    r = lg.get("/api/v1/activities?page_size=100", kit.world.sup)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by = {a["activity_id"]: a for a in body["items"]}
+    assert body["total"] == len(body["items"]) > 10 and by["A2000"]["execution_state"] == "IN_PROGRESS" and by["A2010"]["execution_state"] == "NOT_STARTED"
+    assert body["metrics"]["in_progress"] >= 1
+    f = lg.get("/api/v1/activities?search=welding", kit.world.sup).json()
+    assert [a["activity_id"] for a in f["items"]] == ["A2010"]
+    h = lg.get("/api/v1/activities/A2000/history", kit.world.sup)
+    assert h.status_code == 200, h.text
+    assert h.json()["activity_id"] == "A2000" and isinstance(h.json()["timeline"], list)
+    assert lg.get("/api/v1/activities/NOPE/history", kit.world.sup).status_code == 404
+    for who in (kit.world.se, kit.world.pm):
+        assert lg.get("/api/v1/activities", who).status_code == 403
+        assert lg.get("/api/v1/activities/A2000/history", who).status_code == 403

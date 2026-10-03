@@ -224,3 +224,24 @@ def export_csv(ctx: Ctx = Depends(legacy_ctx(P.VIEW_DASHBOARD))):
     from backend.routers.export import format_csv_rows, query_approved_actuals_for_export
     rows = _run(ctx, lambda c, v: query_approved_actuals_for_export(conn=c, schedule_id=v, project_id=str(ctx.project_id)))
     return Response(content=format_csv_rows(rows), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="approved_actuals.csv"'})
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------- activity directory + history
+@router.get("/api/v1/activities")
+def list_activities(search: Optional[str] = None, discipline: Optional[str] = None, location: Optional[str] = None, wbs_code: Optional[str] = None,
+                    execution_state: Optional[str] = None, is_critical: Optional[str] = None, float_range: Optional[str] = None, has_changes: Optional[bool] = None,
+                    change_recency: Optional[str] = None, page: int = 1, page_size: int = 25, sort_by: str = "activity_id", sort_order: str = "asc",
+                    ctx: Ctx = Depends(legacy_ctx(P.REVIEW_CLAIMS))):
+    """the activity directory with canonical execution state and the original filters (the original listing query on the read model)"""
+    from backend.routers.activities import query_activities
+    page, page_size = max(1, page), max(1, min(page_size, 500))
+    return _run(ctx, lambda c, v: query_activities(schedule_id=v, search=search, discipline=discipline, location=location, wbs_code=wbs_code, execution_state=execution_state,
+                                                   is_critical=is_critical, float_range=float_range, has_changes=has_changes, change_recency=change_recency, page=page,
+                                                   page_size=page_size, sort_by=sort_by, sort_order=sort_order, conn=c))
+
+
+@router.get("/api/v1/activities/{activity_id}/history")
+def activity_history(activity_id: str, ctx: Ctx = Depends(legacy_ctx(P.REVIEW_CLAIMS))):
+    """chronological history of one activity: claims, decisions, conflicts, approved actuals (the original timeline builder on the read model)"""
+    from backend.routers.activities import query_activity_history
+    return _run(ctx, lambda c, v: query_activity_history(activity_id=activity_id, schedule_id=v, conn=c))
