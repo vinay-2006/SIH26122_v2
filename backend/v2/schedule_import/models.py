@@ -56,6 +56,7 @@ class PActivity:
     discipline_label: Optional[str] = None
     description: Optional[str] = None
     location: Optional[str] = None
+    asset_tag: Optional[str] = None
     sequence: int = 1
 
 

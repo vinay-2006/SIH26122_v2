@@ -336,7 +336,7 @@ def _materialize(c, user, project_id, import_id, imp, ps: ParsedSchedule, ref: R
         src = a.discipline_label if (a.discipline_label and p.discipline_how in ("ALIAS", "DECISION", "WBS")) else None
         row_id = uuid.uuid4()
         act_rows.append((row_id, project_id, vid, uid, ext, ids[a.wbs_code], a.name, a.description, p.discipline, src, a.activity_type, a.location,
-                         p.duration, a.start, a.finish, a.total_float_days, a.sequence))
+                         a.asset_tag, p.duration, a.start, a.finish, a.total_float_days, a.sequence))
         o = old_by_uid.get(uid)
         for code, x in p.assignments.items():
             prev = o.assignments.get(code) if o else None
@@ -349,8 +349,8 @@ def _materialize(c, user, project_id, import_id, imp, ps: ParsedSchedule, ref: R
     cur.executemany("insert into activities (activity_uid, project_id, first_version_id) values (%s,%s,%s)", ident_rows)
     cur.executemany(
         "insert into baseline_activities (activity_row_id, project_id, version_id, activity_uid, external_activity_id, wbs_id, activity_name, description, "
-        "discipline_code, discipline_source, activity_type, location, baseline_duration, baseline_start, baseline_finish, total_float, sequence) "
-        "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", act_rows)
+        "discipline_code, discipline_source, activity_type, location, asset_tag, baseline_duration, baseline_start, baseline_finish, total_float, sequence) "
+        "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", act_rows)
     cur.executemany("insert into assignments (assignment_uid, project_id, activity_uid) values (%s,%s,%s)", new_assign_rows)
     cur.executemany("insert into baseline_resources (assignment_uid, project_id, version_id, activity_row_id, activity_uid, resource_id, baseline_qty, "
                     "unit_of_measure, measures_progress, progress_weight) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", res_rows)

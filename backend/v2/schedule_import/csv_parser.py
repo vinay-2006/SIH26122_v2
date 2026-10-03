@@ -25,6 +25,7 @@ SYN: Dict[str, Tuple[str, ...]] = {
     "discipline": ("discipline", "trade", "work type"),
     "type": ("activity type", "activity_type", "type", "task type"),
     "location": ("location", "area", "chainage"),
+    "asset_tag": ("asset tag", "asset_tag", "assettag", "equipment tag", "tag no", "tag number"),
     "duration": ("baseline duration", "baseline_duration", "duration", "original duration", "orig duration", "duration days"),
     "start": ("baseline start", "baseline_start", "start", "planned start", "start date", "target start"),
     "finish": ("baseline finish", "baseline_finish", "finish", "planned finish", "finish date", "end", "target finish"),
@@ -150,7 +151,7 @@ def parse_csv(content: bytes, resources_content: Optional[bytes] = None, project
         ps.activities.append(PActivity(
             external_id=ext, name=g("name"), wbs_code=wcode, start=start, finish=finish, duration_days=dur,
             total_float_days=_num(g("float")), activity_type=atype, discipline_label=g("discipline") or None,
-            description=g("description") or None, location=g("location") or None, sequence=seq))
+            description=g("description") or None, location=g("location") or None, asset_tag=g("asset_tag") or None, sequence=seq))
         if g("preds"):
             pred_cells.append((ext, g("preds")))
     ps.wbs = list(wbs_seen.values())
