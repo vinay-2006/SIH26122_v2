@@ -105,6 +105,9 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
     act = conn.execute("select activity_uid, activity_type, external_activity_id from baseline_activities where version_id = %s and activity_uid = %s", (ver["version_id"], uid)).fetchone()
     if act is None:
         raise ApiError(409, "ACTIVITY_NOT_IN_ACTIVE_SCHEDULE", "The claim's activity is not part of the active schedule version: re-match or reject the claim")
+    if p.get("action", "APPROVE") in ("APPROVE", "EDIT"):
+        from . import quality
+        quality.assert_releasable(conn, actor.project_id, uid)                  # mandatory quality gates must be satisfied before progress is approved (D8)
     settings = conn.execute("select over_baseline_tolerance_pct, completion_threshold_pct from project_settings where project_id = %s", (actor.project_id,)).fetchone()
     tol, thr = settings["over_baseline_tolerance_pct"], settings["completion_threshold_pct"]
     assigns = measured_assignments(conn, ver["version_id"], uid)

@@ -22,6 +22,8 @@ const MAP: Record<string, Permission[]> = {
   REPORT_ISSUE: ['REPORT_ISSUE'],
   RESOLVE_ISSUE: ['MANAGE_BLOCKERS'],
   VIEW_AUDIT: ['VIEW_AUDIT'],
+  VIEW_QUALITY: ['VIEW_QUALITY'],
+  MANAGE_QUALITY: ['MANAGE_QUALITY', 'APPROVE_QUALITY', 'WAIVE_QUALITY'],
 };
 
 export function toUiPermissions(serverPermissions: string[]): Permission[] {
