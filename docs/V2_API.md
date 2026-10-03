@@ -194,6 +194,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `BAD_PERCENT` | 422 |
 | `BAD_QUANTITY` | 422 |
 | `BAD_RANGE` | 422 |
+| `BAD_REASON` | 422 |
 | `BAD_SEVERITY` | 422 |
 | `BAD_STATUS` | 422 |
 | `BAD_VISIBILITY` | 422 |
@@ -251,6 +252,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `NOTIFICATION_NOT_FOUND` | 404 |
 | `NOT_AVAILABLE` | 422 |
 | `NOT_A_REJECTED_CLAIM` | 409 |
+| `NOT_COMPLETED` | 422 |
 | `NOT_EXTRACTABLE` | 422 |
 | `NOT_VALIDATED` | 409 |
 | `NO_ACTIVE_SCHEDULE` | 409 |
@@ -260,6 +262,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `NO_FILES` | 422 |
 | `NO_MEASURED_ASSIGNMENTS` | 422 |
 | `NO_OPEN_QUESTION` | 409 |
+| `NO_PENDING_REOPEN` | 400 |
 | `NO_PROFILE` | 401 |
 | `NO_PROGRESS_CHANGE` | 422 |
 | `NO_PROGRESS_ROWS` | 422 |
@@ -275,6 +278,8 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `QUANTITY_UNBOUND` | 422 |
 | `REASON_REQUIRED` | 422 |
 | `RECONCILIATION_INCOMPLETE` | 409 |
+| `REOPEN_ALREADY_OPEN` | 409 |
+| `REOPEN_NOT_ALLOWED` | 409 |
 | `RESOURCE_NOT_FOUND` | 404 |
 | `ROLE_NOT_ASSIGNABLE` | 422 |
 | `ROOT_CAUSE_NOT_FOUND` | 404 |
@@ -303,4 +308,4 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `WAIVER_REASON_REQUIRED` | 422 |
 | `WOULD_DECREASE` | 409 |
 
-78 operations, 136 stable error codes.
+78 operations, 141 stable error codes.

@@ -60,6 +60,7 @@ class Entry:
     overrun_pct: Decimal = Decimal(0)
     over_baseline: bool = False
     beyond_tolerance: bool = False
+    supersede: bool = False                         # a compensating entry written during an APPROVED reopen (rework)
 
     @property
     def incremental(self) -> Decimal:
@@ -83,6 +84,7 @@ class Plan:
     ack_required: bool = False
     overruns: List[dict] = field(default_factory=list)
     all_assignments: List[dict] = field(default_factory=list)
+    rework_reopen_id: Optional[uuid.UUID] = None   # set when this decision is the fresh approval of an APPROVED reopen
 
 
 # ------------------------------------------------------------------------------------------------ planning (no writes)
@@ -108,11 +110,16 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
     if p.get("action", "APPROVE") in ("APPROVE", "EDIT"):
         from . import quality
         quality.assert_releasable(conn, actor.project_id, uid)                  # mandatory quality gates must be satisfied before progress is approved (D8)
+    from . import reopen as dr
+    rw_row = dr.open_rework(conn, actor.project_id, uid) if p.get("action", "APPROVE") in ("APPROVE", "EDIT") else None
+    rw = rw_row is not None
     settings = conn.execute("select over_baseline_tolerance_pct, completion_threshold_pct from project_settings where project_id = %s", (actor.project_id,)).fetchone()
     tol, thr = settings["over_baseline_tolerance_pct"], settings["completion_threshold_pct"]
     assigns = measured_assignments(conn, ver["version_id"], uid)
     by_uid = {a["assignment_uid"]: a for a in assigns}
     heads, head_act = _heads(conn, assigns, uid)
+    if head_act is not None and head_act["actual_finish"] is not None and not rw and p.get("action", "APPROVE") in ("APPROVE", "EDIT"):
+        raise ApiError(409, "REOPEN_NOT_ALLOWED", "This activity is completed. Request a governed reopen before changing it.", {"actual_finish": str(head_act["actual_finish"])})
     units = load_units(conn)
     quantities = conn.execute("select * from claim_quantities where event_id = %s order by claim_quantity_id", (claim["event_id"],)).fetchall()
     bound = [q for q in quantities if q["assignment_uid"] is not None]
@@ -154,16 +161,16 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
         cum = q3(cum)
         if cum < 0:
             raise ApiError(422, "NEGATIVE_QUANTITY", f"{a['resource_code']}: a cumulative quantity cannot be negative")
-        if cum < head:
+        if cum < head and not rw:
             raise ApiError(409, "WOULD_DECREASE", f"{a['resource_code']}: approving {cum} would lower the approved cumulative {head}; a reduction needs a reopen",
                            {"resource": a["resource_code"], "head": str(head), "requested": str(cum)})
         if cum == head:
             return
         head_date = heads[a["assignment_uid"]][1]
-        if head_date is not None and claim["event_date"] < head_date:
+        if head_date is not None and claim["event_date"] < head_date and not rw:
             raise ApiError(409, "STALE_CLAIM", f"{a['resource_code']}: the claim is dated {claim['event_date']}, before the latest approved entry ({head_date})")
         ov_pct, over, beyond = overrun(cum, a["baseline_qty"], tol)
-        entries.append(Entry(a["assignment_uid"], a["resource_code"], a["unit_of_measure"], a["baseline_qty"], a["progress_weight"], head, cum, source, cq, ov_pct, over, beyond))
+        entries.append(Entry(a["assignment_uid"], a["resource_code"], a["unit_of_measure"], a["baseline_qty"], a["progress_weight"], head, cum, source, cq, ov_pct, over, beyond, supersede=rw))
 
     if method == "QUANTITIES_AS_CLAIMED":
         if unbound:
@@ -216,13 +223,15 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
             pct_only_new = q3(pct_only_new)
             if not (0 <= pct_only_new <= 100):
                 raise ApiError(422, "BAD_PERCENT", "The percentage must be between 0 and 100")
-            if pct_only_new < pct_before:
+            if pct_only_new < pct_before and not rw:
                 raise ApiError(409, "WOULD_DECREASE", f"Approving {pct_only_new}% would lower the approved {pct_before}%; a reduction needs a reopen")
     pct_after = pct_only_new if pct_only_new is not None else (weighted_pct((a["progress_weight"], cum_after[a["assignment_uid"]], a["baseline_qty"]) for a in assigns) if assigns else pct_before)
 
     # ---- activity dates
     h_start = head_act["actual_start"] if head_act else None
     h_finish = head_act["actual_finish"] if head_act else None
+    if rw:                                               # a reopen clears the completion: the fresh approval states the dates again
+        h_finish = None
     start_req = p.get("actual_start") or claim["claimed_start"]
     finish_req = p.get("actual_finish") or claim["claimed_finish"]
     if h_start and start_req and start_req != h_start:
@@ -250,6 +259,9 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
     if new_start or new_finish or pct_changed:
         act_row = {"actual_start": start_eff if new_start else None, "actual_finish": finish_eff if new_finish else None,
                    "reported_pct": pct_only_new if method == "PCT_ONLY_ACTIVITY" and act["activity_type"] != "MILESTONE" else None}
+    if rw and head_act is not None:                      # the superseding activity entry is always written (it is what reopens the completion on the record)
+        act_row = {"actual_start": start_eff if (start_eff and start_eff != h_start) else None, "actual_finish": finish_eff, "supersede": True,
+                   "reported_pct": pct_only_new if method == "PCT_ONLY_ACTIVITY" and act["activity_type"] != "MILESTONE" else None}
     if not entries and act_row is None:
         raise ApiError(422, "NO_PROGRESS_CHANGE", "Approving this claim would not change any approved progress")
 
@@ -265,7 +277,7 @@ def _plan(conn, actor: ProjectActor, claim: dict, p: Dict[str, Any]) -> Plan:
     ov = [{"assignment_uid": str(e.assignment_uid), "resource": e.resource_code, "unit": e.unit, "baseline_qty": str(e.baseline_qty), "approved_cumulative": str(e.approved),
            "overrun_pct": str(e.overrun_pct), "beyond_tolerance": e.beyond_tolerance} for e in entries if e.over_baseline]
     return Plan(derived, method, uid, entries, act_row, pct_before, pct_after, inferred, short_close, tol, thr, ver["version_id"],
-                ack_required=any(e.beyond_tolerance for e in entries), overruns=ov, all_assignments=assigns)
+                ack_required=any(e.beyond_tolerance for e in entries), overruns=ov, all_assignments=assigns, rework_reopen_id=rw_row["reopen_id"] if rw else None)
 
 
 def _plan_summary(pl: Plan) -> Dict[str, Any]:
@@ -276,7 +288,7 @@ def _plan_summary(pl: Plan) -> Dict[str, Any]:
             "result": {"activity_pct_before": str(pl.pct_before), "activity_pct_after": str(pl.pct_after), "start_inferred": pl.start_inferred,
                        "activity_row": _j(pl.activity_row), "short_close_acknowledged": pl.short_close_ack, "overruns": pl.overruns,
                        "tolerance_pct": str(pl.tolerance_pct), "completion_threshold_pct": str(pl.threshold_pct)},
-            "requires_overrun_acknowledgement": pl.ack_required}
+            "requires_overrun_acknowledgement": pl.ack_required, "rework": pl.rework_reopen_id is not None}
 
 
 def preview_decision(actor: ProjectActor, claim_id, **params) -> Dict[str, Any]:
@@ -343,17 +355,23 @@ def decide(actor: ProjectActor, claim_id, *, action: str, justification: Optiona
                    pl.ack_required, (overrun_ack_note or "").strip() if pl.ack_required else None, json.dumps(summ["applied"]), json.dumps(summ["result"])))
         entry_ids = []
         for e in pl.entries:
-            r = c.execute("insert into approved_resource_progress (project_id, activity_uid, assignment_uid, decision_id, as_of_date, cumulative_qty, claim_quantity_id, overrun_ack_by, overrun_ack_note) "
-                          "values (%s,%s,%s,%s,%s,%s,%s,%s,%s) returning entry_id, incremental_qty, prev_cumulative_qty",
+            sup = c.execute("select entry_id from approved_resource_progress where assignment_uid = %s order by entry_seq desc limit 1", (e.assignment_uid,)).fetchone() if e.supersede else None
+            r = c.execute("insert into approved_resource_progress (project_id, activity_uid, assignment_uid, decision_id, as_of_date, cumulative_qty, claim_quantity_id, overrun_ack_by, overrun_ack_note, supersedes_entry_id) "
+                          "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning entry_id, incremental_qty, prev_cumulative_qty",
                           (actor.project_id, pl.activity_uid, e.assignment_uid, decision_id, claim["event_date"], e.approved, e.claim_quantity_id,
-                           actor.user_id if e.beyond_tolerance else None, (overrun_ack_note or "").strip() if e.beyond_tolerance else None)).fetchone()
+                           actor.user_id if e.beyond_tolerance else None, (overrun_ack_note or "").strip() if e.beyond_tolerance else None, sup["entry_id"] if sup else None)).fetchone()
             if r["incremental_qty"] != e.incremental or r["prev_cumulative_qty"] != e.head:
                 raise RuntimeError(f"ledger arithmetic disagrees with the plan for {e.resource_code}")                 # internal consistency: roll everything back
             entry_ids.append(("RESOURCE", r["entry_id"]))
         if pl.activity_row is not None:
-            r = c.execute("insert into approved_activity_progress (project_id, activity_uid, decision_id, as_of_date, actual_start, actual_finish, reported_pct) values (%s,%s,%s,%s,%s,%s,%s) returning entry_id",
-                          (actor.project_id, pl.activity_uid, decision_id, claim["event_date"], pl.activity_row["actual_start"], pl.activity_row["actual_finish"], pl.activity_row["reported_pct"])).fetchone()
+            sup = c.execute("select entry_id from approved_activity_progress where activity_uid = %s order by entry_seq desc limit 1", (pl.activity_uid,)).fetchone() if pl.activity_row.get("supersede") else None
+            r = c.execute("insert into approved_activity_progress (project_id, activity_uid, decision_id, as_of_date, actual_start, actual_finish, reported_pct, supersedes_entry_id) values (%s,%s,%s,%s,%s,%s,%s,%s) returning entry_id",
+                          (actor.project_id, pl.activity_uid, decision_id, claim["event_date"], pl.activity_row["actual_start"], pl.activity_row["actual_finish"], pl.activity_row["reported_pct"],
+                           sup["entry_id"] if sup else None)).fetchone()
             entry_ids.append(("ACTIVITY", r["entry_id"]))
+        if pl.rework_reopen_id is not None:
+            from . import reopen as dr
+            dr.close_after_rework(c, actor, pl.rework_reopen_id, decision_id)
         sql_pct = c.execute("select physical_pct from activity_progress_as_of(%s, current_date) where activity_uid = %s", (pl.version_id, pl.activity_uid)).fetchone()
         if sql_pct is not None and sql_pct["physical_pct"] != pl.pct_after:
             raise RuntimeError(f"recorded result {pl.pct_after}% disagrees with the ledger-derived {sql_pct['physical_pct']}%")

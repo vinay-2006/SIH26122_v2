@@ -61,7 +61,9 @@ def rank_claim(project_id, version_id, claim: Dict[str, Any], quantities: List[D
     """the engine call itself, with no database writes: eligibility -> optional semantic retrieval -> match_claim -> outcome"""
     m, ExecutionClaim, Elig = _engine()
     ec = ExecutionClaim(**adapter.claim_for_engine(claim, quantities, version_id))
-    eligible, explanations = Elig.filter_eligible_activities(activities, expected_project_id=str(project_id), expected_schedule_id=str(version_id), is_rework=False)
+    from backend.routers.checks import has_rework_or_reset_context            # the original rework signal (delay reason / rework wording)
+    is_rework = bool(has_rework_or_reset_context({"delay_reason": claim.get("delay_reason"), "raw_claim_text": claim.get("raw_claim_text"), "action": None}))
+    eligible, explanations = Elig.filter_eligible_activities(activities, expected_project_id=str(project_id), expected_schedule_id=str(version_id), is_rework=is_rework)
     semantic, semantic_error = None, None
     if ec.raw_claim_text:
         try:

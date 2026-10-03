@@ -145,7 +145,11 @@ def assert_consistent(kit):
                 if tbl == "approved_resource_progress":
                     assert sum(r["incremental_qty"] for r in chain) == chain[-1]["cumulative_qty"], f"increments of {k} do not add up to the cumulative (double counting)"
                     for prev, cur in zip(chain, chain[1:]):
-                        assert cur["prev_cumulative_qty"] == prev["cumulative_qty"] and cur["cumulative_qty"] >= prev["cumulative_qty"] and cur["as_of_date"] >= prev["as_of_date"]
+                        assert cur["prev_cumulative_qty"] == prev["cumulative_qty"]
+                        if cur.get("supersedes_entry_id") is None:          # an ordinary entry never lowers the cumulative or goes back in time
+                            assert cur["cumulative_qty"] >= prev["cumulative_qty"] and cur["as_of_date"] >= prev["as_of_date"]
+                        else:                                                # a governed-reopen correction supersedes exactly its predecessor, which stays on record
+                            assert cur["supersedes_entry_id"] == prev["entry_id"]
         for d in c.execute("select decision_id, action, event_id from planner_decisions").fetchall():
             assert c.execute("select count(*) n from notifications where decision_id=%s", (d["decision_id"],)).fetchone()["n"] == 1
             assert c.execute("select count(*) n from audit_logs where entity_type='PLANNER_DECISION' and entity_id=%s", (str(d["decision_id"]),)).fetchone()["n"] == 1

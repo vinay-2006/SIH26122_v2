@@ -41,7 +41,9 @@ select p.activity_uid, p.external_activity_id, p.activity_name, p.discipline_cod
        q.n as n_measured, q.qty as m_qty, q.uom as m_uom,
        (select sum(r.cumulative_qty)::float8 from (select distinct on (a.assignment_uid) a.cumulative_qty from approved_resource_progress a where a.activity_uid = p.activity_uid
                                                     order by a.assignment_uid, a.entry_seq desc) r) as actual_qty,
-       exists(select 1 from issues i where i.project_id = ba.project_id and i.activity_uid = p.activity_uid and i.status = 'ACTIVE' and i.blocks_work) as blocked
+       exists(select 1 from issues i where i.project_id = ba.project_id and i.activity_uid = p.activity_uid and i.status = 'ACTIVE' and i.blocks_work) as blocked,
+       (select ar.status from activity_reopens ar where ar.project_id = ba.project_id and ar.activity_uid = p.activity_uid and ar.status in ('REQUESTED','APPROVED')) as reopen_status,
+       exists(select 1 from quality_gates g where g.project_id = ba.project_id and g.activity_uid = p.activity_uid and g.required and g.status not in ('PASSED','WAIVED')) as quality_hold
   from activity_progress_as_of(%(ver)s, current_date) p
   join baseline_activities ba on ba.version_id = %(ver)s and ba.activity_uid = p.activity_uid
   join schedule_wbs sw on sw.wbs_id = ba.wbs_id
@@ -61,13 +63,17 @@ def activities(c, ctx: Ctx, version) -> List[Dict[str, Any]]:
         single = r["n_measured"] == 1
         pct = float(r["physical_pct"] or 0)
         state = r["execution_state"] if r["execution_state"] in STATE else ("COMPLETED" if pct >= 100 else ("IN_PROGRESS" if (pct > 0 or r["actual_start"]) else "NOT_STARTED"))
+        if r["reopen_status"] == "REQUESTED":
+            state = "REOPEN_REQUESTED"
+        elif r["reopen_status"] == "APPROVED":
+            state = "REOPENED"
         out.append({"activity_id": r["external_activity_id"], "schedule_id": str(version), "activity_name": r["activity_name"], "wbs_code": r["wbs_code"], "discipline": r["discipline_code"],
                     "location": r["location"] or "", "asset_tag": r["asset_tag"], "planned_start": shapes.iso(r["baseline_start"]), "planned_finish": shapes.iso(r["baseline_finish"]),
                     "planned_quantity": shapes.num(r["m_qty"]) if single else None, "uom": r["m_uom"] if single else None, "baseline_pct_complete": 0.0,
                     "total_float": shapes.num(r["total_float"]), "is_critical": r["is_critical"], "execution_state": state, "actual_start": shapes.iso(r["actual_start"]),
                     "actual_finish": shapes.iso(r["actual_finish"]), "actual_pct_complete": pct, "stage_id": str(r["stage_uid"]) if r["stage_uid"] else None, "stage_name": r["stage_name"],
                     "is_stage_completed": False, "weight": shapes.num(r["weight"]), "contractor_id": None, "contractor_name": None, "work_package_id": None, "work_package_code": None,
-                    "work_package_name": None, "_uid": r["activity_uid"], "_actual_qty": r["actual_qty"], "_blocked": r["blocked"], "_pct": pct})
+                    "work_package_name": None, "_uid": r["activity_uid"], "_actual_qty": r["actual_qty"], "_blocked": r["blocked"], "_pct": pct, "_reopen": r["reopen_status"], "_qhold": r["quality_hold"]})
     return out
 
 
@@ -145,8 +151,9 @@ def list_stages(schedule_id: Optional[str] = None, ctx: Ctx = Depends(path_ctx(P
 
 def _item(a: Dict[str, Any], total_w: float) -> Dict[str, Any]:
     w = a["weight"] or 0.0
-    return {"activity_id": a["activity_id"], "activity_name": a["activity_name"], "stage_id": a["stage_id"], "canonical_state": a["execution_state"],
-            "workflow_condition": "BLOCKED" if a["_blocked"] else "NONE", "is_reopened": False, "progress_pct": round(a["_pct"], 3), "actual_pct_complete": a["_pct"],
+    return {"activity_id": a["activity_id"], "activity_name": a["activity_name"], "stage_id": a["stage_id"], "canonical_state": "COMPLETED" if a["_pct"] >= 100 and a["_reopen"] else (a["execution_state"] if a["execution_state"] in ("NOT_STARTED", "IN_PROGRESS", "COMPLETED") else "COMPLETED"),
+            "workflow_condition": "REOPEN_REQUESTED" if a["_reopen"] == "REQUESTED" else ("REWORK_IN_PROGRESS" if a["_reopen"] == "APPROVED" else ("QUALITY_HOLD" if a["_qhold"] else ("BLOCKED" if a["_blocked"] else "NONE"))),
+            "is_reopened": a["_reopen"] == "APPROVED", "progress_pct": round(a["_pct"], 3), "actual_pct_complete": a["_pct"],
             "actual_quantity": a["_actual_qty"], "planned_quantity": a["planned_quantity"], "weight_factor": w,
             "weighted_contribution": round((w / total_w * a["_pct"]) if total_w else 0.0, 4)}
 
