@@ -156,12 +156,14 @@ def claim(conn, w, activity, status="MATCHED", created_at=None, event_date=None,
     return eid
 
 
-def decide(conn, w, event, activity, action="APPROVE", ack=False, note=None, decided_at=None, by=None):
+def decide(conn, w, event, activity, action="APPROVE", ack=False, note=None, decided_at=None, by=None, method=None):
+    """Insert a supervisor decision. `method` defaults to how progress would be derived for that action (NONE for REJECT / HOLD)."""
     did = u()
+    method = method or ("QUANTITIES_AS_CLAIMED" if action in ("APPROVE", "EDIT") else "NONE")
     conn.execute(
-        "insert into planner_decisions (decision_id,project_id,event_id,selected_activity_uid,action,justification,decided_by,"
-        "decided_at,overrun_ack,overrun_ack_note) values (%s,%s,%s,%s,%s,'Verified against measurement book',%s,coalesce(%s, now()),%s,%s)",
-        (did, w.project, event, activity.uid, action, by or w.sup, decided_at, ack, note))
+        "insert into planner_decisions (decision_id,project_id,event_id,selected_activity_uid,action,method,justification,decided_by,"
+        "decided_at,overrun_ack,overrun_ack_note) values (%s,%s,%s,%s,%s,%s,'Verified against measurement book',%s,coalesce(%s, now()),%s,%s)",
+        (did, w.project, event, activity.uid, action, method, by or w.sup, decided_at, ack, note))
     return did
 
 

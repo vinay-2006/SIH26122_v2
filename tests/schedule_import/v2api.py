@@ -152,14 +152,16 @@ def build_and_activate(api, user, project, fmt="csv", tag="nsp", decisions=None)
 
 
 def seed_progress(project, ext_id, quantities: dict, supervisor, engineer, start_days_ago=30, pct=None, finish=False):
-    """TEST SETUP: put approved progress into the ledgers the way a supervisor's decision would (claim -> decision -> ledger rows)."""
-    with connect(system=True) as c:
+    """TEST SETUP: put approved progress into the ledgers the way a supervisor's decision would (claim -> decision -> ledger rows),
+    in ONE transaction together with the decision's notification and audit record (the database refuses a decision without them)."""
+    with psycopg.connect(os.environ["DATABASE_URL"], row_factory=psycopg.rows.dict_row) as c:
+        c.execute("select set_config('app.system','on',true)")
         a = c.execute("select ba.activity_uid, ba.version_id from baseline_activities ba join schedule_versions v on v.version_id = ba.version_id "
                       "where v.project_id = %s and v.status = 'ACTIVE' and ba.external_activity_id = %s", (project, ext_id)).fetchone()
         ev = c.execute("insert into execution_events (project_id, filed_in_version_id, event_date, raw_claim_text, input_channel, filed_by, matched_activity_uid, status) "
                        "values (%s,%s,current_date,%s,'TYPED',%s,%s,'MATCHED') returning event_id", (project, a["version_id"], f"progress on {ext_id}", engineer.id, a["activity_uid"])).fetchone()
-        dec = c.execute("insert into planner_decisions (project_id, event_id, selected_activity_uid, action, justification, decided_by) "
-                        "values (%s,%s,%s,'APPROVE','Verified against measurement book',%s) returning decision_id", (project, ev["event_id"], a["activity_uid"], supervisor.id)).fetchone()
+        dec = c.execute("insert into planner_decisions (project_id, event_id, selected_activity_uid, action, method, justification, decided_by) "
+                        "values (%s,%s,%s,'APPROVE','QUANTITIES_AS_CLAIMED','Verified against measurement book',%s) returning decision_id", (project, ev["event_id"], a["activity_uid"], supervisor.id)).fetchone()
         for res, qty in quantities.items():
             asg = c.execute("select br.assignment_uid from baseline_resources br join project_resources pr on pr.resource_id = br.resource_id "
                             "where br.version_id = %s and br.activity_uid = %s and pr.resource_code = %s", (a["version_id"], a["activity_uid"], res)).fetchone()
@@ -167,6 +169,11 @@ def seed_progress(project, ext_id, quantities: dict, supervisor, engineer, start
                       (project, a["activity_uid"], asg["assignment_uid"], dec["decision_id"], qty))
         c.execute("insert into approved_activity_progress (project_id, activity_uid, decision_id, as_of_date, actual_start, actual_finish, reported_pct) values (%s,%s,%s,current_date,current_date - %s,%s,%s)",
                   (project, a["activity_uid"], dec["decision_id"], start_days_ago, dt.date.today() - dt.timedelta(days=1) if finish else None, pct))
+        c.execute("insert into notifications (project_id, recipient_id, notification_type, decision_id, event_id, title) values (%s,%s,'CLAIM_DECISION',%s,%s,'Approved')",
+                  (project, engineer.id, dec["decision_id"], ev["event_id"]))
+        from backend.v2 import audit
+        audit.log(c, project_id=project, actor_id=supervisor.id, role="SUPERVISOR", action="CLAIM_APPROVED", entity_type="PLANNER_DECISION",
+                  entity_id=dec["decision_id"], after={"seeded_for_test": True})
     return a["activity_uid"]
 
 
