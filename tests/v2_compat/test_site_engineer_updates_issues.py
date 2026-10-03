@@ -41,7 +41,7 @@ def test_my_claims_and_notifications_follow_the_supervisors_decision(kit, lg, ve
 
 
 def test_the_path_project_is_authoritative(kit, lg, ver, api):
-    from conftest import Legacy
+    from legacykit import Legacy
     assert lg.get(f"/api/v1/projects/{kit.world.project2}/my-claims", kit.world.se).status_code == 403
     assert lg.get(P(kit, "/my-claims"), kit.world.sup).status_code == 403           # a Supervisor has no "my claims"
     assert lg.get(P(kit, "/my-claims"), kit.world.pm).status_code == 403

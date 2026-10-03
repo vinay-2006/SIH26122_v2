@@ -45,7 +45,8 @@ def test_progress_breakdown_matches_the_ledger_rollup(kit, lg, ver):
 
 
 def test_another_projects_version_is_never_readable(kit, lg, ver, api):
-    from conftest import Legacy, build_and_activate
+    from legacykit import Legacy
+    from v2api import build_and_activate
     build_and_activate(api, kit.world.pm2, kit.world.project2, "csv")
     with connect() as c:
         other = c.execute("select version_id from schedule_versions where project_id = %s and status = 'ACTIVE'", (kit.world.project2,)).fetchone()["version_id"]

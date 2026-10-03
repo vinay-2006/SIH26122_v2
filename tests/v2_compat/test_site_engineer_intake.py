@@ -83,7 +83,7 @@ def test_engineers_see_only_their_own_claims_and_project_managers_none(kit, lg):
 
 def test_the_project_context_is_authoritative_and_isolated(kit, lg, api):
     ev = submit(lg, kit)
-    from legacy_helpers import Legacy
+    from legacykit import Legacy
     other = Legacy(api, kit.world.project2)                      # the SE has no membership of the other project
     assert other.get(f"/api/v1/claims/{ev['event_id']}", kit.world.se).status_code == 403
     assert Legacy(api, "not-a-uuid").get("/api/v1/claims", kit.world.se).status_code == 400
