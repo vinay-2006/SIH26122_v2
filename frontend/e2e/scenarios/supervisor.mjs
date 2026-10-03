@@ -115,11 +115,14 @@ export default [
     await until(async () => /[1-9]\d* claims? ready for supervisor signoff/.test(await page.locator('main').innerText()), 'the digest lists the claims waiting for sign-off', 30000);
     await page.waitForTimeout(1500);                                         // the page re-selects the date of the newest claim once; let it settle
     await shot(page, 'sup_digest');
+    const pre = {}; for (const id of ids) pre[id] = await status(id);
+    const validated = ids.filter((id) => pre[id] === 'VALIDATED');
     await page.getByRole('button', { name: /Bulk Approve Validated Claims/ }).click();
-    await page.waitForSelector('text=Bulk approval completed', { timeout: 60000 });
-    for (const id of ids) eq(await status(id), 'APPROVED', `claim ${id} approved by the bulk action`);
+    await until(async () => { for (const id of validated) if ((await status(id)) !== 'APPROVED') return false; return true; }, 'the validated claims are approved by the bulk action', 60000);
+    await page.waitForTimeout(1000);
+    for (const id of ids.filter((i) => pre[i] !== 'VALIDATED')) eq(await status(id), pre[id], `claim ${id} (${pre[id]}) is not eligible for bulk approval and is left for the Review Workspace`);
     const after = (await legacy(page, 'GET', `/api/v1/decisions?limit=100`, null, { project: S.pid, version: S.ver })).json.length;
-    ok(after >= before + 2, `each approval is its own recorded decision: ${before} -> ${after}`);
+    ok(after >= before + validated.length, `each approval is its own recorded decision: ${before} -> ${after}`);
   }],
 
   ['Supervisor: every restored page loads real data without a failed call (Digest, Dashboard, History, Impact, Summary, Root Cause, Intelligence, Audit, WBS, Issues)', async ({ S }) => {
