@@ -195,6 +195,9 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
             c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,%s,%s,%s)", (actor.project_id, eid, code, sev, msg))
         for d_id in dict.fromkeys((evidence_document_ids or [])):
             c.execute("insert into claim_evidence (project_id, event_id, document_id) values (%s,%s,%s)", (actor.project_id, eid, d_id))
+        audit.log(c, project_id=actor.project_id, actor_id=actor.user_id, role=SE, action="CLAIM_SUBMITTED", entity_type="CLAIM", entity_id=eid, version_id=ver["version_id"],
+                  after={"status": ev["status"], "activity_uid": str(activity_uid) if activity_uid else None, "quantities": len(qrows), "claimed_pct": str(claimed_pct) if claimed_pct is not None else None,
+                         "resubmits": str(resubmits_event_id) if resubmits_event_id else None})
         auto = None
         if activity_uid is None and not pending_question:                    # no explicit choice: the existing matching engine proposes (it never decides or approves)
             from ..matching import service as matching
@@ -229,9 +232,6 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
         for sup in ([] if pending_question else supervisors_of(c, actor.project_id)):
             notify(c, project_id=actor.project_id, recipient_id=sup, ntype="CLAIM_SUBMITTED", event_id=eid, created_by=actor.user_id,
                    title="New claim to review" + (f": {act_row['external_activity_id']}" if act_row else ""), body=text[:300])
-        audit.log(c, project_id=actor.project_id, actor_id=actor.user_id, role=SE, action="CLAIM_SUBMITTED", entity_type="CLAIM", entity_id=eid, version_id=ver["version_id"],
-                  after={"status": ev["status"], "activity_uid": str(activity_uid) if activity_uid else None, "quantities": len(qrows), "claimed_pct": str(claimed_pct) if claimed_pct is not None else None,
-                         "resubmits": str(resubmits_event_id) if resubmits_event_id else None})
     return {"claim_id": eid, "status": ev["status"], "activity_uid": activity_uid, "quantities": qrows,
             "validations": [{"rule": k, "severity": s, "message": m} for k, s, m in findings], "priority_score": priority, "match": auto}
 
