@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from .. import permissions as P
+from ..permissions import ROLE_PERMISSIONS
 from ..auth import CurrentUser, ProjectAccess, get_current_user, require
 from ..errors import ApiError
 from ._common import ERRORS
@@ -115,7 +116,7 @@ def list_projects(user: CurrentUser = Depends(get_current_user)):
 
 @router.get("/projects/{project_id}", summary="One project with its active schedule version")
 def get_project(access: ProjectAccess = Depends(require(P.VIEW_PROJECT))):
-    return {**svc.get_project(access.project_id), "my_role": access.role}
+    return {**svc.get_project(access.project_id), "my_role": access.role, "my_permissions": sorted(ROLE_PERMISSIONS.get(access.role, set()))}
 
 
 @router.patch("/projects/{project_id}", summary="Edit project master data (Project Manager)")

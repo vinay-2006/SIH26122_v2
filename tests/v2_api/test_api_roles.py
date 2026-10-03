@@ -36,7 +36,7 @@ ROUTES = {
     ("GET", "/projects/{p}/notifications"): "MSE", ("POST", "/projects/{p}/notifications/{i}/read"): "MSE",
     ("GET", "/projects/{p}/dashboard/compare"): "MS", ("GET", "/projects/{p}/audit"): "MS", ("GET", "/projects/{p}/audit/verify"): "MS",
 }
-GLOBAL = {("GET", "/health"): "public", ("GET", "/me"): "user", ("GET", "/projects"): "user", ("POST", "/projects"): "grant", ("POST", "/invitations/accept"): "user",
+GLOBAL = {("GET", "/health"): "public", ("GET", "/auth/config"): "public", ("POST", "/auth/local-login"): "public", ("GET", "/me"): "user", ("GET", "/projects"): "user", ("POST", "/projects"): "grant", ("POST", "/invitations/accept"): "user",
           ("POST", "/platform/grants"): "admin", ("DELETE", "/platform/grants/{user_id}/{capability}"): "admin", ("POST", "/platform/users/{user_id}/revoke-sessions"): "admin"}
 GATE_CODES = {"PERMISSION_DENIED", "NOT_A_MEMBER", "UNAUTHENTICATED"}
 

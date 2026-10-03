@@ -43,3 +43,7 @@ scratch/
 
 # SetuAI v2 local evidence store (never committed)
 .local/
+
+# frontend v2 build output
+frontend/dist-v2/
+frontend/e2e/artifacts/

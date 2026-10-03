@@ -151,7 +151,9 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 
 | Method | Path | Who | What it does |
 |---|---|---|---|
-| GET | `/health` | anyone (health check) | Health |
+| GET | `/auth/config` | anyone (no token needed) | Which sign-in methods this server offers (no secrets) |
+| POST | `/auth/local-login` | anyone (no token needed) | LOCAL development sign-in for the seeded demo people; disabled unless the operator enables it on a local database |
+| GET | `/health` | anyone (no token needed) | Health |
 | POST | `/invitations/accept` | any signed-in user | Accept an invitation with its token (the invited user) |
 | GET | `/me` | any signed-in user | The signed-in user, platform grants and project memberships |
 | POST | `/platform/grants` | `PLATFORM_ADMIN` platform grant | Grant a platform capability to a user (platform administrator) |
@@ -224,6 +226,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `IMPORT_NOT_FOUND` | 404 |
 | `IMPORT_NOT_READY` | 409 |
 | `INTEGRITY_FAILURE` | 500 |
+| `INVALID_CREDENTIALS` | 401 |
 | `INVITATION_EMAIL_MISMATCH` | 403 |
 | `INVITATION_INVALID` | 410 |
 | `INVITATION_NOT_FOUND` | 404 |
@@ -231,6 +234,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `ISSUE_NOT_RESOLVED` | 409 |
 | `JUSTIFICATION_REQUIRED` | 422 |
 | `KIND_TYPE_MISMATCH` | 422 |
+| `LOCAL_LOGIN_DISABLED` | 404 |
 | `MEMBER_NOT_FOUND` | 404 |
 | `NEGATIVE_QUANTITY` | 422 |
 | `NOTES_REQUIRED` | 422 |
@@ -266,6 +270,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `TITLE_REQUIRED` | 422 |
 | `TOKEN_REVOKED` | 401 |
 | `TOO_LARGE` | 413 |
+| `TOO_MANY_ATTEMPTS` | 429 |
 | `TOO_MANY_POINTS` | 422 |
 | `UNAUTHENTICATED` | 401 |
 | `UNIT_DIMENSION_MISMATCH` | 422 |
@@ -277,4 +282,4 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `VERSION_NOT_FOUND` | 404 |
 | `WOULD_DECREASE` | 409 |
 
-76 operations, 112 stable error codes.
+78 operations, 115 stable error codes.

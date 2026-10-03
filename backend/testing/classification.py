@@ -59,7 +59,7 @@ DB_WRITE = {
     "tests/v2_e2e/test_workflows_1_to_5.py",
     "tests/v2_e2e/test_workflow_6_revision.py",
     "tests/v2_e2e/test_workflow_7_isolation.py", "tests/v2_e2e/test_workflow_8_seed_cli.py",
-    "tests/v2_api/test_api_errors.py",
+    "tests/v2_api/test_api_errors.py", "tests/v2_api/test_api_local_login.py",
     # schedule import service + v2 API against the isolated setuai_v2_integ database (commits, then truncates after each test)
     "tests/schedule_import/test_api_projects_members.py", "tests/schedule_import/test_api_schedule_flow.py",
     "tests/schedule_import/test_api_authorization.py", "tests/schedule_import/test_api_revision_reconciliation.py",

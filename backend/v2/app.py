@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+import os
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from . import errors
 from . import jwt_verify
 from .db import close_pool, database_url, get_pool, tx
-from .routers import claims, dashboard, documents, issues, projects, schedules
+from .routers import auth_local, claims, dashboard, documents, issues, projects, schedules
 
 
 def create_app() -> FastAPI:
@@ -26,6 +29,13 @@ def create_app() -> FastAPI:
                     "ledger-derived progress dashboards. Authenticate with a Supabase-style bearer JWT; project authority comes from an ACTIVE membership. "
                     "Errors are {error: {code, message, details}}. List endpoints return {items, limit, offset, next_offset}.")
     errors.install(app)
+    origins = [o.strip() for o in os.environ.get("V2_CORS_ORIGINS", "").split(",") if o.strip()]       # explicit origins only; none by default
+    if "*" in origins:
+        raise RuntimeError("V2_CORS_ORIGINS must list explicit origins, not '*'")
+    if origins:
+        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                           allow_headers=["Authorization", "Content-Type", "Idempotency-Key"], expose_headers=["Idempotent-Replay", "Content-Disposition"], max_age=600)
+    app.include_router(auth_local.router)
     app.include_router(projects.router)
     app.include_router(schedules.router)
     app.include_router(documents.router)

@@ -15,6 +15,12 @@ Tokens must carry `aud=authenticated`, `role=authenticated`, `exp`, `iat`, a UUI
 by the token's algorithm, `alg=none` and anonymous users are refused, and an admin can revoke earlier sessions. The API refuses to start with no
 verification key, with a hosted target but no issuer, or with a database whose fingerprint marker does not match.
 
+## Browser-client settings (all optional; off by default)
+* `V2_CORS_ORIGINS` - comma-separated EXPLICIT origins allowed to call the API from a browser (e.g. `http://127.0.0.1:5190`). Empty = no CORS. `*` is refused at start-up. Bearer tokens only, no cookies.
+* `V2_LOCAL_LOGIN_PASSWORD` (12+ characters) - enables `POST /api/v2/auth/local-login` for local development. It works only when the database target is LOCAL (`setuai_v2_*`), a shared HS256 secret is configured, and the e-mail
+  belongs to `V2_LOCAL_LOGIN_DOMAIN` (default `seed.setuai.local`) and an active profile; failures are throttled and indistinguishable. A hosted target disables it permanently.
+* `GET /api/v2/projects/{id}` returns `my_role` and `my_permissions`, so a client takes its capabilities from the server. See `docs/V2_FRONTEND.md`.
+
 ## Authorization model
 * Identity: verified JWT. Authority: an ACTIVE `project_memberships` row, looked up per request (the URL's project id proves nothing), and re-verified inside every domain transaction.
 * Roles: `PROJECT_MANAGER` (projects, settings, members, schedules, aggregate claim counts and dashboards; never claim content, never decisions),

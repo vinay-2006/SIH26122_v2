@@ -48,7 +48,7 @@ def render() -> str:
     out += ["### Account-level and platform endpoints", "", "| Method | Path | Who | What it does |", "|---|---|---|---|"]
     for (m, p), kind in sorted(roles.GLOBAL.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         path, op = by[(m, roles.canonical(p))]
-        who = {"public": "anyone (health check)", "user": "any signed-in user", "grant": "`CREATE_PROJECT` platform grant", "admin": "`PLATFORM_ADMIN` platform grant"}[kind]
+        who = {"public": "anyone (no token needed)", "user": "any signed-in user", "grant": "`CREATE_PROJECT` platform grant", "admin": "`PLATFORM_ADMIN` platform grant"}[kind]
         out.append(f"| {m} | `{path.replace('/api/v2', '')}` | {who} | {op.get('summary', '')} |")
     codes = {}
     for f in sorted((ROOT / "backend" / "v2").rglob("*.py")):
