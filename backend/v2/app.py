@@ -20,6 +20,10 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI):
         jwt_verify.get_verifier()                                   # fail fast at startup: no verification key / hosted without an issuer
         get_pool()                                                  # ... and: unsafe target / wrong fingerprint / unreachable
+        if os.environ.get("V2_WARM_MODEL", "1") == "1" and not os.environ.get("PYTEST_CURRENT_TEST"):
+            import threading
+            from .matching import index as _mi
+            threading.Thread(target=_mi.warm_up, name="model-warm-up", daemon=True).start()
         yield
         close_pool()
 

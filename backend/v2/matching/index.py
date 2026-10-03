@@ -17,10 +17,31 @@ _lock = threading.Lock()
 _cache: "OrderedDict[Tuple[str, str], Tuple[Any, List[str]]]" = OrderedDict()
 
 
+def _prefer_cached_model() -> None:
+    """The embedding model is small and normally already in the local Hugging Face cache. When it is, never go to the network for it: the library would otherwise
+    check the hub on every load, which stalls (and warns) on machines that are offline. If the model is NOT cached, the default behaviour (download) is untouched."""
+    import os
+    from pathlib import Path
+    home = Path(os.environ.get("HF_HOME") or (Path.home() / ".cache" / "huggingface"))
+    if (home / "hub" / "models--sentence-transformers--all-MiniLM-L6-v2").exists():
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+
 def _legacy():
     # torch must be imported before faiss (macOS segfault documented in the legacy module); importing schedule_index first guarantees the order.
+    _prefer_cached_model()
     from backend.shared import schedule_index as si
     return si
+
+
+def warm_up() -> None:
+    """load the embedding model once, in the background at start-up, so the first claim of the day is not the slow one (failures are ignored: matching degrades without semantics)"""
+    try:
+        si = _legacy()
+        si._get_model().encode(["warm up"], normalize_embeddings=True, show_progress_bar=False)
+    except Exception as e:                                                   # noqa: BLE001
+        logger.warning("embedding model warm-up skipped: %s", e)
 
 
 def search(project_id, version_id, activities: List[Dict[str, Any]], query: str, top_k: Optional[int] = None):

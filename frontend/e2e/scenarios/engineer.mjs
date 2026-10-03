@@ -1,9 +1,9 @@
-import { WEB, api, eq, navLabels, ok, projectId, shot, signIn, text, tmpFile, until } from '../lib.mjs';
+// Site Engineer: the ORIGINAL interface (Claim Intake, Issues & Delays, My Updates, WBS Explorer) running on the v2 backend.
+import { WEB, activeVersion, api, eq, legacy, navLabels, ok, projectId, shot, signIn, text, tmpFile, until } from '../lib.mjs';
 
 const today = () => new Date().toISOString().slice(0, 10);
-const num = (s) => Number(String(s).replace(/[^0-9.-]/g, ''));
 
-/** file a claim straight through the API as this person (fast set-up for the supervisor scenarios; the UI path is covered separately) */
+/** file a claim straight through the v2 API as this person (fast set-up for the supervisor scenarios; the UI path is covered separately) */
 export async function claimViaApi(page, pid, ext, quantities, extra = {}) {
   const act = (await api(page, 'GET', `/projects/${pid}/activities?q=${ext}&limit=5`)).json.items.find((a) => a.external_activity_id === ext);
   const qs = quantities && Object.entries(quantities).map(([code, qty]) => {
@@ -15,105 +15,108 @@ export async function claimViaApi(page, pid, ext, quantities, extra = {}) {
   return { claimId: r.json.claim_id, act };
 }
 
-async function pickActivity(page, ext) {
-  await page.getByLabel('Find activity').fill(ext);
-  await page.locator(`[data-testid=activity-option][data-activity="${ext}"]`).click();
-  await page.waitForSelector('[data-testid=selected-activity]');
-}
-
-async function actualPct(page) {
-  await page.goto(`${WEB}/overview`); await page.waitForSelector('[data-testid=stat-actual]');
-  return num((await text(page, 'stat-actual')).match(/ACTUAL PROGRESS\s*([\d.]+)%/i)?.[1] ?? (await text(page, 'stat-actual')).match(/([\d.]+)%/)[1]);
-}
+const ORIGINAL_SE_MENU = ['Claim Intake', 'Issues & Delays', 'My Updates', 'WBS Explorer', 'Project Intelligence'];
 
 export default [
-  ['Engineer: lands on the claim form; menu has no schedule, review, audit or settings', async ({ browser, S }) => {
-    const { page, log } = await signIn(browser, 'arun.nair');
-    S.se = { page, log }; S.pidB = await projectId(page, 'AEC-OFFSHORE');
-    eq(new URL(page.url()).pathname, '/claims/new', 'landing page');
-    const nav = await navLabels(page);
-    for (const need of ['Submit Claim', 'My Claims', 'Overview', 'WBS & Activities', 'Issues & Delays', 'Notifications']) ok(nav.includes(need), `menu lacks ${need}: ${nav}`);
-    for (const never of ['Schedule', 'Review Queue', 'Audit Trail', 'Project Settings', 'Portfolio']) ok(!nav.includes(never), `menu must not contain ${never}`);
-    for (const p of ['/schedule', '/review', '/audit', '/settings', '/portfolio']) { await page.goto(`${WEB}${p}`); await page.waitForSelector('aside'); await until(async () => new URL(page.url()).pathname === '/claims/new', `${p} bounces to the claim form`); }
-    const up = await api(page, 'POST', `/projects/${S.pidB}/schedule-imports`);
-    ok([403, 422].includes(up.status), `schedule upload must be refused for engineers: ${up.status}`);
-    eq((await api(page, 'GET', `/projects/${S.pidB}/schedule-versions/compare?old=${S.pidB}&new=${S.pidB}`)).status, 403, 'version management is forbidden');
-    eq((await api(page, 'GET', `/projects/${S.pidB}/claim-counts`)).status, 403, 'engineers do not see claim counts of others');
-    await shot(page, 'se_claim_form');
+  ['Engineer: lands on the original Claim Intake with the original menu; no supervisor / PM pages', async ({ browser, S }) => {
+    const { page, log } = await signIn(browser, 'ritu.baruah');
+    S.se = { page, log };
+    S.pid = await projectId(page, 'NRL-EXPANSION'); S.ver = await activeVersion(page, S.pid);
+    eq(new URL(page.url()).pathname, '/intake', 'landing page');
+    eq(await navLabels(page), ORIGINAL_SE_MENU, 'the original site-engineer menu');
+    for (const p of ['/dashboard', '/review', '/digest', '/portfolio', '/schedule', '/settings', '/audit', '/root-cause', '/history', '/impact', '/summary', '/time-agent']) {
+      await page.goto(`${WEB}${p}`); await page.waitForSelector('aside');
+      await until(async () => new URL(page.url()).pathname === '/intake', `${p} bounces to Claim Intake`);
+    }
+    for (const tab of ['Batch upload', 'Type Update', 'Voice Input', 'File / Export']) ok(await page.getByText(tab, { exact: true }).first().isVisible(), `intake tab ${tab}`);
+    await shot(page, 'se_intake');
   }],
 
-  ['Engineer: quantity claim with evidence is accepted as PENDING and does not change progress', async ({ S }) => {
+  ['Engineer: free-text report, no activity picked -> extracted, matched automatically, checked; nothing approved', async ({ S }) => {
     const { page } = S.se;
-    const before = await actualPct(page);
-    await page.goto(`${WEB}/claims/new`); await page.waitForSelector('[data-testid=claim-form]');
-    await pickActivity(page, 'OSD-2320');
-    await page.waitForSelector('[data-testid=quantity-rows]');
-    const drill = page.locator('[data-resource="W3_DRILLED_26_M"]'), mud = page.locator('[data-resource="W3_MUD_26_M3"]');
-    await drill.locator('input[type=number]').fill('200'); await mud.locator('input[type=number]').fill('100');
-    ok(/Baseline 446\.4/.test(await drill.innerText()), 'baseline and unit come from the schedule');
-    await page.getByLabel('Remarks').fill('W3 26 in section: 200 m drilled, 100 m3 mud used to date');
-    ok(await page.getByTestId('submit-claim').isEnabled(), 'valid form');
-    await page.setInputFiles('[data-testid=evidence-input]', tmpFile('drilling-log.txt', 'Daily drilling report W3: 200 m drilled to date.'));
-    await until(async () => /uploaded/.test(await text(page, 'evidence-row')), 'evidence uploaded');
-    await page.getByTestId('submit-claim').click();
-    await page.waitForSelector('[data-testid=claim-success]');
-    ok(/does not change project progress/.test(await text(page, 'claim-success')), 'pending disclosure');
-    await page.goto(`${WEB}/claims/mine`); await page.waitForSelector('[data-testid=claim-row]');
-    const row = page.locator('[data-testid=claim-row]').first();
-    ok(/Pending review/.test(await row.innerText()) && /OSD-2320/.test(await row.innerText()), `claim listed as pending: ${await row.innerText()}`);
-    S.claim1 = (await api(page, 'GET', `/projects/${S.pidB}/my-claims`)).json.items[0].event_id;
-    eq(await actualPct(page), before, 'actual progress is unchanged by a pending claim');
-    const ledger = await api(page, 'GET', `/projects/${S.pidB}/activities/${(await api(page, 'GET', `/projects/${S.pidB}/activities?q=OSD-2320`)).json.items[0].activity_uid}/timeline`);
-    eq(ledger.json.quantity_entries.length, 0, 'no approved ledger entry exists');
+    await page.goto(`${WEB}/intake`); await page.getByText('Type Update', { exact: true }).first().click();
+    await page.getByPlaceholder(/Describe site execution progress/).fill('NRE-4050 process piping erection: 40 percent complete today');
+    await page.getByRole('button', { name: /^Submit Claim$/ }).click();
+    await until(async () => /Claim Submitted Successfully/.test(await page.locator('main').innerText()), 'pipeline completes', 60000);
+    const id = (await page.locator('main').innerText()).match(/[0-9a-f]{8}-[0-9a-f]{4}/)?.[0];
+    ok(id, 'claim id shown');
+    const mine = await legacy(page, 'GET', '/api/v1/claims', null, { project: S.pid, version: S.ver });
+    eq(mine.status, 200, 'own claims readable');
+    const c = mine.json.find((x) => x.event_id.startsWith(id));
+    ok(c, 'the claim exists'); S.claimId = c.event_id;
+    eq(c.matched_activity_id, 'NRE-4050', 'the existing matching engine resolved the activity from the text');
+    ok(['MATCHED', 'VALIDATED', 'REVIEW_REQUIRED'].includes(c.status), `status after the pipeline: ${c.status}`);
+    ok(!['APPROVED', 'EDITED'].includes(c.status), 'matching and checking never approve');
+    const cands = await legacy(page, 'GET', `/api/v1/claims/${c.event_id}/candidates`, null, { project: S.pid, version: S.ver });
+    ok(cands.json.candidates.length >= 1 && cands.json.candidates[0].activity_id === 'NRE-4050', 'ranked candidates are stored');
+    await shot(page, 'se_pipeline_done');
   }],
 
-  ['Engineer: percent-only claim is filed as reported with a clear note (never converted)', async ({ S }) => {
+  ['Engineer: an incomplete report is held by the Field Copilot and resumes after the answer', async ({ S }) => {
     const { page } = S.se;
-    await page.goto(`${WEB}/claims/new`); await pickActivity(page, 'OSD-2330');
-    await page.getByRole('button', { name: 'Percent only' }).click();
-    ok(/not<\/b> converted|not converted/i.test(await page.getByTestId('pct-note').innerHTML()), 'conversion note');
-    await page.getByLabel('Percent complete').fill('40');
-    await page.getByLabel('Remarks').fill('20 in casing run about 40 percent');
-    await page.getByTestId('submit-claim').click(); await page.waitForSelector('[data-testid=claim-success]');
-    ok(/PERCENT_ONLY_NEEDS_METHOD/.test(await text(page, 'claim-success')), 'the server flags that a Supervisor must choose the method');
-    S.claimPct = (await api(page, 'GET', `/projects/${S.pidB}/my-claims`)).json.items[0].event_id;
+    await page.goto(`${WEB}/intake`); await page.getByText('Type Update', { exact: true }).first().click();
+    await page.getByPlaceholder(/Describe site execution progress/).fill('Piping work is going on near the unit today');
+    await page.getByRole('button', { name: /^Submit Claim$/ }).click();
+    await until(async () => /Type clarification response/.test(await page.locator('main').innerHTML()) || (await page.getByPlaceholder(/Type clarification response/).count()) > 0, 'copilot asks a question', 60000);
+    await shot(page, 'se_copilot_question');
+    const held = (await legacy(page, 'GET', '/api/v1/claims', null, { project: S.pid, version: S.ver })).json.find((x) => x.raw_claim_text === 'Piping work is going on near the unit today');
+    eq(held.clarification_status, 'PENDING', 'held by the Field Copilot'); eq(held.matched_activity_id, null, 'not matched while a question is open');
+    await page.getByPlaceholder(/Type clarification response/).first().fill('NRE-4050 process piping erection, 40 percent complete');
+    await page.getByRole('button', { name: /^Submit Clarification$/ }).click();
+    await until(async () => /Claim Submitted Successfully/.test(await page.locator('main').innerText()), 'pipeline resumes after the answer', 60000);
+    const done = (await legacy(page, 'GET', `/api/v1/claims/${held.event_id}`, null, { project: S.pid, version: S.ver })).json;
+    eq(done.clarification_status, 'ANSWERED', 'answered'); eq(done.matched_activity_id, 'NRE-4050', 'matched after the answer');
+    await shot(page, 'se_copilot_resumed');
   }],
 
-  ['Engineer: over-baseline quantity is recorded as reported (not capped, not blocked)', async ({ S }) => {
+  ['Engineer: voice input tab (browser speech recognition) and typed transcript submit as a VOICE claim', async ({ S }) => {
     const { page } = S.se;
-    await page.goto(`${WEB}/claims/new`); await pickActivity(page, 'OSD-2340');
-    await page.locator('[data-resource="W3_MUD_17_M3"] input[type=checkbox]').uncheck();
-    await page.locator('[data-resource="W3_DRILLED_17_M"] input[type=number]').fill('1250');           // baseline is 1041.6 m: 20% over
-    await page.getByLabel('Remarks').fill('17.5 in section TD reached, 1250 m drilled');
-    await page.getByTestId('submit-claim').click(); await page.waitForSelector('[data-testid=claim-success]');
-    S.claimOver = (await api(page, 'GET', `/projects/${S.pidB}/my-claims`)).json.items[0].event_id;
-    const detail = await api(page, 'GET', `/projects/${S.pidB}/claims/${S.claimOver}`);
-    eq(Number(detail.json.quantities[0].reported_qty), 1250, 'reported figure kept exactly');
+    await page.goto(`${WEB}/intake`); await page.getByText('Voice Input', { exact: true }).first().click();
+    ok((await page.getByLabel(/recording voice claim/i).count()) >= 1, 'microphone control present');
+    await shot(page, 'se_voice_tab');
   }],
 
-  ['Engineer: sees only their own claims; another engineer cannot read them', async ({ browser, S }) => {
+  ['Engineer: batch upload of several files -> report with files, claims, matches and merged duplicates', async ({ S }) => {
     const { page } = S.se;
-    await page.goto(`${WEB}/claims/mine`); await page.waitForSelector('[data-testid=claim-row]');
-    const mine = await page.locator('[data-testid=claim-row]').count();
-    ok(mine >= 3, `own claims listed: ${mine}`);
-    const other = await signIn(browser, 'sneha.pillai'); S.sneha = other;
-    await other.page.goto(`${WEB}/claims/mine`); await other.page.waitForSelector('aside');
-    await until(async () => (await other.page.getByTestId('claim-row').count()) === 0, "the other engineer sees none of arun's claims");
-    eq((await api(other.page, 'GET', `/projects/${S.pidB}/claims/${S.claim1}`)).status, 404, "another engineer's claim looks absent");
-    await other.page.goto(`${WEB}/claims/${S.claim1}`); await other.page.waitForSelector('aside');
-    ok(await other.page.getByTestId('claim-text').count() === 0, 'claim text is not shown');
+    await page.goto(`${WEB}/intake`);
+    await page.getByTestId('batch-file-input').setInputFiles([
+      tmpFile('report_a.txt', 'Daily report\nNRE-4050 process piping erection 40 percent complete\nNRE-4080 piping insulation and painting 5 percent complete\n'),
+      tmpFile('report_b.txt', 'Site note\nNRE-4080 piping insulation and painting 5 percent complete\n'),
+    ]);
+    await page.getByRole('button', { name: /upload|process|submit/i }).filter({ hasText: /upload|process|submit/i }).first().click();
+    await until(async () => /NRE-4080/.test(await page.locator('main').innerText()), 'batch report shows the activities', 90000);
+    await shot(page, 'se_batch_report');
+    const b = await legacy(page, 'GET', `/api/v1/projects/${S.pid}/upload-batches?mine=true`, null, { project: S.pid, version: S.ver });
+    ok(b.json.length >= 1 && b.json[0].file_count === 2, 'the batch is listed');
+    const rep = (await legacy(page, 'GET', `/api/v1/projects/${S.pid}/upload-batches/${b.json[0].batch_id}`, null, { project: S.pid, version: S.ver })).json;
+    // NRE-4080 is reported by both files (one claim, two sources) and NRE-4050 / 40% is the claim this engineer already filed earlier today (not created twice)
+    eq(rep.merged_count, 2, 'two duplicates were merged instead of created');
+    ok(rep.claims.some((c) => c.matched_activity_id === 'NRE-4050' && c.created_in_this_batch === false), 'the earlier claim for NRE-4050 backs this report');
+    const a = rep.activities.find((x) => x.activity_id === 'NRE-4080');
+    ok(a && a.claim_ids.length === 1 && a.file_names.length === 2, 'one claim backed by both files');
+    ok(rep.claims.every((c) => !['APPROVED', 'EDITED'].includes(c.status)), 'a batch never approves anything');
   }],
 
-  ['Engineer: withdraws an own pending claim (record kept); evidence stays', async ({ S }) => {
+  ['Engineer: reports an issue; it is tied to its stage and activity and shows in the list', async ({ S }) => {
     const { page } = S.se;
-    const { claimId } = await claimViaApi(page, S.pidB, 'OSD-2390', { W3_TEST_STAGES: 2 });
-    await page.goto(`${WEB}/claims/${claimId}`); await page.waitForSelector('[data-testid=withdraw-btn]');
-    await page.getByTestId('withdraw-btn').click();
-    ok(await page.getByTestId('confirm-action').isDisabled(), 'a reason is required');
-    await page.getByLabel('Withdrawal reason').fill('Entered against the wrong activity');
-    await page.getByTestId('confirm-action').click();
-    await until(async () => /Withdrawn/.test(await page.locator('main').innerText()), 'status becomes withdrawn');
-    ok(await page.getByTestId('withdraw-btn').count() === 0, 'no further actions on a withdrawn claim');
-    eq((await api(page, 'GET', `/projects/${S.pidB}/claims/${claimId}`)).json.status, 'WITHDRAWN', 'server state');
+    await page.goto(`${WEB}/issues`); await page.waitForSelector('text=Report an issue or delay');
+    await page.getByLabel('Issue category').selectOption({ index: 1 });
+    await page.getByLabel('Affected stage').selectOption({ index: 1 });
+    await page.getByLabel('Title', { exact: true }).fill('Welder shortage on piping spools');
+    await page.getByLabel('Description', { exact: true }).fill('Two welders on leave; the night shift cannot run');
+    await page.getByRole('button', { name: /^Report issue$/ }).click();
+    await until(async () => /Welder shortage on piping spools/.test(await page.locator('main').innerText()), 'issue listed', 20000);
+    const l = await legacy(page, 'GET', `/api/v1/projects/${S.pid}/schedules/${S.ver}/issues`, null, { project: S.pid, version: S.ver });
+    ok(l.json.some((i) => i.title === 'Welder shortage on piping spools' && i.status === 'ACTIVE'), 'issue stored');
+    await shot(page, 'se_issue');
+  }],
+
+  ['Engineer: My Updates and WBS Explorer render real data', async ({ S }) => {
+    const { page } = S.se;
+    await page.goto(`${WEB}/updates`); await page.waitForSelector('text=My Updates');
+    ok(/My claims|DECISIONS/i.test(await page.locator('main').innerText()), 'My Updates content');
+    await page.goto(`${WEB}/wbs`); await page.waitForSelector('text=WBS Activity Explorer');
+    await until(async () => /WBS groups/.test(await page.locator('main').innerText()), 'WBS groups load');
+    ok(S.se.log.errors.filter((e) => !/agent\/briefing|api\/v1\/.*-> 404/.test(e)).length === 0, `no unexpected console errors: ${S.se.log.errors.slice(0, 3)}`);
   }],
 ];

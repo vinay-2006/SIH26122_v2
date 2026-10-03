@@ -106,6 +106,23 @@ export async function api(page, method, p, body) {
   return { status: r.status, json };
 }
 
+/** call the ORIGINAL (legacy-contract) API the restored pages use, as this person, for the given project (+ optional schedule version) */
+export async function legacy(page, method, p, body, { project, version, form } = {}) {
+  const t = await token(page);
+  const headers = { Authorization: `Bearer ${t}`, ...(project ? { 'X-Project-ID': project } : {}), ...(version ? { 'X-Schedule-ID': version } : {}) };
+  const init = { method, headers };
+  if (form) init.body = form; else if (body) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+  const r = await fetch(`http://127.0.0.1:${CFG.apiPort}${p}`, init);
+  let json = null; try { json = await r.json(); } catch { /* no body */ }
+  return { status: r.status, json };
+}
+
+export async function activeVersion(page, pid) {
+  const r = await api(page, 'GET', `/projects/${pid}/schedule-versions`);
+  const v = (r.json?.items ?? r.json ?? []).find((x) => x.status === 'ACTIVE');
+  return v?.version_id;
+}
+
 export async function projectId(page, code) {
   const r = await api(page, 'GET', '/projects');
   const p = (r.json || []).find((x) => x.project_code === code);
