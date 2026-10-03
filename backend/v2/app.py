@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from . import errors
 from . import jwt_verify
 from .db import close_pool, database_url, get_pool, tx
-from .routers import projects, schedules
+from .routers import claims, dashboard, documents, issues, projects, schedules
 
 
 def create_app() -> FastAPI:
@@ -20,10 +20,18 @@ def create_app() -> FastAPI:
         yield
         close_pool()
 
-    app = FastAPI(title="SIH v2 API", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(
+        title="SetuAI v2 API", version="0.4.0", lifespan=lifespan,
+        description="Project and schedule management (Project Manager), progress claims and evidence (Site Engineer), review and approval (Supervisor), "
+                    "ledger-derived progress dashboards. Authenticate with a Supabase-style bearer JWT; project authority comes from an ACTIVE membership. "
+                    "Errors are {error: {code, message, details}}. List endpoints return {items, limit, offset, next_offset}.")
     errors.install(app)
     app.include_router(projects.router)
     app.include_router(schedules.router)
+    app.include_router(documents.router)
+    app.include_router(claims.router)
+    app.include_router(issues.router)
+    app.include_router(dashboard.router)
 
     @app.get("/health")
     def health():

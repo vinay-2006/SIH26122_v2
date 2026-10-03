@@ -31,7 +31,10 @@ def _truncate():
 
 
 @pytest.fixture
-def clean_db(monkeypatch):
+def clean_db(monkeypatch, tmp_path):
+    monkeypatch.setenv("V2_EVIDENCE_DIR", str(tmp_path / "evidence"))        # uploaded test files never land in the working tree
+    from backend.v2 import storage
+    storage.set_store(None)
     monkeypatch.setenv("DB_V2_URL", os.environ["DATABASE_URL"])
     monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
     for k in ("SUPABASE_URL", "V2_JWT_ISSUER", "V2_JWKS_URL", "SUPABASE_JWKS_URL", "V2_ALLOW_HOSTED"):
@@ -43,6 +46,7 @@ def clean_db(monkeypatch):
     from backend.v2 import db as v2db, jwt_verify
     v2db.close_pool()                                               # no pooled connection may outlive the truncate
     jwt_verify.reset_verifier()
+    storage.set_store(None)
     _truncate()
 
 

@@ -85,7 +85,7 @@ def test_db_marker_check():
 def test_every_test_file_is_classified_exactly_once():
     files = sorted(
         p.relative_to(ROOT).as_posix()
-        for pattern in ("tests/test_*.py", "tests/db_v2/test_*.py", "tests/schedule_import/test_*.py", "tests/v2_hardening/test_*.py", "tests/v2_domain/test_*.py", "backend/**/test_*.py", "backend/smoke_test.py")
+        for pattern in ("tests/test_*.py", "tests/db_v2/test_*.py", "tests/schedule_import/test_*.py", "tests/v2_hardening/test_*.py", "tests/v2_domain/test_*.py", "tests/v2_api/test_*.py", "backend/**/test_*.py", "backend/smoke_test.py")
         for p in ROOT.glob(pattern)
     )
     sets = {"DB_FREE": C.DB_FREE, "DB_READ": C.DB_READ, "DB_WRITE": C.DB_WRITE, "DB_DESTRUCTIVE": C.DB_DESTRUCTIVE}

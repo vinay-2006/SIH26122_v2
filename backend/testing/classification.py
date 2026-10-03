@@ -17,6 +17,9 @@ DB_FREE = {
     # schedule import: parsers, validation, reconciliation, upload guard (pure logic, no database)
     "tests/schedule_import/test_parsers_golden.py", "tests/schedule_import/test_validation.py",
     "tests/schedule_import/test_reconcile.py", "tests/schedule_import/test_upload_guard.py",
+    "tests/v2_api/test_storage_extraction_unit.py",
+    "tests/v2_api/test_openapi_contract.py",
+    
     # pure logic
     "backend/routers/test_matching_semantic.py", "backend/shared/test_llm_extraction.py",
     "backend/shared/test_schedule.py", "backend/shared/test_tabular_extraction.py",
@@ -48,6 +51,15 @@ DB_WRITE = {
     "tests/db_v2/test_runner_and_isolation.py", "tests/db_v2/test_import_staging_migrations.py",
     "tests/db_v2/test_profile_sync.py", "tests/db_v2/test_pool.py", "tests/db_v2/test_exec_workflow_constraints.py", "tests/v2_domain/test_claims_service.py", "tests/v2_domain/test_decisions_service.py", "tests/v2_domain/test_concurrency.py",
     "tests/v2_domain/test_issues_service.py", "tests/v2_domain/test_rollups_timeline.py", "tests/v2_domain/test_migration_0013.py", "tests/v2_domain/test_domain_authorization.py", "tests/db_v2/test_posture.py", "tests/db_v2/test_hosted_stamping.py",
+    "tests/v2_api/test_api_claims.py",
+    "tests/v2_api/test_api_documents.py",
+    "tests/v2_api/test_api_issues_dashboard.py",
+    "tests/v2_api/test_api_roles.py",
+    
+    
+    
+    
+    "tests/v2_api/test_api_errors.py",
     # schedule import service + v2 API against the isolated setuai_v2_integ database (commits, then truncates after each test)
     "tests/schedule_import/test_api_projects_members.py", "tests/schedule_import/test_api_schedule_flow.py",
     "tests/schedule_import/test_api_authorization.py", "tests/schedule_import/test_api_revision_reconciliation.py",

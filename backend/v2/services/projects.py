@@ -29,11 +29,11 @@ def create_project(user: CurrentUser, data: Dict[str, Any]) -> Dict[str, Any]:
         raise forbidden("Creating a project needs the CREATE_PROJECT platform grant", "CREATE_PROJECT_REQUIRED")
     with tx(user.id) as c:
         p = c.execute(
-            "insert into projects (project_code, project_name, description, client_name, project_type, location, latitude, longitude, geofence_radius_m,"
-            " planned_start, planned_finish, contract_finish, lifecycle_status, created_by) values (%(project_code)s,%(project_name)s,%(description)s,"
+            "insert into projects (project_id, project_code, project_name, description, client_name, project_type, location, latitude, longitude, geofence_radius_m,"
+            " planned_start, planned_finish, contract_finish, lifecycle_status, created_by) values (coalesce(%(project_id)s::uuid, gen_random_uuid()),%(project_code)s,%(project_name)s,%(description)s,"
             "%(client_name)s,%(project_type)s,%(location)s,%(latitude)s,%(longitude)s,%(geofence_radius_m)s,%(planned_start)s,%(planned_finish)s,"
             "%(contract_finish)s,%(lifecycle_status)s,%(created_by)s) returning *",
-            {**{k: data.get(k) for k in PROJECT_FIELDS}, "project_code": data["project_code"], "created_by": user.id,
+            {**{k: data.get(k) for k in PROJECT_FIELDS}, "project_code": data["project_code"], "created_by": user.id, "project_id": data.get("project_id"),   # fixed ids are for local seeds only; the API model never carries one
              "lifecycle_status": data.get("lifecycle_status") or "UPCOMING"}).fetchone()
         c.execute("insert into project_memberships (project_id, user_id, role, added_by) values (%s,%s,'PROJECT_MANAGER',%s)",
                   (p["project_id"], user.id, user.id))                    # creator bootstrap (the database allows exactly this one seat)
@@ -233,26 +233,3 @@ def revoke_sessions(admin: CurrentUser, user_id) -> Dict[str, Any]:
             raise ApiError(404, "USER_NOT_FOUND", "No such user")
         audit.log(c, project_id=None, actor_id=admin.id, role="PLATFORM_ADMIN", action="SESSIONS_REVOKED", entity_type="PROFILE", entity_id=user_id)
     return {"user_id": r["id"], "tokens_valid_after": r["tokens_valid_after"]}
-
-
-# ------------------------------------------------------------------------------------------------ site engineer report / evidence upload
-def upload_document(user, project_id, kind: str, filename: str, content: bytes, mime: Optional[str]) -> Dict[str, Any]:
-    if kind not in DOC_KINDS:
-        raise ApiError(422, "BAD_KIND", f"kind must be one of {', '.join(DOC_KINDS)}")
-    if not content:
-        raise ApiError(422, "EMPTY_FILE", "The file is empty")
-    if len(content) > MAX_UPLOAD:
-        raise ApiError(413, "TOO_LARGE", "The file exceeds the 25 MB limit")
-    why = schedule_like_reason(filename, content)
-    if why:
-        raise ApiError(422, "SCHEDULE_FILE_NOT_ALLOWED", why)
-    sha = hashlib.sha256(content).hexdigest()
-    with tx(user.id) as c:
-        try:
-            row = c.execute("insert into source_documents (project_id, kind, file_name, mime_type, sha256, size_bytes, uploaded_by, extraction_status) "
-                            "values (%s,%s,%s,%s,%s,%s,%s,'PENDING') returning document_id, uploaded_at", (project_id, kind, filename, mime, sha, len(content), user.id)).fetchone()
-        except pge.UniqueViolation as e:
-            raise ApiError(409, "DUPLICATE_UPLOAD", "This exact file was already uploaded to the project") from e
-        audit.log(c, project_id=project_id, actor_id=user.id, role="SITE_ENGINEER", action="DOCUMENT_UPLOADED", entity_type="SOURCE_DOCUMENT",
-                  entity_id=row["document_id"], after={"kind": kind, "file": filename, "sha256": sha})
-    return {"document_id": row["document_id"], "kind": kind, "sha256": sha, "uploaded_at": row["uploaded_at"]}

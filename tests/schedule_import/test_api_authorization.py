@@ -141,9 +141,17 @@ def doc(api, user, project, name, body, kind="DAILY_REPORT"):
     return api.post(f"{P}/{project}/documents", user, files={"file": (name, body, "application/octet-stream")}, data={"kind": kind})
 
 
+def real_jpeg() -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (120, 90, 60)).save(buf, "JPEG")
+    return buf.getvalue()
+
+
 def test_site_engineers_can_upload_reports_and_evidence(world, api):
     ok = [("daily.txt", b"3 Mar: 180 m of pipe laid at KM 12+400, 14 welds. Rain after 3 pm.", "DAILY_REPORT"),
-          ("site_visit.pdf", b"%PDF-1.7 fake but harmless", "SITE_REPORT"), ("photo.jpg", b"\xff\xd8\xff\xe0" + b"1" * 50, "PHOTO"),
+          ("site_visit.pdf", b"%PDF-1.7 fake but harmless", "SITE_REPORT"), ("photo.jpg", real_jpeg(), "PHOTO"),
           ("measurements.csv", b"Date,Location,Item,Quantity,Unit\n2026-03-03,KM 12+400,Pipe laid,180,m\n", "EVIDENCE"),
           ("delay.txt", b"Excavator broke down; spare part awaited from Guwahati. Expect 4 days delay.", "ISSUE_REPORT")]
     for name, body, kind in ok:

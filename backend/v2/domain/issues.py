@@ -167,3 +167,11 @@ def list_memory(actor: ProjectActor) -> List[dict]:
     with actor_tx(actor, readonly=True) as c:
         return c.execute("select memory_id, project_id, title, lessons_learned, corrective_action, outcome, category_code, delay_days, visibility, recorded_at from institutional_memory "
                          "where project_id = %s or (visibility = 'ORGANISATION') order by recorded_at desc", (actor.project_id,)).fetchall()
+
+
+def list_root_causes(actor: ProjectActor) -> List[dict]:
+    require_role(actor, SUP, PM, what="reading root causes")
+    with actor_tx(actor, readonly=True) as c:
+        return c.execute("select r.root_cause_id, r.title, r.category_code, r.summary, r.status, r.identified_by, r.identified_at, "
+                         "(select count(*) from issues i where i.project_id = r.project_id and i.root_cause_id = r.root_cause_id) as issues "
+                         "from root_causes r where r.project_id = %s order by r.identified_at, r.root_cause_id", (actor.project_id,)).fetchall()

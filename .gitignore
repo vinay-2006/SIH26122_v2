@@ -40,3 +40,6 @@ uploads/
 
 # Local scratch / dev test scripts
 scratch/
+
+# SetuAI v2 local evidence store (never committed)
+.local/

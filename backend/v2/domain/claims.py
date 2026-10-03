@@ -164,8 +164,9 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
         except pge.UniqueViolation as e:
             c.execute("rollback to savepoint ins")
             if "uq_event_fingerprint" in str(e):
-                dup = c.execute("select event_id from execution_events where project_id = %s and claim_fingerprint = %s", (actor.project_id, fp)).fetchone()
-                raise ApiError(409, "DUPLICATE_CLAIM", "An identical claim already exists", {"claim_id": str(dup["event_id"])}) from e
+                dup = c.execute("select event_id, filed_by from execution_events where project_id = %s and claim_fingerprint = %s", (actor.project_id, fp)).fetchone()
+                raise ApiError(409, "DUPLICATE_CLAIM", "An identical claim already exists",
+                               {"claim_id": str(dup["event_id"])} if dup and dup["filed_by"] == actor.user_id else None) from e      # another engineer's claim id is not disclosed
             if "uq_event_one_correction" in str(e):
                 raise ApiError(409, "ALREADY_CORRECTED", "That rejected claim already has a live correction") from e
             raise
