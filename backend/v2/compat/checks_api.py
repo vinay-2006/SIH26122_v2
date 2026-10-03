@@ -34,7 +34,10 @@ def legacy_view_mode(c, project_id, version_id):
     try:
         yield c
     finally:
-        c.execute("select set_config('search_path', %s, true)", (prev,))
+        try:
+            c.execute("select set_config('search_path', %s, true)", (prev,))
+        except Exception:                      # the transaction is already aborted: it rolls back as a whole, and the original error must not be masked
+            pass
 
 
 def _evidence_checks(c, claim: Dict[str, Any], event_date) -> List[Dict[str, Any]]:

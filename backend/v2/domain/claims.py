@@ -380,6 +380,10 @@ def rebind_quantities(c, project_id, claim_id, ver, activity_uid) -> list:
     c.execute("update claim_quantities set assignment_uid = null, normalized_qty = null, normalized_uom = null where event_id = %s", (claim_id,))
     c.execute("update execution_events set matched_activity_uid = %s, status = case when status = 'EXTRACTED' then 'MATCHED' else status end where project_id = %s and event_id = %s",
               (activity_uid, project_id, claim_id))
+    # a claim that did not state its discipline takes the matched activity's, recorded as schedule-filled (never as something the engineer said)
+    c.execute("update execution_events e set discipline_code = ba.discipline_code, field_provenance = e.field_provenance || '{\"discipline\": \"SCHEDULE_AUTO_FILLED\"}'::jsonb "
+              "from baseline_activities ba where e.project_id = %s and e.event_id = %s and e.discipline_code is null and ba.version_id = %s and ba.activity_uid = %s",
+              (project_id, claim_id, ver["version_id"], activity_uid))
     assigns = measured_assignments(c, ver["version_id"], activity_uid)
     rows = c.execute("select claim_quantity_id, reported_qty, reported_uom, qty_basis, reported_resource from claim_quantities where event_id = %s", (claim_id,)).fetchall()
     bound, findings = _bind(units, ref, assigns, [{"qty": r["reported_qty"], "uom": r["reported_uom"], "basis": r["qty_basis"], "resource_hint": r["reported_resource"], "_id": r["claim_quantity_id"]} for r in rows])

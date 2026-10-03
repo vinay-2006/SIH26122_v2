@@ -71,7 +71,7 @@ def claim_to_legacy(row: Dict[str, Any], quantities: List[Dict[str, Any]], *, st
         "event_id": str(row["event_id"]), "document_id": str(row["document_id"]) if row["document_id"] else None, "schedule_id": str(row["filed_in_version_id"]),
         "event_date": iso(row["event_date"]), "raw_claim_text": row["raw_claim_text"], "input_channel": CHANNEL_OUT.get(row["input_channel"], "TYPED_TEXT"),
         "language_detected": row["language_detected"], "reported_activity_id": row["reported_activity_ref"], "matched_activity_id": matched_ext,
-        "discipline": row["discipline_code"], "action": None, "event_type": EVENT_OUT.get(row["event_type"], "PROGRESS_UPDATE"),
+        "discipline": row["discipline_code"] or row.get("act_discipline"), "action": None, "event_type": EVENT_OUT.get(row["event_type"], "PROGRESS_UPDATE"),
         "claim_mode": "CUMULATIVE_PCT" if mode == "CUMULATIVE_PCT" else "INCREMENTAL_QUANTITY",
         "asset_tag": row["asset_tag"], "location": row["location"],
         "claimed_quantity": num(one["reported_qty"]) if one else None, "claimed_uom": one["reported_uom"] if one else None, "claimed_pct": num(row["claimed_pct"]),

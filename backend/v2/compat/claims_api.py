@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/v1", tags=["legacy-contract: claims"])
 
 # ----------------------------------------------------------------------------------------------------------------------- loading
 _CLAIM_SQL = """
-select e.*, ba.external_activity_id as matched_ext,
+select e.*, ba.external_activity_id as matched_ext, ba.discipline_code as act_discipline,
        (select d.action from planner_decisions d where d.event_id = e.event_id order by d.decided_at desc limit 1) as last_action,
        exists(select 1 from claim_validations v where v.event_id = e.event_id and v.rule_code = 'NO_AUTOMATIC_MATCH') as nomatch,
        exists(select 1 from candidate_matches cm where cm.event_id = e.event_id) as has_cand,
