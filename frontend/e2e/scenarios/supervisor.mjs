@@ -49,7 +49,9 @@ export default [
     const claim = (await legacy(page, 'GET', `/api/v1/claims/${id}`, null, { project: S.pid, version: S.ver })).json;
     eq(claim.matched_activity_id, 'NRE-4050', 'the existing matching engine resolved the activity');
     ok(!['APPROVED', 'EDITED'].includes(claim.status), 'nothing is approved before the Supervisor decides');
-    await page.goto(`${WEB}/review`); await page.waitForSelector(`text=${id}`);                         // the queue lists it
+    const q = await legacy(page, 'GET', '/api/v1/review-queue', null, { project: S.pid, version: S.ver });
+    ok(JSON.stringify(q.json).includes(id), `the claim is in the Supervisor review queue (status ${claim.status}, queue ${JSON.stringify(q.json).slice(0, 200)})`);
+    await page.goto(`${WEB}/review`); await page.waitForSelector('text=Review Queue');
     await openClaim(page, id);
     ok(/Top-3 AI Candidate Matches/.test(await main(page)) && /NRE-4050/.test(await main(page)), 'ranked candidates are shown');
     await page.getByRole('button', { name: /Ask Why/ }).first().click();                               // the original Ask Why panel (graph explanation of this match)
@@ -94,6 +96,30 @@ export default [
     ok(dossier.human_decisions.decisions.some((d) => d.event_id === id), 'the decision is in the dossier');
     const trail = JSON.stringify((await legacy(page, 'GET', `/api/v1/projects/${S.pid}/dossier`, null, { project: S.pid, version: S.ver })).json.audit_chain.recent_logs);
     ok(/CLAIM_DECIDED|DECISION/i.test(trail) || trail.length > 10, 'audited');
+  }],
+
+  ['Supervisor: Daily Digest lists the day\'s claims and bulk-approves the validated ones, each decision recorded individually', async ({ S }) => {
+    const { page } = S.sup;
+    const single = (await api(S.se.page, 'GET', `/projects/${S.pid}/activities?limit=200`)).json.items
+      .find((a) => a.execution_state === 'IN_PROGRESS' && a.measured_assignments.length === 1 && a.measured_assignments[0].baseline_qty > 0 && !a.any_overrun);
+    ok(single, 'a single-resource activity in progress exists');
+    const m = single.measured_assignments[0];
+    const ids = [
+      await engineerFiles(S, `${single.external_activity_id} ${single.activity_name}: ${Math.max(1, Math.floor(m.baseline_qty * 0.01))} ${m.unit_of_measure.toLowerCase()} done today`),
+      await engineerFiles(S, 'Hydrotreater process piping NRE-4050: 12 joints welded today'),
+    ];
+    const status = async (id) => (await legacy(page, 'GET', `/api/v1/claims/${id}`, null, { project: S.pid, version: S.ver })).json.status;
+    for (const id of ids) ok(['VALIDATED', 'REVIEW_REQUIRED'].includes(await status(id)), `claim ${id} is waiting for review`);
+    const before = (await legacy(page, 'GET', `/api/v1/decisions?limit=100`, null, { project: S.pid, version: S.ver })).json.length;
+    await page.goto(`${WEB}/digest`); await page.waitForSelector('text=Daily Digest');
+    await until(async () => /[1-9]\d* claims? ready for supervisor signoff/.test(await page.locator('main').innerText()), 'the digest lists the claims waiting for sign-off', 30000);
+    await page.waitForTimeout(1500);                                         // the page re-selects the date of the newest claim once; let it settle
+    await shot(page, 'sup_digest');
+    await page.getByRole('button', { name: /Bulk Approve Validated Claims/ }).click();
+    await page.waitForSelector('text=Bulk approval completed', { timeout: 60000 });
+    for (const id of ids) eq(await status(id), 'APPROVED', `claim ${id} approved by the bulk action`);
+    const after = (await legacy(page, 'GET', `/api/v1/decisions?limit=100`, null, { project: S.pid, version: S.ver })).json.length;
+    ok(after >= before + 2, `each approval is its own recorded decision: ${before} -> ${after}`);
   }],
 
   ['Supervisor: every restored page loads real data without a failed call (Digest, Dashboard, History, Impact, Summary, Root Cause, Intelligence, Audit, WBS, Issues)', async ({ S }) => {
@@ -145,7 +171,7 @@ export default [
   ['Supervisor: Time Agent drafts a claim and hands it to the Site Engineer, who files it; the Supervisor never files', async ({ S }) => {
     const { page } = S.sup;
     await page.goto(`${WEB}/time-agent`); await page.waitForSelector('text=Setu AI Time Agent');
-    const text = 'NRE-4080 piping insulation and painting 5 percent complete';
+    const text = 'NRE-4080 piping insulation and painting 7 percent complete, noted on the supervisor walk-round';
     await page.getByRole('textbox').last().fill(text);
     await page.keyboard.press('Enter');
     await page.getByRole('button', { name: /Hand Off Draft to Site Engineer/ }).waitFor({ timeout: 20000 });

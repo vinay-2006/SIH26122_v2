@@ -33,7 +33,9 @@ export type Permission =
   | 'MANAGE_BLOCKERS'
   | 'REPORT_ISSUE'
   /** v2 only: create / edit projects, settings and members (Project Manager) */
-  | 'MANAGE_PROJECT';
+  | 'MANAGE_PROJECT'
+  /** v2 only: read-only monitoring pages that carry no claim content (issues, root causes, impact) for the Project Manager; Supervisors have them through their reviewer permissions */
+  | 'VIEW_MONITORING';
 
 export interface ProjectListItem {
   project_id: string;

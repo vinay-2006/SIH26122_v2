@@ -105,17 +105,17 @@ export default function AppShell() {
   // Navigation is driven by the caller's PROJECT permissions (the same RBAC table the backend enforces).
   const legacyNavItems: { label: string; path: string; icon: any; badge?: number; requires: Permission[] }[] = [
     { label: t('nav.claimIntake'),      path: '/intake',    icon: PlusCircle,      requires: ['CREATE_EXECUTION_EVENT'] },
-    { label: 'Issues & Delays',         path: '/issues',    icon: AlertOctagon,    requires: ['REPORT_ISSUE'] },
+    { label: 'Issues & Delays',         path: '/issues',    icon: AlertOctagon,    requires: ['REPORT_ISSUE', 'VIEW_MONITORING'] },
     { label: 'My Updates',              path: '/updates',   icon: BellRing,        badge: unreadCount, requires: ['CREATE_EXECUTION_EVENT'] },
     { label: t('nav.dailyDigest'),      path: '/digest',    icon: ClipboardList,   badge: pendingCount, requires: ['REVIEW_CLAIM'] },
     { label: t('nav.reviewWorkspace'),  path: '/review',    icon: Layers,          badge: pendingCount, requires: ['REVIEW_CLAIM'] },
     { label: t('nav.timeAgent', { defaultValue: 'Time Agent' }), path: '/time-agent', icon: Bot, requires: ['REVIEW_CLAIM'] },
     { label: t('nav.dashboard'),        path: '/dashboard', icon: LayoutDashboard, requires: ['REVIEW_CLAIM'] },
     { label: t('nav.activityHistory'),  path: '/history',   icon: Clock,           requires: ['REVIEW_CLAIM'] },
-    { label: t('nav.impactPreview'),    path: '/impact',    icon: Activity,        requires: ['REVIEW_CLAIM'] },
+    { label: t('nav.impactPreview'),    path: '/impact',    icon: Activity,        requires: ['REVIEW_CLAIM', 'VIEW_MONITORING'] },
     { label: t('wbs.navLabel'),         path: '/wbs',       icon: FolderTree,      requires: ['VIEW_SCHEDULE'] },
     { label: t('nav.executionSummary'), path: '/summary',   icon: Sparkles,        requires: ['REVIEW_CLAIM'] },
-    { label: 'Root Cause & Memory',     path: '/root-cause', icon: GitBranch,      requires: ['MANAGE_BLOCKERS'] },
+    { label: 'Root Cause & Memory',     path: '/root-cause', icon: GitBranch,      requires: ['MANAGE_BLOCKERS', 'VIEW_MONITORING'] },
     { label: 'Project Intelligence',    path: '/intelligence', icon: Bot,          requires: ['VIEW_PROJECT'] },
     { label: 'Audit Trail',             path: '/audit',     icon: Fingerprint,     requires: ['VIEW_AUDIT'] },
   ];

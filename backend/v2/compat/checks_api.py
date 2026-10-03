@@ -31,9 +31,14 @@ def legacy_view_mode(c, project_id, version_id):
     prev = c.execute("show search_path").fetchone()["search_path"]
     c.execute("select set_config('app.lrm_project', %s, true), set_config('app.lrm_version', %s, true)", (str(project_id), str(version_id)))
     c.execute("select set_config('search_path', 'lrm, public', true)")
+    # the original code compares and sorts ids as TEXT (the demo kept every id as a string): read uuid columns as text inside this block
+    from psycopg.types.string import TextLoader
+    from psycopg.types.uuid import UUIDLoader
+    c.adapters.register_loader("uuid", TextLoader)
     try:
         yield c
     finally:
+        c.adapters.register_loader("uuid", UUIDLoader)
         try:
             c.execute("select set_config('search_path', %s, true)", (prev,))
         except Exception:                      # the transaction is already aborted: it rolls back as a whole, and the original error must not be masked

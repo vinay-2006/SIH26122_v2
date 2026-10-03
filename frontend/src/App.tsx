@@ -66,9 +66,13 @@ function App() {
                     <Route path="/review" element={<ReviewWorkspace />} />
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/history" element={<ActivityHistory />} />
-                    <Route path="/impact" element={<ImpactPreview />} />
                     <Route path="/summary" element={<AIExecutionSummary />} />
                     <Route path="/reports/execution-summary" element={<AIExecutionSummary />} />
+                  </Route>
+
+                  {/* Impact preview reads only the schedule: reviewers and (v2) the Project Manager */}
+                  <Route element={<ProtectedRoute requires={['REVIEW_CLAIM', 'VIEW_MONITORING']} />}>
+                    <Route path="/impact" element={<ImpactPreview />} />
                   </Route>
 
                   <Route element={<ProtectedRoute requires={['VIEW_SCHEDULE']} />}>
@@ -93,12 +97,12 @@ function App() {
                   </Route>
 
                   {/* Issues & delays: reported from the field (REPORT_ISSUE), resolved by reviewers (MANAGE_BLOCKERS) */}
-                  <Route element={<ProtectedRoute requires={['REPORT_ISSUE']} />}>
+                  <Route element={<ProtectedRoute requires={['REPORT_ISSUE', 'VIEW_MONITORING']} />}>
                     <Route path="/issues" element={<IssuesDelays />} />
                   </Route>
 
                   {/* Root-cause analysis + institutional memory (reviewers) */}
-                  <Route element={<ProtectedRoute requires={['MANAGE_BLOCKERS']} />}>
+                  <Route element={<ProtectedRoute requires={['MANAGE_BLOCKERS', 'VIEW_MONITORING']} />}>
                     <Route path="/root-cause" element={<RootCauseMemory />} />
                   </Route>
                   </Route>

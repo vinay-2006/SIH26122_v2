@@ -1,4 +1,4 @@
-import { WEB, api, eq, fixture, navLabels, ok, projectId, shot, signIn, text, tmpFile, until } from '../lib.mjs';
+import { WEB, activeVersion, api, eq, fixture, legacy, navLabels, ok, projectId, shot, signIn, text, tmpFile, until } from '../lib.mjs';
 import fs from 'node:fs';
 
 export default [
@@ -6,8 +6,8 @@ export default [
     const { page, log } = await signIn(browser, 'anita.bora');
     eq(new URL(page.url()).pathname, '/portfolio', 'landing page');
     const nav = await navLabels(page);
-    for (const need of ['Portfolio', 'Overview', 'Schedule', 'WBS & Activities', 'Issues & Delays', 'Notifications', 'Audit Trail', 'Project Settings']) ok(nav.includes(need), `PM menu lacks ${need}: ${nav}`);
-    for (const never of ['Review Queue', 'Submit Claim', 'My Claims']) ok(!nav.includes(never), `PM menu must not contain ${never}`);
+    eq(nav, ['Portfolio', 'Overview', 'Schedule', 'Project Settings', 'Issues & Delays', 'Impact Preview', 'WBS Explorer', 'Root Cause & Memory', 'Project Intelligence', 'Audit Trail'], 'the PM menu: project management plus the read-only original monitoring pages');
+    for (const never of ['Daily Digest', 'Review Workspace', 'Time Agent', 'Dashboard', 'Activity History', 'AI Execution Summary', 'Claim Intake', 'My Updates']) ok(!nav.includes(never), `PM menu must not contain ${never}`);
     await page.waitForSelector('[data-testid=project-card]');
     await until(async () => !/Loading progress/.test(await page.locator('[data-testid=portfolio-page]').innerText()), 'project cards finish loading their progress');
     const cards = Object.fromEntries(await page.locator('[data-testid=project-card]').evaluateAll((els) => els.map((e) => [e.dataset.projectCode, e.innerText.replace(/\s+/g, ' ')])));
@@ -23,7 +23,7 @@ export default [
 
   ['PM: cannot reach claim review, claim forms or claim content (UI and API)', async ({ S }) => {
     const { page } = S.pm;
-    for (const p of ['/review', '/claims/new', '/claims/mine', '/claims/00000000-0000-0000-0000-000000000000']) {
+    for (const p of ['/review', '/digest', '/dashboard', '/summary', '/history', '/time-agent', '/intake', '/updates', '/claims/00000000-0000-0000-0000-000000000000']) {
       await page.goto(`${WEB}${p}`); await page.waitForSelector('aside');
       await until(async () => new URL(page.url()).pathname === '/portfolio', `${p} should bounce to the portfolio, at ${page.url()}`);
     }
@@ -33,6 +33,17 @@ export default [
     const c = await api(page, 'GET', `/projects/${a}/claims/00000000-0000-0000-0000-000000000000`); eq([c.status, c.json.error.code], [403, 'CLAIM_CONTENT_FORBIDDEN'], 'claim content');
     eq((await api(page, 'POST', `/projects/${a}/claims`, { event_date: '2026-01-01', raw_text: 'pm claim', claimed_pct: 10 })).status, 403, 'a PM cannot file claims');
     eq((await api(page, 'POST', `/projects/${a}/claims/00000000-0000-0000-0000-000000000000/decision`, { action: 'APPROVE' })).status, 403, 'a PM cannot decide');
+    // the same boundary on the contract the restored pages use
+    const v = await activeVersion(page, a); const ctx = { project: a, version: v }; const none = '00000000-0000-0000-0000-000000000000';
+    for (const [m, u, b] of [['GET', '/api/v1/review-queue'], ['GET', `/api/v1/claims/${none}`], ['GET', `/api/v1/claims/${none}/candidates`], ['POST', '/api/v1/decisions', { event_id: none, action: 'APPROVE', justification: 'x' }],
+      ['POST', '/api/v1/claims/text', { raw_claim_text: 'pm claim 10 percent' }], ['GET', `/api/v1/graph/explain/NNB-1000?event_id=${none}`], ['GET', `/api/v1/claims/${none}/knowledge-graph`],
+      ['GET', '/api/v1/execution-summary'], ['GET', '/api/v1/reports/execution-summary'], ['GET', `/api/v1/projects/${a}/agent/review-queue`], ['GET', '/api/v1/time-agent/handoffs']]) {
+      eq((await legacy(page, m, u, b, ctx)).status, 403, `${m} ${u} is closed to the Project Manager`);
+    }
+    const d = await legacy(page, 'GET', `/api/v1/projects/${a}/dossier`, null, ctx);
+    eq([d.status, d.json.execution_evidence.status, d.json.matching.status, d.json.human_decisions.status], [200, 'RESTRICTED', 'RESTRICTED', 'RESTRICTED'], 'the dossier gives the PM the structure and the audit chain, never claim content');
+    const ag = await legacy(page, 'GET', `/api/v1/projects/${a}/agent/briefing`, null, ctx);
+    ok(ag.status === 200 && !/raw_claim_text/.test(JSON.stringify(ag.json)), 'the briefing is available, without claim wording');
   }],
 
   ['PM: project overview and activities show approved progress with the approximation disclosure', async ({ S }) => {
@@ -43,12 +54,9 @@ export default [
     ok(/not earned value/i.test(await text(page, 'stat-spi')), 'SPI is labelled as not earned value');
     ok(/Feb\s+20,\s+2023/.test(await text(page, 'stat-datadate')), 'data date shown');
     await page.waitForSelector('[data-testid=timeline-chart]');
-    await page.goto(`${WEB}/activities`); await page.waitForSelector('[data-testid=activity-row]');
-    await page.locator('[data-testid=activity-row]').first().click();
-    await page.waitForSelector('[data-testid=activity-drawer]');
-    ok(/Approved progress/.test(await text(page, 'activity-drawer')), 'activity detail opens');
-    await shot(page, 'pm_activity_drawer');
-    await page.keyboard.press('Escape');
+    await page.goto(`${WEB}/wbs`); await page.waitForSelector('text=WBS Activity Explorer');
+    await until(async () => /WBS groups/.test(await page.locator('main').innerText()), 'the original WBS Explorer loads the PM project');
+    await shot(page, 'pm_wbs');
     // a historical version is selectable from the shared switcher only when it exists; D has a single version
     await page.getByTestId('project-switcher').click(); await page.getByRole('option').filter({ hasText: 'Siliguri' }).first().click();
     await page.goto(`${WEB}/overview`); await page.waitForSelector('[data-testid=stat-actual]');
@@ -168,8 +176,8 @@ export default [
     ok(await page.getByTestId('confirm-activate').isDisabled(), 'rollback needs a reason');
     await page.keyboard.press('Escape');
     ok(/version activated/.test(await text(page, 'schedule-history')), 'history from the audit trail');
-    await page.goto(`${WEB}/audit`); await page.waitForSelector('[data-testid=audit-table]');
-    await page.getByTestId('verify-chain').click(); await page.waitForSelector('[data-testid=verify-result]');
-    ok(/intact/.test(await text(page, 'verify-result')), 'audit chain verifies');
+    await page.goto(`${WEB}/audit`); await page.waitForSelector('text=Latest records');
+    await until(async () => /VALID/.test(await page.locator('main').innerText()) && /records checked/i.test(await page.locator('main').innerText()), 'the original Audit Trail verifies the chain');
+    ok(/VERSION ACTIVATED/i.test(await page.locator('main').innerText()), 'the schedule activations are in the audit trail');
   }],
 ];

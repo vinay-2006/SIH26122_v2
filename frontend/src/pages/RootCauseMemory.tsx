@@ -8,7 +8,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import { useProject } from '@/context/ProjectContext';
+import { useProject, useProjectState } from '@/context/ProjectContext';
 import { issuesApi, memoryApi, type CategoryPattern, type Issue, type IssueCategoryCode } from '@/api/prototype';
 
 const FIELD = 'w-full h-9 rounded-lg border border-slate-300 dark:border-[#1E3A5F] bg-white dark:bg-[#0A2340] px-2.5 text-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#FF7A18]';
@@ -84,6 +84,8 @@ function RecordLessonDialog({ open, onClose, onDone }: { open: boolean; onClose:
 /** Supervisor view: where do delays keep coming from (patterns, root causes), and what has this organisation learned. */
 export default function RootCauseMemory() {
   const { currentProject, currentScheduleVersion } = useProject();
+  // v2: the Project Manager reads root causes and memory (VIEW_MONITORING) but only reviewers change them (MANAGE_BLOCKERS)
+  const canManage = useProjectState().can('MANAGE_BLOCKERS');
   const queryClient = useQueryClient();
   const [grouping, setGrouping] = useState<CategoryPattern | null>(null);
   const [recording, setRecording] = useState(false);
@@ -126,7 +128,7 @@ export default function RootCauseMemory() {
                   {c.is_repeated_pattern && (
                     <div className="flex items-center justify-between gap-2 pt-1">
                       <span className="font-bold text-[#C2570C] dark:text-[#FF9A4D]">Repeated pattern: likely a common root cause across {c.activity_count} activities.</span>
-                      {c.linked_to_root_cause < c.issue_count && <Button size="sm" variant="outline" onClick={() => setGrouping(c)} className="gap-1.5 cursor-pointer shrink-0"><Link2 className="w-3.5 h-3.5" /> Group under a root cause</Button>}
+                      {canManage && c.linked_to_root_cause < c.issue_count && <Button size="sm" variant="outline" onClick={() => setGrouping(c)} className="gap-1.5 cursor-pointer shrink-0"><Link2 className="w-3.5 h-3.5" /> Group under a root cause</Button>}
                     </div>
                   )}
                 </div>
@@ -162,7 +164,7 @@ export default function RootCauseMemory() {
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-sm flex items-center gap-2"><BookOpenCheck className="w-4 h-4 text-[#FF7A18]" /> Institutional memory</CardTitle>
-          <Button size="sm" variant="outline" onClick={() => setRecording(true)} className="gap-1.5 cursor-pointer"><Plus className="w-3.5 h-3.5" /> Record a lesson</Button>
+          {canManage && <Button size="sm" variant="outline" onClick={() => setRecording(true)} className="gap-1.5 cursor-pointer"><Plus className="w-3.5 h-3.5" /> Record a lesson</Button>}
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">

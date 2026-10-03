@@ -133,3 +133,13 @@ def test_phase7_execution_summary_runs_the_original_aggregate(kit, lg):
     assert b["aggregate"]["period"] and b["canonical_summary"] and b["language"] == "en"
     for who in (kit.world.pm, kit.world.se):
         assert lg.get("/api/v1/execution-summary", who).status_code == 403
+
+
+def test_review_queue_survives_cross_channel_claims_on_one_activity(kit, lg):
+    """regression: the original cross-channel evidence fusion compares ids as text; a typed claim and a file claim on one activity used to fail with UUID < str"""
+    a = lg.post("/api/v1/claims/text", kit.world.se, json={"raw_claim_text": "Welding mainline A2010: 120 joints completed today"}).json()["event_id"]
+    f = lg.post("/api/v1/claims/file", kit.world.se, files={"file": ("dpr.txt", b"Daily report\nA2010 Welding mainline: 120 joints completed today\n", "text/plain")}, data={"purpose": "SCANNED_DIARY"})
+    assert f.status_code in (200, 201), f.text
+    r = lg.get("/api/v1/review-queue", kit.world.sup)
+    assert r.status_code == 200, r.text
+    assert a in r.text
