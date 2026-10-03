@@ -16,27 +16,43 @@ by the token's algorithm, `alg=none` and anonymous users are refused, and an adm
 verification key, with a hosted target but no issuer, or with a database whose fingerprint marker does not match.
 
 ## Authorization model
-* Identity: verified JWT. Authority: an ACTIVE `project_memberships` row, looked up per request (the URL's project id proves nothing).
-* Roles: `PROJECT_MANAGER` (projects, settings, members, schedules), `SUPERVISOR` (read; claims/decisions arrive with the execution phase),
-  `SITE_ENGINEER` (read; report/evidence upload only). `CREATE_PROJECT` / `PLATFORM_ADMIN` are separate, revocable platform grants.
-* Every write transaction sets `app.actor_id`; the database then applies its own role guards (see `db/README.md`). Nothing here sets `app.system`.
+* Identity: verified JWT. Authority: an ACTIVE `project_memberships` row, looked up per request (the URL's project id proves nothing), and re-verified inside every domain transaction.
+* Roles: `PROJECT_MANAGER` (projects, settings, members, schedules, aggregate claim counts and dashboards; never claim content, never decisions),
+  `SUPERVISOR` (review queue, decisions, issue resolution, root causes, memory, audit), `SITE_ENGINEER` (own claims, evidence, issues; never schedules).
+  `CREATE_PROJECT` / `PLATFORM_ADMIN` are separate, revocable platform grants.
+* Every write transaction sets `app.actor_id`; the database applies its own role guards (see `db/README.md`). Nothing here sets `app.system`.
 
-## Endpoints (`/api/v2`)
-| | |
-|---|---|
-| `GET /me`, `GET/POST /projects`, `GET/PATCH /projects/{id}`, `POST …/archive`, `POST …/restore` | create needs `CREATE_PROJECT`; patch/archive PM |
-| `GET/PATCH /projects/{id}/settings` | PM |
-| `GET/POST /projects/{id}/members`, `PATCH/DELETE …/members/{user_id}` | list PM+Supervisor; write PM (Site Engineer / Supervisor seats only) |
-| `GET/POST /projects/{id}/invitations`, `DELETE …/{id}`, `POST /invitations/accept` | PM; accept by the invited user |
-| `POST/DELETE /platform/grants…` | `PLATFORM_ADMIN` |
-| `POST /projects/{id}/schedule-imports` (multipart: `file`, optional `resources_file`, header fields) | PM — stages: parse + validate, **writes nothing if invalid** |
-| `GET /…/schedule-imports/{iid}` | report, WBS proposals, reconciliation preview |
-| `PUT /…/schedule-imports/{iid}/decisions` | mapping (`discipline_map`, `uom_map`, `wbs_types`, `header`) and `reconcile` decisions |
-| `POST /…/schedule-imports/{iid}/build` | atomic: DRAFT version + rows + lineage, then VALIDATED |
-| `GET /…/schedule-versions`, `…/{vid}`, `…/{vid}/wbs`, `…/{vid}/activities`, `…/compare?old&new` | members read (compare: PM) |
-| `POST /…/schedule-versions/{vid}/activate` | PM — locks; supersedes the previous; a superseded version needs `reason` (rollback) |
-| `DELETE /…/schedule-versions/{vid}` | PM — unlocked drafts only |
-| `POST /projects/{id}/documents` (multipart `kind`, `file`) | **Site Engineer only**; schedule-shaped files → 422 |
+## Endpoints
+The complete, generated inventory (every route, who may call it, every error code) is **`docs/V2_API.md`**; the live schema is at `/docs` and `/openapi.json`.
+Groups: projects / members / invitations · schedule imports and versions (Project Manager) · `activities`, `claims`, `my-claims`, `review-queue`, `claim-counts`
+· `documents` (+ `/extract`) · `issues`, `blockers`, `root-causes`, `memory` · `dashboard/*`, `activities/{id}/timeline`, `audit`, `notifications`.
+
+Conventions: errors are `{"error": {"code", "message", "details"}}`; lists are `{"items", "limit", "offset", "next_offset"}` (limit 1-200); create endpoints
+(`POST claims`, `claims/{id}/correction`, `issues`) accept an `Idempotency-Key` header (8-128 chars; the same key and body replays the first response with
+`Idempotent-Replay: true`, the same key with a different body is `IDEMPOTENCY_KEY_REUSED`; keys expire after 24 h; migration 0014).
+
+## Execution workflow (Phase 3)
+* A **claim** is a proposal. It stores exactly what was reported and never changes progress. Only a Supervisor **decision** (`APPROVE`, `EDIT`, `REJECT`, `HOLD`)
+  creates approved progress, atomically with its ledger rows, notification and audit records (`backend/v2/domain/`; migrations 0013-0014).
+* A percentage-only claim on a measured activity is never converted silently: the Supervisor must choose `APPLY_PCT_TO_ASSIGNMENTS` or enter quantities.
+  Over-baseline quantities are never clamped; beyond the project tolerance (default 10%) the deciding Supervisor's acknowledgement and note are required and kept.
+* A Site Engineer may withdraw only their own pending claim; a correction after a rejection is a NEW claim linked to it. Reported and approved values are both kept.
+* Progress rollups (`dashboard/*`) are derived from the approved ledgers by as-of SQL functions and always state their weight basis, the data date and that planned
+  progress is a **linear approximation** (SPI is not earned value).
+* Schedule revisions never transfer progress across a split, merge or retirement. **Not implemented (documented limitation):** allocating one claim across the
+  children of a split (`claim_activity_splits`); a claim decides against a single activity only, and a PM/Supervisor must file against the child that did the work.
+
+## Evidence and extraction
+* `POST /documents` validates the CONTENT (PDF, PNG, JPEG, CSV, TXT, XLSX; per-type size limits; macro workbooks and PDFs with scripts refused), stores it under a
+  generated name behind `backend/v2/storage.py` (local adapter; `V2_EVIDENCE_DIR`, default `.local/v2_evidence`, mode 0600), and records a SHA-256 and metadata.
+  Responses never contain a storage key or path; downloads are attachments, hash-checked, and role-filtered (a PM cannot read claim evidence).
+* `POST /documents/{id}/extract` is synchronous, deterministic and strict (CSV, XLSX, text, text-layer PDF; bounded by a time budget and row / page caps). Ambiguous
+  rows are skipped with reasons, a failed extraction files no claim, and no LLM or network is used. Scanned / handwritten documents (OCR) are a later phase.
+* A hosted object-storage adapter implements the same three methods (`put`, `read`, `delete`); none is connected in this phase.
+
+## Demo data
+`scripts/seed_v2.py` builds four deterministic demo projects in a LOCAL `setuai_v2_*` database through the real services (see `docs/V2_PHASE3.md`).
+`scripts/v2_dev_token.py <person>` mints a local development token for a seeded person.
 
 ## Formats
 Primavera `.xer`, Microsoft Project XML (MSPDI), CSV (+ resource CSV). **Native `.mpp` is not supported** (the error tells the user to export XML).
