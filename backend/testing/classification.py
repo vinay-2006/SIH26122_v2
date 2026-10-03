@@ -19,7 +19,7 @@ DB_FREE = {
     "tests/schedule_import/test_reconcile.py", "tests/schedule_import/test_upload_guard.py",
     "tests/v2_api/test_storage_extraction_unit.py",
     "tests/v2_api/test_openapi_contract.py",
-    
+    "tests/v2_seed/test_seed_plan_unit.py",
     # pure logic
     "backend/routers/test_matching_semantic.py", "backend/shared/test_llm_extraction.py",
     "backend/shared/test_schedule.py", "backend/shared/test_tabular_extraction.py",
@@ -55,7 +55,7 @@ DB_WRITE = {
     "tests/v2_api/test_api_documents.py",
     "tests/v2_api/test_api_issues_dashboard.py",
     "tests/v2_api/test_api_roles.py",
-    
+    "tests/v2_seed/test_seed_database.py",
     
     
     
