@@ -40,6 +40,7 @@ class ClaimCreate(Strict):
     claimed_start: Optional[date] = None
     claimed_finish: Optional[date] = None
     location: Optional[str] = Field(default=None, max_length=200)
+    asset_tag: Optional[str] = Field(default=None, max_length=80, description="equipment / asset tag the report mentions; used by automatic matching")
     evidence_document_ids: List[uuid.UUID] = Field(default_factory=list, max_length=20)
 
 
@@ -57,7 +58,7 @@ class EvidenceBody(Strict):
 
 
 class RematchBody(Strict):
-    activity_uid: uuid.UUID
+    activity_uid: Optional[uuid.UUID] = Field(default=None, description="the activity to assign (manual override); omit to run the automatic matching engine again")
 
 
 class BindBody(Strict):
@@ -111,7 +112,7 @@ def submit(body: ClaimCreate, response: Response, idempotency_key: Optional[str]
     out, replayed = idempotency.run(a.user_id, a.project_id, "claims.create", idempotency_key, payload, lambda: dc.submit_claim(
         a, event_date=body.event_date, raw_text=body.raw_text, input_channel=body.input_channel, activity_uid=body.activity_uid, reported_activity_ref=body.reported_activity_ref,
         quantities=[q.model_dump() for q in body.quantities], claimed_pct=body.claimed_pct, claimed_start=body.claimed_start, claimed_finish=body.claimed_finish,
-        location=body.location, evidence_document_ids=body.evidence_document_ids))
+        location=body.location, asset_tag=body.asset_tag, evidence_document_ids=body.evidence_document_ids))
     _replay(response, replayed)
     return out
 
@@ -144,7 +145,7 @@ def correction(claim_id: uuid.UUID, body: ClaimCreate, response: Response, idemp
     out, replayed = idempotency.run(a.user_id, a.project_id, f"claims.correction.{claim_id}", idempotency_key, body.model_dump(mode="json"), lambda: dc.submit_claim(
         a, event_date=body.event_date, raw_text=body.raw_text, input_channel=body.input_channel, activity_uid=body.activity_uid, reported_activity_ref=body.reported_activity_ref,
         quantities=[q.model_dump() for q in body.quantities], claimed_pct=body.claimed_pct, claimed_start=body.claimed_start, claimed_finish=body.claimed_finish,
-        location=body.location, evidence_document_ids=body.evidence_document_ids, resubmits_event_id=claim_id))
+        location=body.location, asset_tag=body.asset_tag, evidence_document_ids=body.evidence_document_ids, resubmits_event_id=claim_id))
     _replay(response, replayed)
     return out
 
@@ -160,7 +161,7 @@ def get_claim(claim_id: uuid.UUID, access: ProjectAccess = Depends(require(P.VIE
     return dc.get_claim(actor_of(access), claim_id)
 
 
-@router.post("/claims/{claim_id}/rematch", summary="Point a claim at another activity of the active schedule (Supervisor)")
+@router.post("/claims/{claim_id}/rematch", summary="Assign a claim to an activity of the active schedule (manual override), or re-run automatic matching when no activity is given (Supervisor)")
 def rematch(claim_id: uuid.UUID, body: RematchBody, access: ProjectAccess = Depends(require(P.REVIEW_CLAIMS, writable=True))):
     return dc.rematch_claim(actor_of(access), claim_id, body.activity_uid)
 

@@ -102,7 +102,7 @@ def _bind(units: Dict[str, Unit], ref: RefData, assigns: List[dict], quantities:
 def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_channel: str = "TYPED", activity_uid=None, reported_activity_ref: Optional[str] = None,
                  quantities: Optional[List[dict]] = None, claimed_pct=None, claimed_start: Optional[date] = None, claimed_finish: Optional[date] = None,
                  location: Optional[str] = None, evidence_document_ids: Optional[List[uuid.UUID]] = None, document_id=None, batch_id=None,
-                 resubmits_event_id=None, field_provenance: Optional[dict] = None) -> Dict[str, Any]:
+                 resubmits_event_id=None, field_provenance: Optional[dict] = None, asset_tag: Optional[str] = None) -> Dict[str, Any]:
     require_role(actor, SE, what="submitting a claim")
     require_writable(actor)
     quantities = [dict(q) for q in (quantities or [])]
@@ -155,10 +155,10 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
             c.execute("savepoint ins")
             ev = c.execute(
                 "insert into execution_events (project_id, filed_in_version_id, document_id, batch_id, event_date, raw_claim_text, input_channel, reported_activity_ref, "
-                "matched_activity_uid, event_type, claim_mode, location, claimed_pct, claimed_start, claimed_finish, filed_by, status, field_provenance, priority_score, "
-                "priority_reasons, claim_fingerprint, resubmits_event_id) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s) returning event_id, status",
+                "matched_activity_uid, event_type, claim_mode, location, asset_tag, claimed_pct, claimed_start, claimed_finish, filed_by, status, field_provenance, priority_score, "
+                "priority_reasons, claim_fingerprint, resubmits_event_id) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s) returning event_id, status",
                 (actor.project_id, ver["version_id"], document_id, batch_id, event_date, text, input_channel, reported_activity_ref, activity_uid, etype, mode, location,
-                 claimed_pct, claimed_start, claimed_finish, actor.user_id, "MATCHED" if activity_uid else "EXTRACTED",
+                 (asset_tag or "").strip() or None, claimed_pct, claimed_start, claimed_finish, actor.user_id, "MATCHED" if activity_uid else "EXTRACTED",
                  json.dumps(field_provenance or {"activity": "ENGINEER" if activity_uid else None}), priority,
                  "; ".join(f"{k}" for k, _, _ in findings) or None, fp, resubmits_event_id)).fetchone()
         except pge.UniqueViolation as e:
@@ -184,6 +184,30 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
             c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,%s,%s,%s)", (actor.project_id, eid, code, sev, msg))
         for d_id in dict.fromkeys((evidence_document_ids or [])):
             c.execute("insert into claim_evidence (project_id, event_id, document_id) values (%s,%s,%s)", (actor.project_id, eid, d_id))
+        auto = None
+        if activity_uid is None:                                             # no explicit choice: the existing matching engine proposes (it never decides or approves)
+            from ..matching import service as matching
+            try:                                                             # a matching failure must never lose the engineer's report: it simply stays for a Supervisor to match
+                c.execute("savepoint automatch")
+                auto = matching.auto_match(c, actor, eid, ver)
+            except Exception as e:                                           # noqa: BLE001
+                c.execute("rollback to savepoint automatch")
+                import logging
+                logging.getLogger(__name__).exception("automatic matching failed for claim %s", eid)
+                c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,'AUTOMATIC_MATCH_UNAVAILABLE','INFO',%s)",
+                          (actor.project_id, eid, f"Automatic matching could not run ({type(e).__name__}); a Supervisor will match this claim."))
+                findings = list(findings) + [("AUTOMATIC_MATCH_UNAVAILABLE", "INFO", "Automatic matching could not run; a Supervisor will match this claim.")]
+                auto = {"matched": False, "error": type(e).__name__}
+            if auto.get("matched"):
+                act_row = c.execute("select activity_uid, external_activity_id, activity_name, total_float, is_critical from baseline_activities where version_id = %s and activity_uid = %s",
+                                    (ver["version_id"], auto["activity_uid"])).fetchone()
+                activity_uid = auto["activity_uid"]
+                ev = {**ev, "status": "MATCHED"}
+                findings = [(f["rule"], f["severity"], f["message"]) for f in auto["findings"]]
+                priority = c.execute("select priority_score from execution_events where event_id = %s", (eid,)).fetchone()["priority_score"]
+                qrows = c.execute("select cq.claim_quantity_id, cq.reported_qty, cq.reported_uom, cq.qty_basis as basis, cq.assignment_uid, pr.resource_code, cq.normalized_qty, cq.normalized_uom "
+                                  "from claim_quantities cq left join baseline_resources br on br.assignment_uid = cq.assignment_uid and br.version_id = %s "
+                                  "left join project_resources pr on pr.resource_id = br.resource_id where cq.event_id = %s order by cq.claim_quantity_id", (ver["version_id"], eid)).fetchall()
         if activity_uid:                                                       # another pending claim for the same activity and day with a different headline figure
             for o in c.execute("select e.event_id, e.claimed_pct from execution_events e where e.project_id = %s and e.matched_activity_uid = %s and e.event_date = %s "
                                "and e.event_id <> %s and e.status in ('REPORTED','EXTRACTED','MATCHED','VALIDATED','DISPUTED') and e.claimed_pct is not null",
@@ -198,7 +222,7 @@ def submit_claim(actor: ProjectActor, *, event_date: date, raw_text: str, input_
                   after={"status": ev["status"], "activity_uid": str(activity_uid) if activity_uid else None, "quantities": len(qrows), "claimed_pct": str(claimed_pct) if claimed_pct is not None else None,
                          "resubmits": str(resubmits_event_id) if resubmits_event_id else None})
     return {"claim_id": eid, "status": ev["status"], "activity_uid": activity_uid, "quantities": qrows,
-            "validations": [{"rule": k, "severity": s, "message": m} for k, s, m in findings], "priority_score": priority}
+            "validations": [{"rule": k, "severity": s, "message": m} for k, s, m in findings], "priority_score": priority, "match": auto}
 
 
 # ------------------------------------------------------------------------------------------------ engineer actions
@@ -255,32 +279,53 @@ def attach_evidence(actor: ProjectActor, claim_id, document_id) -> Dict[str, Any
 
 
 # ------------------------------------------------------------------------------------------------ supervisor actions before a decision
-def rematch_claim(actor: ProjectActor, claim_id, activity_uid) -> Dict[str, Any]:
-    """point a claim at a different activity of the ACTIVE schedule; existing quantity bindings are cleared and re-derived (never carried over)"""
+def rebind_quantities(c, project_id, claim_id, ver, activity_uid) -> list:
+    """Point a claim at `activity_uid` and (re)derive its quantity bindings against that activity's measured assignments in version `ver`; earlier bindings
+    are cleared, never carried over. Shared by the Supervisor's manual rematch and by automatic matching. -> findings [(rule, severity, message)]"""
+    units = load_units(c)
+    ref = RefData(set(), {}, {k: v.dimension for k, v in units.items()})
+    c.execute("update claim_quantities set assignment_uid = null, normalized_qty = null, normalized_uom = null where event_id = %s", (claim_id,))
+    c.execute("update execution_events set matched_activity_uid = %s, status = case when status = 'EXTRACTED' then 'MATCHED' else status end where project_id = %s and event_id = %s",
+              (activity_uid, project_id, claim_id))
+    assigns = measured_assignments(c, ver["version_id"], activity_uid)
+    rows = c.execute("select claim_quantity_id, reported_qty, reported_uom, qty_basis, reported_resource from claim_quantities where event_id = %s", (claim_id,)).fetchall()
+    bound, findings = _bind(units, ref, assigns, [{"qty": r["reported_qty"], "uom": r["reported_uom"], "basis": r["qty_basis"], "resource_hint": r["reported_resource"], "_id": r["claim_quantity_id"]} for r in rows])
+    for b in bound:
+        if b["assignment"]:
+            c.execute("update claim_quantities set assignment_uid = %s, normalized_qty = %s, normalized_uom = %s where claim_quantity_id = %s",
+                      (b["assignment"]["assignment_uid"], b["normalized_qty"], b["normalized_uom"], b["_id"]))
+    c.execute("delete from claim_validations where event_id = %s and rule_code in ('UNKNOWN_UNIT','NO_MEASURED_ASSIGNMENT','UNIT_DIMENSION_MISMATCH','AMBIGUOUS_QUANTITY','DUPLICATE_QUANTITY','REPORTED_ABOVE_BASELINE')", (claim_id,))
+    for code, sev, msg in findings:
+        c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,%s,%s,%s)", (project_id, claim_id, code, sev, msg))
+    return findings
+
+
+def refresh_priority(c, project_id, claim_id) -> None:
+    """recompute the review priority of a claim from its CURRENT validations and matched activity (same formula as at submission)"""
+    errs = c.execute("select count(*) filter (where severity = 'ERROR') e, count(*) filter (where severity = 'WARNING') w from claim_validations where event_id = %s", (claim_id,)).fetchone()
+    crit = c.execute("select coalesce(bool_or(a.is_critical), false) k from execution_events e join baseline_activities a on a.version_id = e.filed_in_version_id and a.activity_uid = e.matched_activity_uid "
+                     "where e.event_id = %s", (claim_id,)).fetchone()["k"]
+    codes = [r["rule_code"] for r in c.execute("select rule_code from claim_validations where event_id = %s order by rule_code", (claim_id,)).fetchall()]
+    c.execute("update execution_events set priority_score = %s, priority_reasons = %s where project_id = %s and event_id = %s",
+              (Decimal(10 * errs["e"] + 3 * errs["w"]) + (Decimal(5) if crit else Decimal(0)), "; ".join(codes) or None, project_id, claim_id))
+
+
+def rematch_claim(actor: ProjectActor, claim_id, activity_uid=None) -> Dict[str, Any]:
+    """Supervisor: point a claim at a different activity of the ACTIVE schedule (the explicit manual override), or -- with no activity -- run the automatic
+    matching engine again. Existing quantity bindings are cleared and re-derived (never carried over)."""
     require_role(actor, SUP, what="re-matching a claim")
     require_writable(actor)
     with actor_tx(actor, write=True) as c:
         claim = _claim_row(c, actor.project_id, claim_id, lock=True)
         if claim["status"] not in DECIDABLE_STATUSES:
             raise ApiError(409, "CLAIM_NOT_DECIDABLE", f"A {claim['status']} claim cannot be re-matched")
+        if activity_uid is None:
+            from ..matching import service as matching
+            return {"claim_id": claim_id, **matching.auto_match(c, actor, claim_id, active_version(c, actor.project_id), overwrite_pick=True)}
         ver = active_version(c, actor.project_id)
         if c.execute("select 1 from baseline_activities where version_id = %s and activity_uid = %s", (ver["version_id"], activity_uid)).fetchone() is None:
             raise ApiError(409, "ACTIVITY_NOT_IN_ACTIVE_SCHEDULE", "That activity is not part of the project's active schedule version")
-        units = load_units(c)
-        ref = RefData(set(), {}, {k: v.dimension for k, v in units.items()})
-        c.execute("update claim_quantities set assignment_uid = null, normalized_qty = null, normalized_uom = null where event_id = %s", (claim_id,))
-        c.execute("update execution_events set matched_activity_uid = %s, status = case when status = 'EXTRACTED' then 'MATCHED' else status end where project_id = %s and event_id = %s",
-                  (activity_uid, actor.project_id, claim_id))
-        assigns = measured_assignments(c, ver["version_id"], activity_uid)
-        rows = c.execute("select claim_quantity_id, reported_qty, reported_uom, qty_basis, reported_resource from claim_quantities where event_id = %s", (claim_id,)).fetchall()
-        bound, findings = _bind(units, ref, assigns, [{"qty": r["reported_qty"], "uom": r["reported_uom"], "basis": r["qty_basis"], "resource_hint": r["reported_resource"], "_id": r["claim_quantity_id"]} for r in rows])
-        for b in bound:
-            if b["assignment"]:
-                c.execute("update claim_quantities set assignment_uid = %s, normalized_qty = %s, normalized_uom = %s where claim_quantity_id = %s",
-                          (b["assignment"]["assignment_uid"], b["normalized_qty"], b["normalized_uom"], b["_id"]))
-        c.execute("delete from claim_validations where event_id = %s and rule_code in ('UNKNOWN_UNIT','NO_MEASURED_ASSIGNMENT','UNIT_DIMENSION_MISMATCH','AMBIGUOUS_QUANTITY','DUPLICATE_QUANTITY','REPORTED_ABOVE_BASELINE')", (claim_id,))
-        for code, sev, msg in findings:
-            c.execute("insert into claim_validations (project_id, event_id, rule_code, severity, description) values (%s,%s,%s,%s,%s)", (actor.project_id, claim_id, code, sev, msg))
+        findings = rebind_quantities(c, actor.project_id, claim_id, ver, activity_uid)
         audit.log(c, project_id=actor.project_id, actor_id=actor.user_id, role=SUP, action="CLAIM_REMATCHED", entity_type="CLAIM", entity_id=claim_id,
                   before={"activity_uid": str(claim["matched_activity_uid"]) if claim["matched_activity_uid"] else None}, after={"activity_uid": str(activity_uid)})
     return {"claim_id": claim_id, "activity_uid": activity_uid, "findings": [{"rule": k, "severity": s, "message": m} for k, s, m in findings]}
@@ -335,7 +380,11 @@ def get_claim(actor: ProjectActor, claim_id) -> Dict[str, Any]:
                                     "where cq.event_id = %s order by cq.claim_quantity_id", (claim["filed_in_version_id"], claim_id)).fetchall(),
             "evidence": c.execute("select d.document_id, d.kind, d.file_name, d.sha256 from claim_evidence ce join source_documents d on d.document_id = ce.document_id where ce.event_id = %s", (claim_id,)).fetchall(),
             "validations": c.execute("select rule_code, severity, description from claim_validations where event_id = %s order by severity, rule_code", (claim_id,)).fetchall(),
-            "candidates": c.execute("select activity_uid, rank_order, composite_confidence, match_tier from candidate_matches where event_id = %s order by rank_order", (claim_id,)).fetchall(),
+            "candidates": c.execute("select cm.candidate_id, cm.activity_uid, ba.external_activity_id, ba.activity_name, cm.rank_order, cm.composite_confidence, cm.match_tier, cm.semantic_score, cm.fuzzy_score, "
+                                    "cm.location_score, cm.discipline_score, cm.supporting_signals, cm.disqualifying_signals from candidate_matches cm "
+                                    "join execution_events e on e.event_id = cm.event_id "
+                                    "left join baseline_activities ba on ba.activity_uid = cm.activity_uid and ba.version_id = (select version_id from schedule_versions where project_id = e.project_id and status = 'ACTIVE') "
+                                    "where cm.event_id = %s order by cm.rank_order", (claim_id,)).fetchall(),
             "decisions": c.execute("select decision_id, action, method, justification, decided_at, approved_pct, overrun_ack, overrun_ack_note, applied, result from planner_decisions "
                                    "where event_id = %s order by decided_at", (claim_id,)).fetchall(),
         }

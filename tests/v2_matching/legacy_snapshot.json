@@ -1,0 +1,144 @@
+{
+ "MATCH-001": [
+  {
+   "activity_id": "PIP-PS3-WLD-024",
+   "composite_confidence": 1.0,
+   "discipline_score": null,
+   "disqualifying_signals": null,
+   "fuzzy_score": null,
+   "location_score": null,
+   "match_tier": "EXACT_ID",
+   "rank_order": 1,
+   "semantic_score": null,
+   "supporting_signals": "Exact activity ID match"
+  }
+ ],
+ "MATCH-002": [
+  {
+   "activity_id": "PIP-PS3-WLD-024",
+   "composite_confidence": 0.875,
+   "discipline_score": null,
+   "disqualifying_signals": null,
+   "fuzzy_score": null,
+   "location_score": null,
+   "match_tier": "EXACT_ASSET",
+   "rank_order": 1,
+   "semantic_score": null,
+   "supporting_signals": "asset tag matched; discipline matched"
+  }
+ ],
+ "MATCH-003": [
+  {
+   "activity_id": "PIP-PS3-WLD-024",
+   "composite_confidence": 0.742043,
+   "discipline_score": 1.0,
+   "disqualifying_signals": null,
+   "fuzzy_score": 0.877193,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 1,
+   "semantic_score": 0.64549,
+   "supporting_signals": "semantic score: 0.65; fuzzy score: 0.88; discipline matched; report date falls within the planned window (+0.05); unit 'joints' matches the activity's planned unit (+0.05)"
+  },
+  {
+   "activity_id": "PIP-PS3-HDR-100",
+   "composite_confidence": 0.423459,
+   "discipline_score": 1.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.52 limited to 0.42; distinctive-word coverage 0.27); weak text evidence (text similarity 0.42) (-0.01)",
+   "fuzzy_score": 0.41824,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 2,
+   "semantic_score": 0.358999,
+   "supporting_signals": "semantic score: 0.36; fuzzy score: 0.42; discipline matched; report date falls within the planned window (+0.05)"
+  },
+  {
+   "activity_id": "PIP-PS3-SPT-030",
+   "composite_confidence": 0.391967,
+   "discipline_score": 1.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.34 limited to 0.20; distinctive-word coverage 0.00); weak text evidence (text similarity 0.41) (-0.01)",
+   "fuzzy_score": 0.2,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 3,
+   "semantic_score": 0.410334,
+   "supporting_signals": "semantic score: 0.41; fuzzy score: 0.20; discipline matched; report date falls within the planned window (+0.05)"
+  }
+ ],
+ "MATCH-004": [
+  {
+   "activity_id": "CIV-PS3-TR-0180",
+   "composite_confidence": 0.751082,
+   "discipline_score": 1.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.84 limited to 0.73; distinctive-word coverage 0.67)",
+   "fuzzy_score": 0.73328,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 1,
+   "semantic_score": 0.735523,
+   "supporting_signals": "semantic score: 0.74; fuzzy score: 0.73; discipline matched; report date falls within the planned window (+0.05); unit 'm' matches the activity's planned unit (+0.05)"
+  },
+  {
+   "activity_id": "CIV-PS3-TR-0220",
+   "composite_confidence": 0.744167,
+   "discipline_score": 1.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.84 limited to 0.72; distinctive-word coverage 0.64)",
+   "fuzzy_score": 0.71504,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 2,
+   "semantic_score": 0.730813,
+   "supporting_signals": "semantic score: 0.73; fuzzy score: 0.72; discipline matched; report date falls within the planned window (+0.05); unit 'm' matches the activity's planned unit (+0.05)"
+  },
+  {
+   "activity_id": "HSE-PS3-BAR-002",
+   "composite_confidence": 0.4,
+   "discipline_score": 0.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.48 limited to 0.36; distinctive-word coverage 0.19); discipline mismatch: claim=Civil, activity=HSE",
+   "fuzzy_score": 0.3556,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 3,
+   "semantic_score": 0.61563,
+   "supporting_signals": "semantic score: 0.62; fuzzy score: 0.36; report date falls within the planned window (+0.05); unit 'm' matches the activity's planned unit (+0.05)"
+  }
+ ],
+ "MATCH-005": [
+  {
+   "activity_id": "ELE-PS3-CT-011",
+   "composite_confidence": 0.189013,
+   "discipline_score": 0.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.35 limited to 0.20; distinctive-word coverage 0.00); discipline mismatch: claim=General Works, activity=ELECTRICAL; weak text evidence (text similarity 0.29) (-0.05)",
+   "fuzzy_score": 0.2,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 1,
+   "semantic_score": 0.286826,
+   "supporting_signals": "semantic score: 0.29; fuzzy score: 0.20; report date falls within the planned window (+0.05)"
+  },
+  {
+   "activity_id": "ELE-PS3-CT-012",
+   "composite_confidence": 0.187432,
+   "discipline_score": 0.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.35 limited to 0.20; distinctive-word coverage 0.00); discipline mismatch: claim=General Works, activity=ELECTRICAL; weak text evidence (text similarity 0.28) (-0.06)",
+   "fuzzy_score": 0.2,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 2,
+   "semantic_score": 0.284865,
+   "supporting_signals": "semantic score: 0.28; fuzzy score: 0.20; report date falls within the planned window (+0.05)"
+  },
+  {
+   "activity_id": "ELE-PS3-EAR-001",
+   "composite_confidence": 0.187325,
+   "discipline_score": 0.0,
+   "disqualifying_signals": "overlap is mostly generic words (text similarity 0.50 limited to 0.20; distinctive-word coverage 0.00); discipline mismatch: claim=General Works, activity=ELECTRICAL; weak text evidence (text similarity 0.28) (-0.06)",
+   "fuzzy_score": 0.2,
+   "location_score": 0.0,
+   "match_tier": "HYBRID_FALLBACK",
+   "rank_order": 3,
+   "semantic_score": 0.284849,
+   "supporting_signals": "semantic score: 0.28; fuzzy score: 0.20; report date falls within the planned window (+0.05)"
+  }
+ ]
+}

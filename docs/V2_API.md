@@ -78,7 +78,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | POST | `/projects/{project_id}/claims/{claim_id}/clarification-request` | S | Ask the engineer a question and keep the claim open (Supervisor) |
 | POST | `/projects/{project_id}/claims/{claim_id}/decision` | S | Approve, edit, reject or hold a claim (Supervisor) — the only way progress is created |
 | POST | `/projects/{project_id}/claims/{claim_id}/decision-preview` | S | What a decision would do, without recording it (Supervisor) |
-| POST | `/projects/{project_id}/claims/{claim_id}/rematch` | S | Point a claim at another activity of the active schedule (Supervisor) |
+| POST | `/projects/{project_id}/claims/{claim_id}/rematch` | S | Assign a claim to an activity of the active schedule (manual override), or re-run automatic matching when no activity is given (Supervisor) |
 | GET | `/projects/{project_id}/dashboard/activities` | MSE | Per-activity progress (paginated) |
 | GET | `/projects/{project_id}/dashboard/compare` | MS | Progress across two schedule versions by stable activity identity (Project Manager, Supervisor) |
 | GET | `/projects/{project_id}/dashboard/disciplines` | MSE | Progress for each discipline |
@@ -201,6 +201,7 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `CLAIM_CONTENT_FORBIDDEN` | 403 |
 | `CLAIM_NOT_DECIDABLE` | 409 |
 | `CLAIM_NOT_FOUND` | 404 |
+| `CLAIM_NOT_MATCHABLE` | 409 |
 | `CLAIM_TEXT_REQUIRED` | 422 |
 | `CONTENT_UNAVAILABLE` | 404 |
 | `CORRUPT_FILE` | 422 |
@@ -282,4 +283,4 @@ Roles: **M** Project Manager · **S** Supervisor · **E** Site Engineer. The let
 | `VERSION_NOT_FOUND` | 404 |
 | `WOULD_DECREASE` | 409 |
 
-78 operations, 115 stable error codes.
+78 operations, 116 stable error codes.
