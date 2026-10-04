@@ -1,0 +1,634 @@
+[
+ {
+  "file": "NRL_daily_progress_2026-10-03.csv",
+  "claims": [
+   {
+    "reported_id": "NRE-2020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2030",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2030",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2070",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2070",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2080",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2080",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4050",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4050",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-7020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-7020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   }
+  ]
+ },
+ {
+  "file": "NRL_daily_report_2026-10-01.pdf",
+  "claims": [
+   {
+    "reported_id": "NRE-2060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2070",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2070",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2080",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2080",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2030",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2030",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   }
+  ]
+ },
+ {
+  "file": "NRL_daily_report_2026-10-02.txt",
+  "claims": [
+   {
+    "reported_id": "NRE-2030",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2030",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4050",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4050",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4070",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4070",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-7020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-7020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   }
+  ]
+ },
+ {
+  "file": "NRL_discipline_progress_2026-09-30.xlsx",
+  "claims": [
+   {
+    "reported_id": "NRE-4050",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4050",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2080",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2080",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2070",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2070",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-7020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-7020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-2020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   }
+  ]
+ },
+ {
+  "file": "NRL_field_note_HDT_joints_2026-09-30.docx",
+  "claims": [
+   {
+    "reported_id": null,
+    "qty": 95.0,
+    "uom": "joints",
+    "matched": "NRE-4050",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.762,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "HDT_PIPING_JOINTS",
+    "rank2": "NRE-4099"
+   }
+  ]
+ },
+ {
+  "file": "NRL_field_note_HDT_spools_2026-10-01.pdf",
+  "claims": [
+   {
+    "reported_id": null,
+    "qty": 9.0,
+    "uom": "spools",
+    "matched": "NRE-4050",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.767,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "NO_UNIT_MATCH",
+    "rank2": "NRE-4090"
+   }
+  ]
+ },
+ {
+  "file": "NRL_field_note_HDT_tray_2026-10-02.txt",
+  "claims": [
+   {
+    "reported_id": null,
+    "qty": 175.0,
+    "uom": "m",
+    "matched": "NRE-4060",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.77,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "AMBIGUOUS HDT_CABLE_M/HDT_TRAY_M",
+    "rank2": "NRE-2060"
+   }
+  ]
+ },
+ {
+  "file": "NRL_field_note_with_errors_2026-10-03.csv",
+  "claims": [
+   {
+    "reported_id": "NRE-9999",
+    "qty": null,
+    "uom": null,
+    "matched": null,
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.4,
+    "matched_flag": false,
+    "ambiguous": true,
+    "reason": "Ambiguous match: confidence difference between rank-1 (NRE-2080) and rank-2 (NRE-4080) is 0.0162 < 0.05",
+    "binding": "no quantity",
+    "rank2": "NRE-4080"
+   },
+   {
+    "reported_id": "NRE-4040",
+    "qty": null,
+    "uom": null,
+    "matched": null,
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.386,
+    "matched_flag": false,
+    "ambiguous": false,
+    "reason": "Low confidence match (0.39)",
+    "binding": "no quantity",
+    "rank2": "NRE-4070"
+   },
+   {
+    "reported_id": "NRE-2050",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4050",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.638,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": "NRE-2080"
+   },
+   {
+    "reported_id": "NRE-2090",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2090",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   }
+  ]
+ },
+ {
+  "file": "NRL_invalid_values_2026-10-03.csv",
+  "claims": [],
+  "not_read": "ValidationError: 1 validation error for ExtractedClaimFields\nclaimed_pct\n  Input should be less than or equ"
+ },
+ {
+  "file": "NRL_site_progress_note_2026-09-30.docx",
+  "claims": [
+   {
+    "reported_id": "NRE-2020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-2020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4050",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4050",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-4060",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-4060",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   },
+   {
+    "reported_id": "NRE-7020",
+    "qty": null,
+    "uom": null,
+    "matched": "NRE-7020",
+    "tier": "EXACT_ID",
+    "confidence": 1.0,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "rank2": null
+   }
+  ]
+ },
+ {
+  "typed": [
+   {
+    "text": "Crude Distillation Unit 2 electrical cabling and power distribution: 2 panels installed today (CDU2_PANELS_NOS).",
+    "intended": "NRE-2060",
+    "matched": "NRE-2060",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.792,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "no quantity",
+    "expected": "clean claim"
+   },
+   {
+    "text": "Hydrotreater process piping fabrication and erection: 110 joints welded today (HDT_PIPING_JOINTS).",
+    "intended": "NRE-4050",
+    "matched": "NRE-4050",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.765,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "HDT_PIPING_JOINTS",
+    "expected": "clean claim"
+   },
+   {
+    "text": "Hydrotreater electrical cabling and power distribution: 150 m of cable tray installed today (HDT_TRAY_M).",
+    "intended": "NRE-4060",
+    "matched": "NRE-4060",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.698,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "AMBIGUOUS HDT_CABLE_M/HDT_TRAY_M",
+    "expected": "clean claim"
+   },
+   {
+    "text": "Hydrotreater instrumentation installation and loop checking commenced today: 300 m of instrument cable laid (HDT_INSTR_CABLE_M).",
+    "intended": "NRE-4070",
+    "matched": "NRE-4070",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.695,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "HDT_INSTR_CABLE_M",
+    "expected": "first report on a not-started activity (actual start)"
+   },
+   {
+    "text": "Hydrotreater electrical cabling and power distribution: 60 panels installed today (HDT_PANELS_NOS).",
+    "intended": "NRE-4060",
+    "matched": "NRE-4060",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.698,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "NO_UNIT_MATCH",
+    "expected": "more panels than the baseline holds: above-baseline warning, Supervisor acknowledgement needed"
+   },
+   {
+    "text": "Hydrotreater process piping fabrication and erection: 8 tonnes of pipe material received today.",
+    "intended": "NRE-4050",
+    "matched": "NRE-4050",
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.812,
+    "matched_flag": true,
+    "ambiguous": false,
+    "reason": null,
+    "binding": "NO_UNIT_MATCH",
+    "expected": "wrong unit for the activity (it measures joints and spools)"
+   },
+   {
+    "text": "Good progress on site today, all teams working well.",
+    "intended": "-",
+    "matched": null,
+    "tier": "HYBRID_FALLBACK",
+    "confidence": 0.017,
+    "matched_flag": false,
+    "ambiguous": true,
+    "reason": "Ambiguous match: confidence difference between rank-1 (NRE-2060) and rank-2 (NRE-2070) is 0.0000 < 0.05",
+    "binding": "no quantity",
+    "expected": "vague: no activity, no quantity, so it is not matched and goes to a Supervisor"
+   }
+  ]
+ }
+]

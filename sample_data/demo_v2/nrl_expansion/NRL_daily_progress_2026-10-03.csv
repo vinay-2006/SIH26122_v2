@@ -1,0 +1,9 @@
+Report Date,Activity ID,Task ID,Discipline,Work Description,Unit,Planned Qty,Prior Actual,Today Actual,Cumulative Actual,Progress Pct,Status,Evidence Reference,Remarks
+2026-10-03,NRE-2020,NRE-2020-01,Structural,"Structural steel erection, CDU2 main pipe rack bays 14-16",TONNE,3200,2496,38,2534,79.2,Ongoing,NRL_site_photo_CDU2_steel_2026-10-03.jpg,38 t erected; bolt torque checks done
+2026-10-03,NRE-2030,NRE-2030-01,Static Rotating Equipment,CDU2 column C-2201 lifted and set on its skirt foundation,NOS,41,23,1,24,57.6,Ongoing,,1 vessel set; grouting to follow
+2026-10-03,NRE-2060,NRE-2060-01,Electrical,CDU2 electrical: LV distribution panels installed in substation SS-2,NOS,106,27,2,29,25.6,Ongoing,,2 panels placed and levelled
+2026-10-03,NRE-2070,NRE-2070-01,Instrumentation,CDU2 instrumentation: loops terminated and loop-checked,NOS,3335,835,18,853,25.5,Ongoing,,18 loops complete
+2026-10-03,NRE-2080,NRE-2080-01,Piping,CDU2 insulation (CDU2_INSUL_M2): hot insulation cladding on lines P-2090 to P-2102,M2,87400,38755,620,39375,45.2,Ongoing,,620 m2 cladded
+2026-10-03,NRE-4050,NRE-4050-01,Piping,Hydrotreater process piping fabrication: joints welded on reactor feed lines,JOINT,18998,4950,120,5070,25.9,Ongoing,NRL_site_photo_HDT_piping_2026-10-03.jpg,120 joints; two repairs after radiography
+2026-10-03,NRE-4060,NRE-4060-01,Electrical,Hydrotreater electrical: MCC panel installed in substation SS-4,NOS,74,40,1,41,54.5,Ongoing,,1 panel placed
+2026-10-03,NRE-7020,NRE-7020-01,Instrumentation,DCS system cabinet installed in the control room,NOS,24,7,1,8,32.2,Ongoing,,cabinet 8 of 24 set and anchored

@@ -1,0 +1,21 @@
+DAILY PROGRESS REPORT - 2026-10-02
+Report date: 2026-10-02
+Numaligarh Refinery Expansion (NRL-EXPANSION)
+Reporting period: 0800 h to 1800 h
+
+WORK EXECUTED
+1. NRE-2030 | Static Rotating Equipment | CDU2 vessel V-2204 lifted and set on its saddles.
+   Today: 1 nos | Cumulative: 24/41 nos | Physical progress: 57.6%
+2. NRE-2020 | Structural | CDU2 pipe rack structural steel erection, bays 11-13.
+   Today: 41 tonnes | Cumulative: 2537/3200 tonnes | Physical progress: 79.3%
+3. NRE-4050 | Piping | Hydrotreater piping spools erected on the rack.
+   Today: 9 nos | Cumulative: 1177/4669 nos | Physical progress: 25.8%
+4. NRE-4060 | Electrical | Hydrotreater cable tray installed along the pipe rack.
+   Today: 150 m | Cumulative: 18407/33810 m | Physical progress: 54.3%
+5. NRE-4070 | Instrumentation | Hydrotreater instrument cable laying commenced.
+   Today: 300 m | Cumulative: 300/386400 m | Physical progress: 0.1%
+6. NRE-7020 | Instrumentation | DCS cabinet installed in the control room.
+   Today: 1 nos | Cumulative: 8/24 nos | Physical progress: 32.2%
+
+Prepared by: R. Baruah, Site Engineer
+Fictional demonstration data for ANVYRA. Not a real project record.

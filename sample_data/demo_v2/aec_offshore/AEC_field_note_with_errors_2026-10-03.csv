@@ -1,0 +1,6 @@
+Report Date,Activity ID,Task ID,Discipline,Work Description,Unit,Planned Qty,Prior Actual,Today Actual,Cumulative Actual,Progress Pct,Status,Evidence Reference,Remarks
+2026-10-03,AEC-9999,AEC-9999-01,Civil,Unscheduled works at an unknown location,M2,0,0,40,40,12.0,Ongoing,,Activity id is not in the schedule
+2026-10-03,OSD-1000,OSD-1000-01,Logistics,Contract award and campaign kick-off,NOS,0,0,2,2,100.0,Ongoing,,Activity is already complete
+2026-10-03,OSD-2240,OSD-2240-01,Drilling,W2 - drill 17.5 in hole section,NOS,0,0,5,5,48.4,Ongoing,,Activity is blocked by an open issue
+2026-10-03,OSD-2297,OSD-2297-01,Logistics,"W2 - bulk cement, barite and mud chemical supply",NOS,0,0,1,1,5.2,Ongoing,,Reported progress is below what is already approved (20%)
+2026-10-03,,,Piping,"Work carried out on site, good progress today",,,,,,30.0,Ongoing,,No activity id and no quantity

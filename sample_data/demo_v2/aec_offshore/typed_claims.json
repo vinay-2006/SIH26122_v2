@@ -1,0 +1,7 @@
+[
+ {
+  "activity": "-",
+  "text": "Good progress on site today, all teams working well.",
+  "expected": "vague: no activity, no quantity, so it is not matched and goes to a Supervisor"
+ }
+]

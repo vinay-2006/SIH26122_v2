@@ -1,0 +1,7 @@
+Report Date,Activity ID,Task ID,Discipline,Work Description,Unit,Planned Qty,Prior Actual,Today Actual,Cumulative Actual,Progress Pct,Status,Evidence Reference,Remarks
+2026-10-03,NRE-9999,NRE-9999-01,Civil,Pipe rack painting at unit 9,M2,0,0,40,40,12.0,Ongoing,,Activity id is not in the schedule
+2026-10-03,NRE-4040,NRE-4040-01,Static Rotating Equipment,Hydrotreater pumps and compressors installation,NOS,0,0,2,2,100.0,Ongoing,,Activity is already complete
+2026-10-03,NRE-2050,NRE-2050-01,Piping,CDU2 process piping fabrication and erection,JOINT,27140,15030,150,15180,56.9,Ongoing,,Activity is blocked by an open issue
+2026-10-03,NRE-2090,NRE-2090-01,Process,CDU2 hydrotest packs completed (CDU2_TEST_PACKS),NOS,483,0,15,15,3.1,Ongoing,,Activity has not started: piping is only 56% complete
+2026-10-03,NRE-4060,NRE-4060-01,Electrical,Hydrotreater electrical cabling and power distribution,M,0,0,1500,1500,40.0,Ongoing,,Reported progress is below what is already approved (54%)
+2026-10-03,,,Piping,"Piping work carried out at the hydrotreater, good progress today",,,,,,30.0,Ongoing,,No activity id and no quantity
