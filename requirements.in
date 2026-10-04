@@ -1,0 +1,26 @@
+# ANVYRA API on Vercel: the loose list. `requirements.txt` is the hash-locked resolution of THIS file for Linux x86-64 / Python 3.12 (what Vercel installs):
+#   .local/venvs/anvyra-dev/bin/uv pip compile requirements.in --python-platform x86_64-manylinux_2_28 --python-version 3.12 -o requirements.txt --generate-hashes
+# Local development uses backend/requirements.txt (torch, faiss, tesseract). Left out here, and why:
+#   - torch / sentence-transformers / faiss-cpu  -> replaced by onnxruntime + tokenizers running the SAME all-MiniLM-L6-v2 (V2_EMBEDDING_BACKEND=onnx)
+#   - pytesseract (needs the tesseract binary)    -> image OCR is unavailable; images are still stored as evidence, with no extracted text
+#   - supabase (supabase-py)                      -> not imported by the backend (Storage and Auth admin calls use httpx)
+#   - pytest                                      -> test-only
+fastapi
+pydantic>=2.0
+pydantic-settings
+python-dotenv
+PyJWT
+cryptography
+Pillow
+exifread
+rapidfuzz
+numpy
+python-multipart
+openai
+httpx>=0.27.0,<0.28.0
+psycopg[binary]>=3.1
+pandas
+openpyxl
+pymupdf
+onnxruntime
+tokenizers
