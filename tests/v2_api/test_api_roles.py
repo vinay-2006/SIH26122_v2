@@ -34,6 +34,7 @@ ROUTES = {
     ("GET", "/projects/{p}/dashboard/summary"): "MSE", ("GET", "/projects/{p}/dashboard/wbs"): "MSE", ("GET", "/projects/{p}/dashboard/stages"): "MSE",
     ("GET", "/projects/{p}/dashboard/disciplines"): "MSE", ("GET", "/projects/{p}/dashboard/activities"): "MSE", ("GET", "/projects/{p}/dashboard/timeline"): "MSE",
     ("GET", "/projects/{p}/notifications"): "MSE", ("POST", "/projects/{p}/notifications/{i}/read"): "MSE",
+    ("GET", "/projects/{p}/knowledge"): "MSE", ("POST", "/projects/{p}/knowledge"): "M", ("PUT", "/projects/{p}/knowledge/{i}"): "M", ("POST", "/projects/{p}/knowledge/{i}/retire"): "M",
     ("GET", "/projects/{p}/dashboard/compare"): "MS", ("GET", "/projects/{p}/audit"): "MS", ("GET", "/projects/{p}/audit/verify"): "MS",
 }
 GLOBAL = {("GET", "/health"): "public", ("GET", "/auth/config"): "public", ("POST", "/auth/local-login"): "public", ("GET", "/me"): "user", ("GET", "/projects"): "user", ("POST", "/projects"): "grant", ("POST", "/invitations/accept"): "user",

@@ -18,6 +18,8 @@ from .. import audit, permissions as P
 from ..domain.common import PM, SE, SUP, actor_tx
 from ..errors import ApiError
 from . import issues_api, schedule_api
+from ..domain import knowledge as dk
+from . import grounding
 from .context import Ctx, path_ctx
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,8 @@ def build_context(ctx: Ctx) -> Dict[str, Callable]:
                          for r in c.execute("select issue_id, title, category_code, severity, status from issues where project_id = %s order by created_at desc limit 5", (ctx.project_id,)).fetchall()]
             memories = _memory(ctx, c, "quality hold delay inspection dispute") if (gates or any(a["_blocked"] for a in acts)) else []
             verification = _audit_verification(c) if ctx.access.role in (SUP, PM) else None
+        know = [{"section": e["section"], "title": e["title"], "provenance": e["provenance"], "excerpt": " ".join(e["body"].split())[:240]} for e in dk.list_entries(ctx.actor)
+                if e["section"] in ("OVERVIEW", "SCOPE", "MILESTONES")][:8]
         brief = lambda a: {"activity_id": a["activity_id"], "activity_name": a["activity_name"], "stage_id": a["stage_id"], "workflow_condition":                      # noqa: E731
                            "REOPEN_REQUESTED" if a["_reopen"] == "REQUESTED" else ("REWORK_IN_PROGRESS" if a["_reopen"] == "APPROVED" else ("QUALITY_HOLD" if a["_qhold"] else "BLOCKED")),
                            "canonical_state": a["execution_state"], "actual_pct_complete": a["_pct"], "reopen_status": a["_reopen"]}
@@ -108,6 +112,7 @@ def build_context(ctx: Ctx) -> Dict[str, Callable]:
             "critical_activities": delayed, "blocked_activities": blocked[:10], "rework_activities": rework[:10], "quality_holds": holds[:10], "contractors": [],
             "review_queue": {"total_claims": n_claims, "total_reopens": n_reopens, "pending_claims_sample": sample, "pending_reopens_sample": []},
             "recent_incidents": incidents, "relevant_historical_incidents": memories, "schedule_impact": {}, "audit_verification": verification,
+            "project_knowledge": know,
         }
 
     def query(text: str, mode, stage_id: Optional[str], activity_id: Optional[str]):
@@ -154,26 +159,40 @@ def _run(ctx: Ctx, fn):
 
 
 @router.get("/agent/briefing")
-def briefing(ctx: Ctx = Depends(path_ctx(P.VIEW_PROJECT))):
-    """an executive interpretation of the current execution state; the language model (when configured) only phrases engine facts, otherwise the deterministic briefing is returned"""
+def briefing(ctx: Ctx = Depends(path_ctx(P.VIEW_PROJECT_INTELLIGENCE))):
+    """an executive interpretation of the current execution state; the language model (when configured) only phrases engine facts, otherwise the deterministic briefing is returned.
+    The authored project context is returned beside it (with where each entry comes from) so the reader can tell context from live data."""
     from backend.agents.supervising_agent import SupervisingAgent
     b = _run(ctx, lambda: SupervisingAgent.generate_briefing(_Shim(ctx)))
     _log(ctx, "AGENT_BRIEFING_GENERATED", {"briefing_id": b.briefing_id, "agent_status": b.agent_status.value, "findings_count": len(b.findings)})
-    return b.model_dump(mode="json")
+    out = b.model_dump(mode="json")
+    entries = dk.list_entries(ctx.actor)
+    out["project_context"] = [dict(dk.cite(e), excerpt=" ".join(e["body"].split())[:360]) for e in entries if e["section"] in ("OVERVIEW", "SCOPE", "MILESTONES")][:6]
+    out["project_context_available"] = bool(entries)
+    out["sources"] = [grounding._src("briefing", "Live project state: progress, blocked work, review queue, incidents")] + [dk.cite(e) for e in entries if e["section"] in ("OVERVIEW", "SCOPE", "MILESTONES")][:6]
+    return out
 
 
 @router.post("/agent/query")
-def query(body: Dict[str, Any], ctx: Ctx = Depends(path_ctx(P.VIEW_PROJECT))):
-    from backend.agents.schemas import AgentQueryRequest
-    from backend.agents.supervising_agent import SupervisingAgent
+def query(body: Dict[str, Any], ctx: Ctx = Depends(path_ctx(P.VIEW_PROJECT_INTELLIGENCE))):
+    """An answer built only from the project's live data and its authored knowledge, each statement tied to its source. Deterministic: no figure is generated.
+    Claim wording is never included (the roles that reach this page may not read it); counts are."""
+    from backend.agents.schemas import AgentQueryRequest, AgentQueryResponse, AgentStatus, EvidenceReference
     req = AgentQueryRequest(**body)
-    r = _run(ctx, lambda: SupervisingAgent.answer_query(_Shim(ctx), req))
-    _log(ctx, "AGENT_QUERY_EXECUTED", {"query": req.query[:300], "agent_status": r.agent_status.value, "findings_count": len(r.findings)})
-    return r.model_dump(mode="json")
+    g = grounding.compose(ctx, req.query, allow_claims=False, activity_id=req.activity_id)
+    evidence = [EvidenceReference(entity_type=s["kind"], entity_id=str(s.get("knowledge_id") or s.get("ref")), source_type=s.get("provenance") or "LIVE", reference_code=s.get("section_label") or s.get("label"),
+                                  details=s.get("title") or (f"computed {s['as_of']}" if s.get("as_of") else None)) for s in g["sources"]]
+    r = AgentQueryResponse(project_id=str(ctx.project_id), query=req.query, generated_at=datetime.now(timezone.utc).isoformat(), agent_status=AgentStatus.DEGRADED, answer=g["answer"],
+                           findings=[], evidence=evidence, recommendations=[], context_used={"keys": ["live_data", "project_knowledge"], "intents": g["intents"], "answered": g["answered"]})
+    _log(ctx, "AGENT_QUERY_EXECUTED", {"query": req.query[:300], "agent_status": r.agent_status.value, "answered": g["answered"], "sources": len(g["sources"])})
+    out = r.model_dump(mode="json")
+    out["sources"] = g["sources"]
+    out["answer_source"] = "DETERMINISTIC_GROUNDED"
+    return out
 
 
 @router.get("/agent/findings")
-def findings(ctx: Ctx = Depends(path_ctx(P.VIEW_PROJECT))):
+def findings(ctx: Ctx = Depends(path_ctx(P.VIEW_PROJECT_INTELLIGENCE))):
     from backend.agents.supervising_agent import SupervisingAgent
     return [f.model_dump(mode="json") for f in _run(ctx, lambda: SupervisingAgent.generate_briefing(_Shim(ctx))).findings]
 

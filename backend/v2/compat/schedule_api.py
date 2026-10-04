@@ -116,7 +116,7 @@ def schedule_dependencies(schedule_id: str, ctx: Ctx = Depends(legacy_ctx(P.VIEW
 
 
 @router.get("/schedules/{schedule_id}/wbs-tree")
-def wbs_tree(schedule_id: str, ctx: Ctx = Depends(legacy_ctx(P.VIEW_SCHEDULE))):
+def wbs_tree(schedule_id: str, ctx: Ctx = Depends(legacy_ctx(P.VIEW_WBS_EXPLORER))):
     """the flat WBS grouping (wbs_code -> activities) the original explorer shows"""
     ver = _ver(ctx, schedule_id)
     with actor_tx(ctx.actor, readonly=True) as c:

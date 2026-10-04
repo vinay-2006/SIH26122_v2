@@ -110,21 +110,21 @@ def _version(ctx: Ctx):
 
 
 @router.get("/dossier")
-def project_dossier(ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT))):
+def project_dossier(ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT_TRAIL))):
     return json.loads(json.dumps(build(ctx, _version(ctx)), default=str))
 
 
 @router.get("/schedules/{schedule_id}/dossier")
-def schedule_dossier(ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT))):
+def schedule_dossier(ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT_TRAIL))):
     return json.loads(json.dumps(build(ctx, _version(ctx)), default=str))
 
 
 @router.get("/schedules/{schedule_id}/activities/{activity_id}/dossier")
-def activity_dossier(activity_id: str, ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT))):
+def activity_dossier(activity_id: str, ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT_TRAIL))):
     return json.loads(json.dumps(build(ctx, _version(ctx), activity_id), default=str))
 
 
 @router.get("/dossier/audit-verification")
-def audit_verification(ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT))):
+def audit_verification(ctx: Ctx = Depends(path_ctx(P.VIEW_AUDIT_TRAIL))):
     with actor_tx(ctx.actor, readonly=True) as c:
         return _verification(c)
