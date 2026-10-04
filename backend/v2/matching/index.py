@@ -6,6 +6,7 @@ Only ACTIVE versions are cached: an active version is immutable (database trigge
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections import OrderedDict
 from types import SimpleNamespace
@@ -35,22 +36,35 @@ def _legacy():
     return si
 
 
+def backend() -> str:
+    from . import embedder
+    return embedder.selected()
+
+
 def warm_up() -> None:
-    """load the embedding model once, in the background at start-up, so the first claim of the day is not the slow one (failures are ignored: matching degrades without semantics)"""
+    """load the embedding model once, in the background at start-up, so the first claim of the day is not the slow one (failures are logged loudly and matching
+    degrades without semantics -- it never switches to the other backend)"""
     try:
-        si = _legacy()
-        si._get_model().encode(["warm up"], normalize_embeddings=True, show_progress_bar=False)
+        from . import embedder
+        if embedder.selected() == "torch":
+            _prefer_cached_model()
+        embedder.encode(["warm up"])
     except Exception as e:                                                   # noqa: BLE001
-        logger.warning("embedding model warm-up skipped: %s", e)
+        logger.error("embedding model warm-up failed (backend=%s); matching will run without the semantic signal: %s", os.environ.get("V2_EMBEDDING_BACKEND", "torch"), e)
 
 
 def search(project_id, version_id, activities: List[Dict[str, Any]], query: str, top_k: Optional[int] = None):
     """-> list of legacy SearchCandidate (schedule_id = version id, activity_id = external id, score). Raises on any failure; the caller decides to degrade."""
-    si = _legacy()
+    from . import embedder
+    use_onnx = embedder.selected() == "onnx"
+    if not use_onnx:
+        _prefer_cached_model()
+    from backend.shared import schedule_index as si                          # tolerant of missing torch/faiss; provides the shared text builder and the result type
     import numpy as np
-    import faiss
     if not query or not query.strip() or not activities:
         return []
+    if not use_onnx:
+        import faiss
     key = (str(project_id), str(version_id))
     with _lock:
         hit = _cache.get(key)
@@ -59,10 +73,12 @@ def search(project_id, version_id, activities: List[Dict[str, Any]], query: str,
     if hit is None:
         texts = [si.build_searchable_text(SimpleNamespace(activity_id=a["activity_id"], activity_name=a["activity_name"], wbs_code=a["wbs_code"],
                                                           discipline=a["discipline"], location=a["location"], asset_tag=a["asset_tag"])) for a in activities]
-        emb = si._get_model().encode(texts, batch_size=si.EMBEDDING_BATCH_SIZE, normalize_embeddings=True, convert_to_numpy=True,
-                                     show_progress_bar=False).astype(np.float32)
-        index = faiss.IndexFlatIP(emb.shape[1])
-        index.add(emb)
+        emb = embedder.encode(texts, si.EMBEDDING_BATCH_SIZE)
+        if use_onnx:
+            index = emb
+        else:
+            index = faiss.IndexFlatIP(emb.shape[1])
+            index.add(emb)
         hit = (index, [a["activity_id"] for a in activities])
         with _lock:
             _cache[key] = hit
@@ -71,14 +87,14 @@ def search(project_id, version_id, activities: List[Dict[str, Any]], query: str,
     index, ids = hit
     if len(ids) != len(activities):                       # defensive: an index must describe exactly the activities it is asked about
         raise RuntimeError("semantic index does not match the schedule version")
-    k = min(top_k or si.DEFAULT_TOP_K, index.ntotal)
-    q = si._get_model().encode([query], normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False).astype(np.float32)
-    scores, idx = index.search(q, k)
-    out = [si.SearchCandidate(schedule_id=str(version_id), activity_id=ids[i], score=float(s)) for s, i in zip(scores[0], idx[0]) if i != -1]
+    total = index.shape[0] if use_onnx else index.ntotal
+    k = min(top_k or si.DEFAULT_TOP_K, total)
+    q = embedder.encode([query])
+    if use_onnx:
+        pairs = embedder.top_k(index, q[0], k)
+    else:
+        scores, idx = index.search(q, k)
+        pairs = [(int(i), float(s)) for s, i in zip(scores[0], idx[0]) if i != -1]
+    out = [si.SearchCandidate(schedule_id=str(version_id), activity_id=ids[i], score=s) for i, s in pairs]
     out.sort(key=lambda c: c.score, reverse=True)
     return out
-
-
-def clear() -> None:
-    with _lock:
-        _cache.clear()

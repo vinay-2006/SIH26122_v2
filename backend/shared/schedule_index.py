@@ -57,8 +57,15 @@ from typing import Optional
 # torch-first doesn't). Loading bare torch here (no model weights, cheap)
 # forces the correct init order regardless of which of this module's
 # functions a caller happens to hit first.
-import torch  # noqa: F401
-import faiss
+#
+# torch and faiss are OPTIONAL at import time: the slim serverless deployment (V2_EMBEDDING_BACKEND=onnx) does not ship them and never uses this module's own
+# index. Where they are installed nothing changes. The functions of this module that need them raise a clear error instead of an ImportError at start-up.
+try:
+    import torch  # noqa: F401
+    import faiss
+except ImportError:                                                   # pragma: no cover - exercised by the slim-bundle test
+    torch = None
+    faiss = None
 import numpy as np
 
 from backend.shared.schedule_repository import list_schedule_activities
@@ -195,6 +202,8 @@ def build_index(schedule_id: str) -> IndexBuildResult:
             current Phase 2 repository, which never persists a
             zero-activity schedule — it has none).
     """
+    if faiss is None:
+        raise ScheduleIndexError("faiss is not installed in this deployment; the legacy single-schedule index is unavailable")
     activities = list_schedule_activities(schedule_id)
     if not activities:
         raise ScheduleIndexError(

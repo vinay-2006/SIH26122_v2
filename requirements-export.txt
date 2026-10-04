@@ -1,0 +1,20 @@
+# The pinned toolchain that builds the canonical ONNX model (scripts/export_minilm_onnx.py). Used at BUILD time on a development machine, never deployed.
+#   python3 -m venv .local/venvs/export && .local/venvs/export/bin/pip install -r requirements-export.txt
+#   .local/venvs/export/bin/python scripts/export_minilm_onnx.py backend/v2/matching/onnx_model
+#   python3 scripts/verify_onnx_model.py backend/v2/matching/onnx_model        (hashes + probe vectors; the committed MANIFEST.json is the reference)
+torch==2.14.1
+onnx==1.23.1
+onnxscript==0.7.2
+onnx-ir==1.0.0
+ml_dtypes==0.6.0
+protobuf==7.36.2
+sentence-transformers==6.1.0
+transformers==5.18.0
+tokenizers==0.23.2
+huggingface_hub==1.33.0
+safetensors==0.8.0
+numpy==2.5.3
+sympy==1.14.0
+networkx==3.7
+typing_extensions==4.16.0
+packaging==26.3
