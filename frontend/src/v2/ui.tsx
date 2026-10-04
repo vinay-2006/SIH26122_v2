@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, Hourglass, Loader2, PlayCircle } from 'luc
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState } from '@/components/ui/error-state';
 import { cn } from '@/lib/utils';
+import { uploadCeilingProblem } from '@/config';
 import { V2Error } from '@/v2/api/http';
 import type { ClaimStatus, Lifecycle, Num, Severity } from '@/v2/api/types';
 
@@ -35,11 +36,15 @@ export const errText = (e: unknown, fallback = 'Something went wrong'): string =
 /** hidden native input + the app's outline button (the pattern the legacy upload panels use) */
 export function FilePick({ label, accept, file, onFile, disabled, testid, ariaLabel }: { label: string; accept?: string; file: File | null; onFile: (f: File | null) => void; disabled?: boolean; testid?: string; ariaLabel?: string }) {
   const ref = React.useRef<HTMLInputElement>(null);
+  const [tooBig, setTooBig] = React.useState<string | null>(null);
   return (
+    <div className="min-w-0">
     <div className="flex items-center gap-2 min-w-0">
-      <input ref={ref} type="file" accept={accept} className="hidden" aria-label={ariaLabel ?? label} data-testid={testid} disabled={disabled} onChange={(e) => { onFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
+      <input ref={ref} type="file" accept={accept} className="hidden" aria-label={ariaLabel ?? label} data-testid={testid} disabled={disabled} onChange={(e) => { const f = e.target.files?.[0] ?? null; const p = f ? uploadCeilingProblem(f) : null; setTooBig(p); onFile(p ? null : f); e.target.value = ''; }} />
       <button type="button" disabled={disabled} onClick={() => ref.current?.click()} className="h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-secondary disabled:opacity-60 cursor-pointer shrink-0">{label}</button>
       <span className="text-xs text-muted-foreground truncate" data-testid={testid ? `${testid}-name` : undefined}>{file ? file.name : 'No file chosen'}</span>
+    </div>
+    {tooBig && <div role="alert" className="text-xs text-rose-600 mt-1" data-testid={testid ? `${testid}-toobig` : undefined}>{tooBig}</div>}
     </div>
   );
 }

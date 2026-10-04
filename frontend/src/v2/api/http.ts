@@ -109,7 +109,7 @@ export async function request<T>(path: string, o: RequestOptions = {}): Promise<
     });
   } catch (e: any) {
     if (e?.name === 'AbortError') throw e;
-    throw new V2Error(0, 'NETWORK_ERROR', `Unable to reach the SetuAI v2 server at ${V2_BASE_URL}. Check that it is running.`);
+    throw new V2Error(0, 'NETWORK_ERROR', `Unable to reach the ANVYRA server at ${V2_BASE_URL}. Check that it is running.`);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -132,7 +132,7 @@ export function upload<T>(path: string, form: FormData, opts: { onProgress?: (fr
     const token = v2Session.getToken();
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.upload.onprogress = (ev) => { if (ev.lengthComputable && opts.onProgress) opts.onProgress(ev.loaded / ev.total); };
-    xhr.onerror = () => reject(new V2Error(0, 'NETWORK_ERROR', `Unable to reach the SetuAI v2 server at ${V2_BASE_URL}. Check that it is running.`));
+    xhr.onerror = () => reject(new V2Error(0, 'NETWORK_ERROR', `Unable to reach the ANVYRA server at ${V2_BASE_URL}. Check that it is running.`));
     xhr.onabort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
     xhr.onload = () => {
       let body: any = null;

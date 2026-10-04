@@ -18,7 +18,7 @@ export const CFG = {
 };
 export const WEB = `http://127.0.0.1:${CFG.webPort}`;
 export const API = `http://127.0.0.1:${CFG.apiPort}/api/v2`;
-export const DOMAIN = '@seed.setuai.local';
+export const DOMAIN = '@anvyra.demo';
 
 export function findChromium() {
   if (process.env.E2E_CHROMIUM && fs.existsSync(process.env.E2E_CHROMIUM)) return process.env.E2E_CHROMIUM;
@@ -51,12 +51,16 @@ function sh(cmd, args, env = {}) {
   return r.stdout;
 }
 
+// A developer's frontend/.env.local may point at a hosted Supabase project. The browser tests use the throw-away LOCAL stack only: blank values here win over any env file.
+const LOCAL_ONLY = { VITE_SUPABASE_URL: '', VITE_SUPABASE_ANON_KEY: '' };
 const children = [];
 export async function startStack() {
   const env = { DB_V2_NAME: CFG.db, V2_API_PORT: String(CFG.apiPort), V2_CORS_ORIGINS: `${WEB},http://localhost:${CFG.webPort}` };
   sh('bash', ['scripts/v2_dev_stack.sh', 'reset'], env);                      // empties ONLY this throw-away local database, seeds it, starts the API
-  const web = spawn('npx', ['vite', '--mode', 'v2', '--host', '127.0.0.1', '--port', String(CFG.webPort), '--strictPort'], { cwd: FRONTEND, env: { ...process.env, VITE_V2_API_BASE_URL: `http://127.0.0.1:${CFG.apiPort}` }, stdio: 'ignore' });
-  const legacy = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', String(CFG.legacyPort), '--strictPort'], { cwd: FRONTEND, env: { ...process.env, VITE_API_BASE_URL: 'http://127.0.0.1:9' }, stdio: 'ignore' });
+  // the generated project knowledge (additive; the same loader a developer runs locally)
+  sh('python3', ['scripts/load_project_knowledge.py'], { DB_V2_URL: sh('bash', ['scripts/db_v2.sh', 'url'], { DB_V2_NAME: CFG.db }).trim() });
+  const web = spawn('npx', ['vite', '--mode', 'v2', '--host', '127.0.0.1', '--port', String(CFG.webPort), '--strictPort'], { cwd: FRONTEND, env: { ...process.env, ...LOCAL_ONLY, VITE_V2_API_BASE_URL: `http://127.0.0.1:${CFG.apiPort}` }, stdio: 'ignore' });
+  const legacy = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', String(CFG.legacyPort), '--strictPort'], { cwd: FRONTEND, env: { ...process.env, ...LOCAL_ONLY, VITE_BACKEND: 'legacy', VITE_API_BASE_URL: 'http://127.0.0.1:9' }, stdio: 'ignore' });
   children.push(web, legacy);
   for (const [url] of [[`${WEB}/login`], [`http://127.0.0.1:${CFG.legacyPort}/login`]]) {
     let ok = false;
@@ -67,6 +71,14 @@ export async function startStack() {
 export function stopStack() {
   children.forEach((c) => { try { c.kill('SIGTERM'); } catch { /* gone */ } });
   try { sh('bash', ['scripts/v2_dev_stack.sh', 'down'], { DB_V2_NAME: CFG.db, V2_API_PORT: String(CFG.apiPort) }); } catch { /* already down */ }
+}
+
+/** the dev server compiles the app on first use: do that once, before any scenario is timed */
+export async function warmUp(browser) {
+  const ctx = await browser.newContext(); const page = await ctx.newPage();
+  await page.goto(`${WEB}/login`, { waitUntil: 'networkidle', timeout: 90000 }).catch(() => {});
+  await page.locator('input[type=email]').waitFor({ timeout: 60000 }).catch(() => {});
+  await ctx.close();
 }
 
 export async function launch() {
@@ -89,7 +101,7 @@ export async function signIn(browser, handle, { viewport = { width: 1440, height
   await page.locator('input[type=email]').fill(`${handle}${DOMAIN}`);
   await page.locator('input[type=password]').fill(pw);
   await page.getByRole('button', { name: /sign in/i }).click();
-  await page.waitForFunction(() => !location.pathname.includes('login') && location.pathname !== '/', null, { timeout: 20000 });   // wait for the landing redirect to settle
+  await page.waitForFunction(() => !location.pathname.includes('login') && location.pathname !== '/', null, { timeout: 60000 });   // wait for the landing redirect to settle (the first page load can include the dev server's first compile)
   await page.waitForSelector('aside', { timeout: 20000 });
   return { ctx, page, log, handle };
 }

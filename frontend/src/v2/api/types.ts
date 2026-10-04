@@ -38,7 +38,7 @@ export interface Reconciliation {
   changes?: unknown[]; [k: string]: unknown;
 }
 export interface ScheduleImport {
-  import_id: string; status: 'PARSED' | 'BUILT' | 'DISCARDED'; format: string; file_name: string | null; header: Record<string, string | null>;
+  import_id: string; status: 'PARSED' | 'BUILT' | 'DISCARDED'; format: string; file_name: string | null; original_file_available?: boolean; header: Record<string, string | null>;
   report: ImportReport; wbs: { code: string; name: string; parent: string | null; type: string | null }[];
   base_version_id: string | null; reconciliation: Reconciliation | null; decisions: Record<string, any>;
   built_version: { version_id: string; version_no: number; status: string } | null;
@@ -128,7 +128,7 @@ export interface ClaimCounts { REPORTED: number; EXTRACTED: number; MATCHED: num
 export interface DocumentRow {
   document_id: string; kind: string; file_name: string; mime_type: string | null; size_bytes: number | null; sha256: string; uploaded_by: string; uploaded_at: string;
   extraction_status: 'PENDING' | 'EXTRACTED' | 'NO_CLAIMS' | 'FAILED' | null; extraction_method: string | null; extraction_error: string | null; claims_extracted: number;
-  page_count: number | null; captured_at?: string | null; extractable?: boolean;
+  page_count: number | null; captured_at?: string | null; extractable?: boolean; file_available?: boolean;
 }
 export interface ExtractionResult {
   document_id: string; status: string; method: string; page_count: number | null; preview_only: boolean;

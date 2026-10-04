@@ -1507,6 +1507,9 @@ export const timeAgentApi = {
   handOff: (draft: Record<string, any>, note?: string): Promise<ClaimHandoff> =>
     apiFetch('/api/v1/time-agent/handoffs', { method: 'POST', body: JSON.stringify({ draft, note }) }),
   list: (): Promise<ClaimHandoff[]> => apiFetch('/api/v1/time-agent/handoffs'),
+  /** v2: a Supervisor's question, answered from live data and the authored project knowledge, with the sources used */
+  ask: (query: string): Promise<{ reply: string; sources: Record<string, any>[]; links: { label: string; to: string }[]; answered: boolean }> =>
+    apiFetch(`/api/v1/time-agent/projects/${apiContext.getProjectId()}/ask`, { method: 'POST', body: JSON.stringify({ query }) }),
   filed: (id: string, eventId: string): Promise<ClaimHandoff> =>
     apiFetch(`/api/v1/time-agent/handoffs/${id}/filed`, { method: 'POST', body: JSON.stringify({ event_id: eventId }) }),
   dismiss: (id: string): Promise<ClaimHandoff> => apiFetch(`/api/v1/time-agent/handoffs/${id}/dismiss`, { method: 'POST' }),

@@ -28,6 +28,9 @@ export interface AgentFinding {
   recommended_action: string;
 }
 
+/** where a statement comes from: live data computed now, or an authored project-knowledge entry with its provenance */
+export interface AnswerSource { kind: 'LIVE_DATA' | 'PROJECT_KNOWLEDGE'; label?: string; as_of?: string; section_label?: string; title?: string; provenance?: string; excerpt?: string }
+
 export interface SupervisoryBriefing {
   briefing_id: string;
   project_id: string;
@@ -39,6 +42,9 @@ export interface SupervisoryBriefing {
   recommended_reviews: string[];
   review_queue_summary: Record<string, unknown>;
   audit_verification: Record<string, unknown> | null;
+  project_context?: AnswerSource[];
+  project_context_available?: boolean;
+  sources?: AnswerSource[];
 }
 
 export interface AgentAnswer {
@@ -50,6 +56,8 @@ export interface AgentAnswer {
   findings: AgentFinding[];
   evidence: EvidenceReference[];
   recommendations: string[];
+  sources?: AnswerSource[];
+  answer_source?: string;
 }
 
 export interface AuditVerification {

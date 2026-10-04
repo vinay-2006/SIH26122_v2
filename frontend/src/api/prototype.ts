@@ -287,6 +287,37 @@ export const memoryApi = {
   ) => apiFetch<{ memory_id: string }>(`${proj(projectId)}/memory`, { method: 'POST', body: JSON.stringify(input) }),
 };
 
+// ── Lessons Radar: institutional memory looking forward, plus the loop that keeps it filled
+export interface RadarLesson {
+  memory_id: string; title: string; score: number; why_matched: string[]; root_cause: string | null; corrective_action: string | null; outcome: string | null;
+  delay_days: number | null; project_name: string | null; from_other_project: boolean;
+}
+export interface RadarItem {
+  activity_id: string; activity_name: string; stage_name: string | null; discipline: string | null; state: string; planned_start: string; planned_finish: string;
+  timing: 'IN_PROGRESS' | 'UPCOMING'; starts_in_days: number; best_score: number; lessons: RadarLesson[];
+  expected_delay: { samples: number; median_days: number; max_days: number } | null; preventive_actions: string[];
+}
+export interface Radar {
+  project_status: string; reference_date: string | null; horizon_days: number; activities_in_window: number; activities_with_lessons: number; lessons_considered: number;
+  retrieval_mode: string; note: string | null; items: RadarItem[];
+}
+export interface MemoryInsights {
+  lessons: { visible: number; own_project: number; from_other_projects: number };
+  capture: { resolved_issues: number; captured: number; waiting: number; rate_pct: number | null };
+  categories: { category_code: string; category_name: string; lessons: number; projects: number; median_delay_days: number | null; max_delay_days: number | null; recurring: boolean }[];
+}
+export interface CaptureItem {
+  issue_id: string; title: string; category_code: string; severity: string; description: string | null; resolution_notes: string | null;
+  impact_days_actual: number | null; resolved_at: string | null; activity_id: string | null;
+}
+export const memoryIntelApi = {
+  radar: (projectId: string, horizonDays: number) => apiFetch<Radar>(`${proj(projectId)}/memory/radar?horizon_days=${horizonDays}`),
+  insights: (projectId: string) => apiFetch<MemoryInsights>(`${proj(projectId)}/memory/insights`),
+  captureQueue: (projectId: string) => apiFetch<{ items: CaptureItem[] }>(`${proj(projectId)}/memory/capture-queue`),
+  capture: (projectId: string, issueId: string, body: { lessons_learned: string; outcome?: string; share_with_organisation: boolean }) =>
+    apiFetch<{ memory_id: string }>(`${proj(projectId)}/memory/capture/${encodeURIComponent(issueId)}`, { method: 'POST', body: JSON.stringify(body) }),
+};
+
 // ────────────────────────────────────────────────────────────────────────── supervisor decisions → site engineer
 export type DecisionAction = 'APPROVE' | 'EDIT' | 'REJECT' | 'HOLD';
 

@@ -4,7 +4,7 @@
  * (A guard only decides what the UI shows. The API authorises every request again.)
  */
 import React from 'react';
-import { Route } from 'react-router-dom';
+import { Navigate, Route } from 'react-router-dom';
 import ProtectedRoute from '@/auth/ProtectedRoute';
 import type { Permission } from '@/api/projects';
 import OverviewPage from '@/v2/pages/OverviewPage';
@@ -20,6 +20,7 @@ export const V2_ROUTES: RouteRule[] = [
   { path: '/overview', requires: ['MANAGE_PROJECT'], element: <OverviewPage /> },
   { path: '/schedule', requires: ['MANAGE_SCHEDULE'], element: <SchedulePage /> },
   { path: '/settings', requires: ['MANAGE_PROJECT'], element: <SettingsPage /> },
+  { path: '/knowledge', requires: ['MANAGE_PROJECT'], element: <Navigate to="/intelligence?tab=knowledge" replace /> },   // Project Knowledge is a tab of Project Intelligence
 ];
 
 export function v2Routes() {

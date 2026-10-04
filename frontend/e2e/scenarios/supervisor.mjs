@@ -3,7 +3,7 @@
 import { CFG, WEB, activeVersion, api, eq, legacy, navLabels, ok, projectId, selectProject, shot, signIn, until } from '../lib.mjs';
 import { claimViaApi } from './engineer.mjs';
 
-const ORIGINAL_SUP_MENU = ['Issues & Delays', 'Daily Digest', 'Review Workspace', 'Time Agent', 'Dashboard', 'Activity History', 'Impact Preview', 'WBS Explorer', 'AI Execution Summary', 'Root Cause & Memory', 'Project Intelligence', 'Audit Trail'];
+const ORIGINAL_SUP_MENU = ['Issues & Delays', 'Daily Digest', 'Review Workspace', 'Time Agent', 'Dashboard', 'Activity History', 'Impact Preview', 'WBS Explorer', 'AI Execution Summary', 'Root Cause & Memory'];
 const SUP = 'imran.hussain', SE = 'ritu.baruah';
 const main = (page) => page.locator('main').innerText();
 
@@ -31,12 +31,18 @@ export default [
     eq(new URL(page.url()).pathname, '/dashboard', 'landing page');
     await selectProject(page, 'Numaligarh');                                    // this supervisor works on several projects: the UI must be on the one the checks use
     eq(await navLabels(page), ORIGINAL_SUP_MENU, 'the original supervisor menu');
-    for (const p of ['/portfolio', '/schedule', '/settings', '/intake', '/updates']) {
+    for (const p of ['/portfolio', '/schedule', '/settings', '/intake', '/updates', '/audit', '/intelligence']) {
       await page.goto(`${WEB}${p}`); await page.waitForSelector('aside');
       await until(async () => new URL(page.url()).pathname === '/dashboard', `${p} bounces to the Dashboard`);
     }
     eq((await api(page, 'POST', `/projects/${S.pid}/schedule-imports`)).status, 403, 'a Supervisor cannot manage schedules');
     eq((await legacy(page, 'POST', '/api/v1/claims/text', { raw_claim_text: 'NRE-4050 piping 10 percent' }, { project: S.pid, version: S.ver })).status, 403, 'a Supervisor cannot file claims');
+    for (const tail of ['/dossier', '/dossier/audit-verification', '/agent/briefing', '/agent/findings']) {                     // Audit Trail and Project Intelligence: closed at the API too
+      eq((await legacy(page, 'GET', `/api/v1/projects/${S.pid}${tail}`, null, { project: S.pid, version: S.ver })).status, 403, `a Supervisor cannot read ${tail}`);
+    }
+    eq((await legacy(page, 'GET', '/api/v1/audit', null, { project: S.pid, version: S.ver })).status, 200, 'the audit feed behind Activity History is still readable');
+    eq((await api(page, 'POST', `/projects/${S.pid}/knowledge`, { section: 'SCOPE', title: 'Sneaky edit', body: 'not allowed', provenance: 'AUTHORED', tags: [], sort_order: 1 })).status, 403, 'only a Project Manager writes project knowledge');
+    eq((await api(page, 'GET', `/projects/${S.pid}/knowledge`)).status, 200, 'a Supervisor may read it');
     await shot(page, 'sup_dashboard');
   }],
 
@@ -92,10 +98,10 @@ export default [
     await shot(page, 'sup_overrun_ack');
     const tl = await api(S.se.page, 'GET', `/projects/${S.pid}/activities/${pick.activity_uid}/timeline`);
     ok(JSON.stringify(tl.json).includes('over-run accepted by supervisor'), 'the acknowledgement note is kept on the ledger entry');
-    const dossier = (await legacy(page, 'GET', `/api/v1/projects/${S.pid}/dossier`, null, { project: S.pid, version: S.ver })).json;
-    ok(dossier.human_decisions.decisions.some((d) => d.event_id === id), 'the decision is in the dossier');
-    const trail = JSON.stringify((await legacy(page, 'GET', `/api/v1/projects/${S.pid}/dossier`, null, { project: S.pid, version: S.ver })).json.audit_chain.recent_logs);
-    ok(/CLAIM_DECIDED|DECISION/i.test(trail) || trail.length > 10, 'audited');
+    const recorded = (await legacy(page, 'GET', '/api/v1/decisions?limit=100', null, { project: S.pid, version: S.ver })).json;
+    ok(JSON.stringify(recorded).includes(id), 'the decision is in the recorded decisions');
+    const audit = (await legacy(page, 'GET', '/api/v1/audit?limit=60', null, { project: S.pid, version: S.ver })).json;
+    ok(JSON.stringify(audit).includes(id), 'and in the audit feed');
   }],
 
   ['Supervisor: Daily Digest lists the day\'s claims and bulk-approves the validated ones, each decision recorded individually', async ({ S }) => {
@@ -130,7 +136,7 @@ export default [
     const failed = [];
     page.on('response', (r) => { if (r.status() >= 400 && r.url().includes(`:${CFG.apiPort}`)) failed.push(`${r.status()} ${r.url().split(`:${CFG.apiPort}`)[1]}`); });
     const pages = { '/digest': /Daily Digest/, '/dashboard': /Project Executive Dashboard/, '/history': /Activity History/, '/impact': /Ripple Impact Preview/, '/summary': /AI Execution Summary/,
-      '/root-cause': /Root Cause/, '/intelligence': /Project Intelligence/, '/audit': /Audit Trail/, '/wbs': /WBS Activity Explorer/, '/issues': /Issues & Delays/ };
+      '/root-cause': /Root Cause/, '/wbs': /WBS Activity Explorer/, '/issues': /Issues & Delays/ };
     for (const [p, re] of Object.entries(pages)) {
       await page.goto(`${WEB}${p}`); await page.waitForSelector('aside'); await page.waitForTimeout(1800);
       ok(re.test(await main(page)), `${p} renders`);
@@ -138,21 +144,38 @@ export default [
     eq(failed, [], 'no failed API call on any restored page');
   }],
 
-  ['Supervisor: Project Intelligence answers from project facts and changes nothing; Audit Trail verifies the chain and downloads the dossier', async ({ S }) => {
+  ['Supervisor: institutional memory - resolved issue is kept as a lesson from the capture queue, and the radar and insights respond', async ({ S }) => {
     const { page } = S.sup;
-    const decisions = async () => (await legacy(page, 'GET', `/api/v1/decisions?limit=100`, null, { project: S.pid, version: S.ver })).json.length;
-    const n = await decisions();
-    await page.goto(`${WEB}/intelligence`); await page.waitForSelector('text=Supervisory briefing');
-    await until(async () => /Deterministic/i.test(await main(page)), 'without a language model the briefing is deterministic and says so', 20000);
-    await page.getByPlaceholder(/What is holding up/).fill('What should I review first?');
-    await page.getByRole('button', { name: /^Ask$/ }).click();
-    await until(async () => (await page.locator('main').innerText()).length > 900, 'an answer is shown', 30000);
-    eq(await decisions(), n, 'the agent cannot approve, reject or change anything');
-    await page.goto(`${WEB}/audit`); await page.waitForSelector('text=Latest records');
-    await until(async () => /VALID/.test(await main(page)) && /records checked/i.test(await main(page)), 'chain verified', 20000);
-    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download dossier/ }).click()]);
-    ok(/dossier/i.test(dl.suggestedFilename()), `dossier downloaded: ${dl.suggestedFilename()}`);
-    await shot(page, 'sup_audit');
+    const acts = (await legacy(page, 'GET', '/api/v1/activities?limit=5', null, { project: S.pid, version: S.ver })).json;
+    const list = Array.isArray(acts) ? acts : (acts.items ?? acts.activities ?? []);
+    const aid = list[0]?.activity_id ?? list[0]?.id;
+    ok(aid, 'an activity exists to attach the issue to');
+    const title = 'Line pipe delivery slipped at the mill (e2e memory)';
+    const c = await legacy(S.se.page, 'POST', `/api/v1/projects/${S.pid}/schedules/${S.ver}/issues`, { activity_id: aid, category_code: 'MATERIAL_DELIVERY_DELAY', title, description: 'Mill dispatch delayed', severity: 'HIGH', blocks_work: true }, { project: S.pid, version: S.ver });
+    ok(c.status === 200 || c.status === 201, `issue raised: ${c.status} ${JSON.stringify(c.json).slice(0, 160)}`);
+    const iid = c.json.issue_id ?? c.json.id;
+    const r = await legacy(page, 'POST', `/api/v1/projects/${S.pid}/schedules/${S.ver}/issues/${iid}/resolve`, { resolution_notes: 'Expedited a second mill and split the lot', add_to_memory: false }, { project: S.pid, version: S.ver });
+    eq(r.status, 200, 'issue resolved');
+    await page.goto(`${WEB}/root-cause`); await page.waitForSelector('[data-testid=lessons-radar]');
+    await page.waitForSelector('[data-testid=memory-insights]');
+    await page.waitForSelector('[data-testid=radar-summary]');
+    const item = page.locator('[data-testid=capture-item]', { hasText: title });
+    await item.waitFor({ timeout: 15000 });
+    await item.getByRole('button', { name: /Keep .* as a lesson/ }).click();
+    await page.getByTestId('capture-form').waitFor();
+    ok(/second mill/.test(await page.getByTestId('capture-form').getByRole('textbox', { name: 'Lesson', exact: true }).inputValue()), 'the lesson is prefilled from the resolution notes');
+    await page.getByTestId('save-lesson').click();
+    await until(async () => (await page.locator('[data-testid=capture-item]', { hasText: title }).count()) === 0, 'the issue leaves the capture queue');
+    ok((await legacy(page, 'GET', `/api/v1/projects/${S.pid}/memory/capture-queue`, null, { project: S.pid, version: S.ver })).json.items.every((i) => i.issue_id !== iid), 'queue agrees on the server');
+    await shot(page, 'sup_memory');
+  }],
+
+  ['Project Manager: the Lessons Radar and insights are visible but there is no capture queue', async ({ browser, S }) => {
+    const { page } = await signIn(browser, 'anita.bora');
+    await selectProject(page, 'Siliguri');
+    await page.goto(`${WEB}/root-cause`); await page.waitForSelector('[data-testid=lessons-radar]');
+    await page.waitForSelector('[data-testid=memory-insights]');
+    eq(await page.getByTestId('capture-queue').count(), 0, 'the PM has no capture queue');
   }],
 
   ['Supervisor: P6 sync staging downloads the approved-actuals CSV and pushes to the local mock P6', async ({ S }) => {
@@ -160,7 +183,7 @@ export default [
     await page.goto(`${WEB}/dashboard`); await page.waitForSelector('text=P6 / PMIS Sync Staging'); await page.waitForTimeout(1500);
     await page.getByRole('button', { name: /P6 \/ PMIS Sync Staging/ }).click();
     const [csv] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download Canonical CSV/ }).click()]);
-    ok(/setu_approved_actuals_p6_staging/.test(csv.suggestedFilename()), `CSV downloaded: ${csv.suggestedFilename()}`);
+    ok(/anvyra_approved_actuals_p6_staging/.test(csv.suggestedFilename()), `CSV downloaded: ${csv.suggestedFilename()}`);
     const body = (await import('node:fs')).readFileSync(await csv.path(), 'utf8');
     ok(/activity_id/i.test(body.split('\n')[0]) && body.split('\n').length > 5, `CSV has a header and rows: ${body.slice(0, 120)}`);
     await page.getByRole('tab', { name: 'Mock Adapter Test' }).click();
@@ -171,9 +194,30 @@ export default [
     await shot(page, 'sup_p6');
   }],
 
+  ['Supervisor: Time Agent answers from live data and project knowledge, cites its sources and declines what it cannot know', async ({ S }) => {
+    const { page } = S.sup;
+    await page.goto(`${WEB}/time-agent`); await page.waitForSelector('text=ANVYRA Time Agent');
+    const body = await page.locator('main').innerText();
+    ok(!/Log Activity Start|Log Activity Finish/.test(body), 'a Supervisor is not offered claim-filing examples');
+    ok(/Pending Reviews/.test(body) && /About this project/.test(body), 'the quick questions are read-only questions about the project');
+    const ask = async (q, expectRe) => {
+      await page.getByRole('textbox').last().fill(q); await page.keyboard.press('Enter');
+      await until(async () => expectRe.test(await page.locator('main').innerText()), `a reply to "${q}"`, 30000);
+    };
+    await ask('What is waiting for my review?', /claims? waiting for a Supervisor decision/);
+    ok(/Live: Review queue/.test(await page.getByTestId('agent-sources').last().innerText()), 'the reply cites live data');
+    await ask('Give me an overview and the scope of this project.', /Project context:/);
+    const src = await page.getByTestId('agent-sources').last().innerText();
+    ok(/Project knowledge: .* \(/.test(src), `the reply cites a project-knowledge section with its provenance: ${src}`);
+    await ask('What is the overall project progress?', /Progress \(approved quantities/);
+    await ask('What colour is the foreman\'s helmet?', /cannot answer that from this project/);
+    eq((await legacy(page, 'GET', `/api/v1/projects/${S.pid}/agent/briefing`, null, { project: S.pid, version: S.ver })).status, 403, 'and Project Intelligence stays closed to the Supervisor');
+    await shot(page, 'sup_time_agent');
+  }],
+
   ['Supervisor: Time Agent drafts a claim and hands it to the Site Engineer, who files it; the Supervisor never files', async ({ S }) => {
     const { page } = S.sup;
-    await page.goto(`${WEB}/time-agent`); await page.waitForSelector('text=Setu AI Time Agent');
+    await page.goto(`${WEB}/time-agent`); await page.waitForSelector('text=ANVYRA Time Agent');
     const text = 'NRE-4080 piping insulation and painting 7 percent complete, noted on the supervisor walk-round';
     await page.getByRole('textbox').last().fill(text);
     await page.keyboard.press('Enter');

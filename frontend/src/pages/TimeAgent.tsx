@@ -44,6 +44,8 @@ import { useProject } from '@/context/ProjectContext';
 import { IS_V2 } from '@/config';
 import { Building2 } from 'lucide-react';
 
+interface ChatSource { kind: 'LIVE_DATA' | 'PROJECT_KNOWLEDGE'; label?: string; section_label?: string; title?: string; provenance?: string; as_of?: string }
+
 interface ActionLink {
   label: string;
   to: string;
@@ -69,6 +71,7 @@ interface ChatMessage {
     eventDate: string;
   };
   actionLinks?: ActionLink[];
+  sources?: ChatSource[];
   submittedEvent?: ExecutionEvent;
   handedOff?: boolean;
   isSubmitting?: boolean;
@@ -166,6 +169,14 @@ const SUPERVISOR_QUICK_ACTIONS = [
   },
 ];
 
+// v2: the Supervisor's read-only questions are answered from live data and the authored project knowledge (the two "Log ..." examples of the original name activities
+// that do not exist in a real project, and a Supervisor does not file claims: drafts are handed to a Site Engineer from the chat instead).
+const PROJECT_CONTEXT_ACTIONS = [
+  { icon: FileText, color: 'text-cyan-600 dark:text-cyan-400', label: 'About this project', prompt: 'Give me an overview and the scope of this project.' },
+  { icon: Layers, color: 'text-indigo-600 dark:text-indigo-400', label: 'Procurement & long-lead', prompt: 'What are the procurement and long-lead items?' },
+];
+const looksLikeQuestion = (t: string) => /\?\s*$/.test(t.trim()) || /^(what|which|how|where|who|when|why|show|list|tell|give|is|are|do|does|can|summari[sz]e|synthesi[sz]e)\b/i.test(t.trim());
+
 export default function TimeAgent() {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -173,8 +184,8 @@ export default function TimeAgent() {
   const isSupervisor = user?.role === 'SUPERVISOR';
 
   const initialGreeting = isSupervisor
-    ? `Hello Supervisor (${user?.full_name || 'Planner'}). I am the Setu AI Time Agent. I provide real-time schedule monitoring, delay analytics, unmatched scope identification, and review queue oversight. How can I assist your supervisory decisions today?`
-    : `Hello Site Engineer (${user?.full_name || 'Field Engineer'}). I am the Setu AI Time Agent. You can speak or type to log activity starts, completions, daily percentages, quantities, or field remarks. I will structure candidate claims for Supervisor Review.`;
+    ? `Hello Supervisor (${user?.full_name || 'Planner'}). I am the ANVYRA Time Agent. I provide real-time schedule monitoring, delay analytics, unmatched scope identification, and review queue oversight. How can I assist your supervisory decisions today?`
+    : `Hello Site Engineer (${user?.full_name || 'Field Engineer'}). I am the ANVYRA Time Agent. You can speak or type to log activity starts, completions, daily percentages, quantities, or field remarks. I will structure candidate claims for Supervisor Review.`;
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
     {
@@ -211,8 +222,8 @@ export default function TimeAgent() {
             sender: 'agent',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             text: isSupervisor
-              ? `Hello Supervisor (${user?.full_name || 'Supervisor'}). I am the Setu AI Time Agent. I provide real-time schedule monitoring, delay analytics, unmatched scope identification, and review queue oversight. How can I assist your supervisory decisions today?`
-              : `Hello Site Engineer (${user?.full_name || 'Site Engineer'}). I am the Setu AI Time Agent. You can speak or type to log activity starts, completions, daily percentages, quantities, or field remarks. I will structure candidate claims for Supervisor Review.`,
+              ? `Hello Supervisor (${user?.full_name || 'Supervisor'}). I am the ANVYRA Time Agent. I provide real-time schedule monitoring, delay analytics, unmatched scope identification, and review queue oversight. How can I assist your supervisory decisions today?`
+              : `Hello Site Engineer (${user?.full_name || 'Site Engineer'}). I am the ANVYRA Time Agent. You can speak or type to log activity starts, completions, daily percentages, quantities, or field remarks. I will structure candidate claims for Supervisor Review.`,
             actionLinks: isSupervisor
               ? [
                   { label: 'Review Workspace', to: '/review' },
@@ -436,9 +447,23 @@ export default function TimeAgent() {
       let replyText = '';
       let suggestedClaim = undefined;
       let actionLinks: ActionLink[] | undefined = undefined;
+      let sources: ChatSource[] | undefined = undefined;
 
       // ── SUPERVISOR-SPECIFIC DECISION SUPPORT RESPONSES ───────────────────────
-      if (isSupervisor) {
+      if (IS_V2 && isSupervisor && (looksLikeQuestion(text) || !parseClaimIntent(text).isClaimLog)) {
+        try {
+          const res = await timeAgentApi.ask(text);
+          replyText = res.reply;
+          sources = res.sources as ChatSource[];
+          actionLinks = res.links.length ? res.links : undefined;
+        } catch (err: any) {
+          replyText = `I could not read the project data just now (${err?.message || 'request failed'}). Nothing was assumed.`;
+        }
+      } else if (IS_V2 && isSupervisor) {
+        const { claim } = parseClaimIntent(text);
+        suggestedClaim = claim;
+        replyText = `I have structured this report${claim.reportedActivityId ? ` for [${claim.reportedActivityId}]` : ''}. A Supervisor does not file execution claims: hand the draft to a Site Engineer, who files it through the ordinary intake.`;
+      } else if (isSupervisor) {
         if (lower.includes('pending') || lower.includes('review') || lower.includes('queue') || lower.includes('waiting')) {
           replyText = `You currently have 4 field claims waiting in your Supervisor Review Queue:\n\n• EV-101: Actual Start on Pump Foundation F-4 (Civil, Site Engineer)\n• EV-102: Progress Update 75% on Column C4 Rebar (Civil)\n• EV-103: Progress Update on SCADA Loop Calibration (Instrumentation)\n• EV-104: Unmatched Claim — High-Pressure Flange Welding (Piping Subcontractor)\n\nAll candidate actuals are held in candidate state pending your authoritative sign-off.`;
           actionLinks = [
@@ -519,6 +544,7 @@ export default function TimeAgent() {
         text: replyText,
         suggestedClaim,
         actionLinks,
+        sources,
       };
 
       setMessages((prev) => [...prev, agentMsg]);
@@ -581,7 +607,7 @@ export default function TimeAgent() {
     }
   };
 
-  const quickPrompts = isSupervisor ? SUPERVISOR_QUICK_ACTIONS : SITE_ENGINEER_QUICK_ACTIONS;
+  const quickPrompts = isSupervisor ? (IS_V2 ? [...SUPERVISOR_QUICK_ACTIONS.slice(2), ...PROJECT_CONTEXT_ACTIONS] : SUPERVISOR_QUICK_ACTIONS) : SITE_ENGINEER_QUICK_ACTIONS;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200 max-w-5xl mx-auto">
@@ -606,7 +632,7 @@ export default function TimeAgent() {
             <div className="p-1.5 rounded-xl bg-orange-100 dark:bg-orange-950/60 border border-orange-400/80 text-[#FF7A18] shadow-xs">
               <Bot className="w-5 h-5" />
             </div>
-            Setu AI Time Agent
+            ANVYRA Time Agent
           </h1>
           <p className="text-[#334155] dark:text-[#CBD5E1] text-xs font-semibold mt-1">
             {isSupervisor
@@ -776,6 +802,19 @@ export default function TimeAgent() {
                     </div>
                   )}
 
+                  {msg.sources && msg.sources.length > 0 && (
+                    <div data-testid="agent-sources" className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Sources</span>
+                      {msg.sources.map((s, i) => (
+                        <span key={i} title={s.as_of ? `Computed ${s.as_of}` : undefined}
+                          className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border',
+                            s.kind === 'LIVE_DATA' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-400/50' : 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-400/50')}>
+                          {s.kind === 'LIVE_DATA' ? `Live: ${s.label}` : `Project knowledge: ${s.section_label} · ${s.title} (${(s.provenance || '').replace('_', ' ').toLowerCase()})`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Structured Claim Proposal Card (Field Claims) */}
                   {msg.suggestedClaim && !msg.submittedEvent && !msg.handedOff && (
                     <div className="p-3.5 rounded-xl border border-orange-500/30 bg-orange-50/50 dark:bg-orange-950/20 space-y-2.5 text-xs">
@@ -893,7 +932,7 @@ export default function TimeAgent() {
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF7A18] to-[#FF941F] flex items-center justify-center text-white shrink-0 shadow-xs">
                 <Bot className="w-4 h-4" />
               </div>
-              <span>Setu AI Time Agent is analyzing schedule and claims context...</span>
+              <span>ANVYRA Time Agent is analyzing schedule and claims context...</span>
             </div>
           )}
 

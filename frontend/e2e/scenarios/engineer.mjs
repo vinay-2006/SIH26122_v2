@@ -28,7 +28,7 @@ export default [
       await page.goto(`${WEB}${p}`); await page.waitForSelector('aside');
       await until(async () => new URL(page.url()).pathname === '/intake', `${p} bounces to Claim Intake`);
     }
-    for (const tab of ['Batch upload', 'Type Update', 'Voice Input', 'File / Export']) ok(await page.getByText(tab, { exact: true }).first().isVisible(), `intake tab ${tab}`);
+    for (const tab of ['Upload Progress Report', 'Type Update', 'Voice Input', 'Single File']) ok(await page.getByText(tab, { exact: true }).first().isVisible(), `intake tab ${tab}`);
     await shot(page, 'se_intake');
   }],
 
@@ -95,6 +95,31 @@ export default [
     const a = rep.activities.find((x) => x.activity_id === 'NRE-4080');
     ok(a && a.claim_ids.length === 1 && a.file_names.length === 2, 'one claim backed by both files');
     ok(rep.claims.every((c) => !['APPROVED', 'EDITED'].includes(c.status)), 'a batch never approves anything');
+  }],
+
+  ['Engineer: Upload Progress Report accepts report and evidence formats, refuses schedule and legacy files with the reason, and offers no schedule import', async ({ S }) => {
+    const { page } = S.se;
+    await page.goto(`${WEB}/intake`);
+    const accept = await page.getByTestId('batch-file-input').getAttribute('accept');
+    for (const ext of ['.csv', '.xlsx', '.pdf', '.txt', '.docx', '.jpg', '.jpeg', '.png', '.webp']) ok(accept.split(',').includes(ext), `${ext} is offered`);
+    for (const ext of ['.xer', '.xml', '.xls', '.doc', '.mpp']) ok(!accept.split(',').includes(ext), `${ext} is not offered`);
+    const body = await page.locator('main').innerText();
+    ok(!/P6|MSP|Primavera|\.xer|MS Project/i.test(body), 'no P6 / MS Project / schedule-import wording on the upload page');
+    await page.getByTestId('batch-file-input').setInputFiles([
+      tmpFile('baseline.xer', 'ERMHDR\t8.0\n'), tmpFile('plan.xml', '<Project/>'), tmpFile('legacy.xls', 'x'), tmpFile('legacy.doc', 'x'), tmpFile('tool.exe', 'MZ')]);
+    const rej = await page.getByTestId('rejected-files').innerText();
+    ok(/baseline schedule/.test(rej) && /save it as \.xlsx/.test(rej) && /save it as \.docx/.test(rej) && /not supported/.test(rej), `each refusal says why: ${rej.replace(/\s+/g, ' ')}`);
+    eq(await page.getByTestId('rejected-files').locator('[role=alert]').count(), 5, 'five files refused');
+    // an accepted mix shows name, type and readiness, then the per-file processing result
+    await page.getByTestId('batch-file-input').setInputFiles([tmpFile('site-notes.txt', 'Daily report\nNRE-4050 process piping erection 55 percent complete\n')]);
+    ok(/Ready to upload/.test(await page.locator('main').innerText()) && /Text/.test(await page.locator('main').innerText()), 'type and status are shown before upload');
+    await page.getByRole('button', { name: /^Process \d+ files?$/ }).click();
+    await until(async () => /Read · claims await review|claim[s]? found/.test(await page.locator('main').innerText()), 'the processing result is shown per file', 90000);
+    ok(/waiting for Supervisor review/.test(await page.locator('main').innerText()), 'the page says the claims await review');
+    await page.getByText('Single File', { exact: true }).first().click();
+    const single = await page.locator('main').innerText();
+    ok(!/P6 Export Mode|Schedule Progress Export|\.xer|MS Project/i.test(single), 'the single-file tab has no schedule-export controls');
+    await shot(page, 'se_upload_progress_report');
   }],
 
   ['Engineer: reports an issue; it is tied to its stage and activity and shows in the list', async ({ S }) => {

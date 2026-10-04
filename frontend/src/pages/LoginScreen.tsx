@@ -1,3 +1,4 @@
+import { BRAND_NAME } from '@/brand';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/auth/AuthProvider';
@@ -23,7 +24,7 @@ import {
 } from 'lucide-react';
 
 import GlobalIndustrialBackground from '@/components/GlobalIndustrialBackground';
-import { IS_V2, V2_LOCAL_LOGIN_HINTS } from '@/config';
+import { IS_V2, V2_DEMO_EMAIL_DOMAIN, V2_DEMO_PASSWORD, V2_LOCAL_LOGIN_HINTS } from '@/config';
 
 // Local integration demo (isolated DB only): the two prototype identities provisioned by backend/prototype_seed. Enabled by
 // VITE_LOCAL_DEMO_AUTH=true; the backend refuses local-login anywhere except the isolated integration database.
@@ -33,13 +34,13 @@ const LOCAL_IDENTITIES = [
   { label: 'Site Engineer', email: 'engineer@setuai.demo' },
 ];
 
-// v2 mode: shortcuts that only fill in the EMAIL of a seeded demo person (see docs/V2_PHASE3.md). No password is ever prefilled; the operator who enabled
-// local sign-in on the server chose it. Shown only when VITE_V2_LOCAL_LOGIN=true.
+// v2 mode: shortcuts for the demo team of NRL-EXPANSION (the richest demo project). They fill the e-mail, and the password only when the build sets VITE_V2_DEMO_PASSWORD
+// (see config.ts). Shown only when VITE_V2_LOCAL_LOGIN=true (the default of vite.config.ts).
 const V2_IDENTITIES = [
-  { label: 'Project Manager', email: 'anita.bora@seed.setuai.local', Icon: ShieldCheck, color: '#0284C7' },
-  { label: 'Supervisor', email: 'lakshmi.iyer@seed.setuai.local', Icon: ShieldCheck, color: '#0D9488' },
-  { label: 'Site Engineer', email: 'arun.nair@seed.setuai.local', Icon: HardHat, color: '#EA580C' },
-];
+  { label: 'Project Manager', handle: 'farah.khan', Icon: ShieldCheck, color: '#0284C7' },
+  { label: 'Supervisor', handle: 'imran.hussain', Icon: ShieldCheck, color: '#0D9488' },
+  { label: 'Site Engineer', handle: 'ritu.baruah', Icon: HardHat, color: '#EA580C' },
+].map((i) => ({ ...i, email: `${i.handle}@${V2_DEMO_EMAIL_DOMAIN}` }));
 
 export default function LoginScreen() {
   const { login, isAuthenticated, user, error, clearError, isLoading } = useAuth();
@@ -89,7 +90,7 @@ export default function LoginScreen() {
 
   const fillDemo = (demoEmail: string) => {
     setEmail(demoEmail);
-    setPassword(IS_V2 ? '' : 'Demo123456!');
+    setPassword(IS_V2 ? V2_DEMO_PASSWORD : 'Demo123456!');
     setFieldError('');
     clearError();
   };
@@ -115,7 +116,7 @@ export default function LoginScreen() {
             </div>
             <div>
               <div className="font-extrabold text-2xl text-[#071A2D] dark:text-white tracking-tight">
-                Setu <span className="text-[#FF7A18] dark:text-[#FF941F]">AI</span>
+                {BRAND_NAME}
               </div>
               <div className="text-xs font-bold text-[#334155] dark:text-[#94A8B8]">
                 {t('login.tagline')}
@@ -185,7 +186,7 @@ export default function LoginScreen() {
           </div>
           <div>
             <div className="font-bold text-xl tracking-tight text-slate-900 dark:text-white">
-              Setu <span className="text-[#FF7A18]">AI</span>
+              {BRAND_NAME}
             </div>
             <div className="text-[10px] text-slate-500 dark:text-[#94A8B8] font-medium">{t('common.brandTagline')}</div>
           </div>

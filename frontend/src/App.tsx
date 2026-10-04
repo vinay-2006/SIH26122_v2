@@ -1,3 +1,4 @@
+import { PAGE_AUDIT, PAGE_INTELLIGENCE, PAGE_WBS } from './layout/pageAccess';
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -75,17 +76,17 @@ function App() {
                     <Route path="/impact" element={<ImpactPreview />} />
                   </Route>
 
-                  <Route element={<ProtectedRoute requires={['VIEW_SCHEDULE']} />}>
+                  <Route element={<ProtectedRoute requires={PAGE_WBS} />}>
                     <Route path="/wbs" element={<WBSExplorerPage />} />
                   </Route>
 
                   {/* Supervising agent: read-only, every project member */}
-                  <Route element={<ProtectedRoute requires={['VIEW_PROJECT']} />}>
+                  <Route element={<ProtectedRoute requires={PAGE_INTELLIGENCE} />}>
                     <Route path="/intelligence" element={<ProjectIntelligence />} />
                   </Route>
 
                   {/* Tamper-evident audit trail */}
-                  <Route element={<ProtectedRoute requires={['VIEW_AUDIT']} />}>
+                  <Route element={<ProtectedRoute requires={PAGE_AUDIT} />}>
                     <Route path="/audit" element={<AuditTrail />} />
                   </Route>
 

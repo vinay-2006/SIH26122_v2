@@ -2,7 +2,7 @@
 // Real-browser end-to-end tests of the v2-mode frontend against the real v2 API and a throw-away local database.
 //   npm run e2e                 all scenarios          npm run e2e -- --only "Supervisor"   scenarios whose title contains the text
 // Needs: a local PostgreSQL cluster (scripts/db_v2.sh), Chromium (E2E_CHROMIUM or the Playwright cache). Uses database setuai_v2_fe_e2e, API :8021, web :5191/:5192.
-import { ART, Fail, launch, shot, startStack, stopStack } from './lib.mjs';
+import { ART, Fail, launch, shot, startStack, stopStack, warmUp } from './lib.mjs';
 import pm from './scenarios/pm.mjs';
 import engineer from './scenarios/engineer.mjs';
 import supervisor from './scenarios/supervisor.mjs';
@@ -17,6 +17,7 @@ try {
   await startStack();
   browser = await launch();
   S.browser = browser;
+  await warmUp(browser);
   for (const [title, fn] of all) {
     if (only && !title.includes(only)) continue;
     const t0 = Date.now();

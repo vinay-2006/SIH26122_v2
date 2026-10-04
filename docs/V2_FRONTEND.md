@@ -1,4 +1,4 @@
-# SetuAI frontend - v2 integration (Project Manager, Site Engineer, Supervisor)
+# ANVYRA frontend - v2 integration (Project Manager, Site Engineer, Supervisor)
 
 The existing frontend (`frontend/`, React + Vite + Tailwind + the app's own `components/ui`) now talks to the v2 backend (`backend/v2`) when it is started in **v2 mode**. Nothing was redesigned:
 the v2 pages are built from the same shell, cards, tables, dialogs, pills, progress bars and field styles as the legacy pages (`src/v2/ui.tsx` only packages class strings that already exist).
@@ -19,7 +19,7 @@ The mode is fixed when the dev server / build starts; the app never switches at 
 * The browser holds **only a token**. Who you are (`GET /me`) and what you may do in the selected project (`my_role`, `my_permissions` from `GET /projects/{id}`) always come from the server;
   editing local storage, the URL or React state cannot make anyone a Project Manager. Hiding a menu item or a button is cosmetic: **every action is authorised again by the API** (role gate, domain service, database guard).
 * Sign-in: Supabase Auth when `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are set (the v2 API verifies Supabase tokens), otherwise the server's **local sign-in** (`POST /api/v2/auth/local-login`), which the operator must
-  enable (`V2_LOCAL_LOGIN_PASSWORD`, 12+ characters), which only works against a LOCAL `setuai_v2_*` database and only for the seeded `@seed.setuai.local` people. No secret, key or default password is in the frontend.
+  enable (`V2_LOCAL_LOGIN_PASSWORD`, 12+ characters), which only works against a LOCAL `setuai_v2_*` database and only for the seeded `@anvyra.demo` people. No secret, key or default password is in the frontend.
 * A 401 anywhere ends the session and returns to the sign-in page. Role names: Project Manager, Supervisor, Site Engineer.
 
 ## What each role gets (all on the shared shell)
@@ -46,7 +46,7 @@ scripts/v2_dev_stack.sh down | status | reset
 ```
 The legacy demo keeps its own commands (`npm run dev` with its own `VITE_API_BASE_URL`); it is not started or changed by any of the above.
 
-### Trying each role (seeded people, all `@seed.setuai.local`)
+### Trying each role (seeded people, all `@anvyra.demo`)
 | Role | Sign in as | Suggested walk-through |
 |---|---|---|
 | Project Manager | `anita.bora` (projects A and D), `rohit.menon` (B) | Portfolio -> New project -> Schedule: upload `tests/schedule_import/fixtures/nsp.csv` (+ `nsp_resources.csv`) -> build -> activate -> Project Settings -> add a member |

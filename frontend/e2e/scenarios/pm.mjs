@@ -6,8 +6,8 @@ export default [
     const { page, log } = await signIn(browser, 'anita.bora');
     eq(new URL(page.url()).pathname, '/portfolio', 'landing page');
     const nav = await navLabels(page);
-    eq(nav, ['Portfolio', 'Overview', 'Schedule', 'Project Settings', 'Issues & Delays', 'Impact Preview', 'WBS Explorer', 'Root Cause & Memory', 'Project Intelligence', 'Audit Trail'], 'the PM menu: project management plus the read-only original monitoring pages');
-    for (const never of ['Daily Digest', 'Review Workspace', 'Time Agent', 'Dashboard', 'Activity History', 'AI Execution Summary', 'Claim Intake', 'My Updates']) ok(!nav.includes(never), `PM menu must not contain ${never}`);
+    eq(nav, ['Portfolio', 'Overview', 'Schedule', 'Project Settings', 'Issues & Delays', 'Impact Preview', 'Root Cause & Memory', 'Project Intelligence', 'Audit Trail'], 'the PM menu: project management plus the read-only original monitoring pages');
+    for (const never of ['WBS Explorer', 'Daily Digest', 'Review Workspace', 'Time Agent', 'Dashboard', 'Activity History', 'AI Execution Summary', 'Claim Intake', 'My Updates']) ok(!nav.includes(never), `PM menu must not contain ${never}`);
     await page.waitForSelector('[data-testid=project-card]');
     await until(async () => !/Loading progress/.test(await page.locator('[data-testid=portfolio-page]').innerText()), 'project cards finish loading their progress');
     const cards = Object.fromEntries(await page.locator('[data-testid=project-card]').evaluateAll((els) => els.map((e) => [e.dataset.projectCode, e.innerText.replace(/\s+/g, ' ')])));
@@ -23,7 +23,7 @@ export default [
 
   ['PM: cannot reach claim review, claim forms or claim content (UI and API)', async ({ S }) => {
     const { page } = S.pm;
-    for (const p of ['/review', '/digest', '/dashboard', '/summary', '/history', '/time-agent', '/intake', '/updates', '/claims/00000000-0000-0000-0000-000000000000']) {
+    for (const p of ['/wbs', '/review', '/digest', '/dashboard', '/summary', '/history', '/time-agent', '/intake', '/updates', '/claims/00000000-0000-0000-0000-000000000000']) {
       await page.goto(`${WEB}${p}`); await page.waitForSelector('aside');
       await until(async () => new URL(page.url()).pathname === '/portfolio', `${p} should bounce to the portfolio, at ${page.url()}`);
     }
@@ -33,6 +33,7 @@ export default [
     const c = await api(page, 'GET', `/projects/${a}/claims/00000000-0000-0000-0000-000000000000`); eq([c.status, c.json.error.code], [403, 'CLAIM_CONTENT_FORBIDDEN'], 'claim content');
     eq((await api(page, 'POST', `/projects/${a}/claims`, { event_date: '2026-01-01', raw_text: 'pm claim', claimed_pct: 10 })).status, 403, 'a PM cannot file claims');
     eq((await api(page, 'POST', `/projects/${a}/claims/00000000-0000-0000-0000-000000000000/decision`, { action: 'APPROVE' })).status, 403, 'a PM cannot decide');
+    eq((await legacy(page, 'GET', `/api/v1/schedules/${await activeVersion(page, a)}/wbs-tree`, null, { project: a, version: await activeVersion(page, a) })).status, 403, 'the WBS Explorer data is closed to the Project Manager at the API');
     // the same boundary on the contract the restored pages use
     const v = await activeVersion(page, a); const ctx = { project: a, version: v }; const none = '00000000-0000-0000-0000-000000000000';
     for (const [m, u, b] of [['GET', '/api/v1/review-queue'], ['GET', `/api/v1/claims/${none}`], ['GET', `/api/v1/claims/${none}/candidates`], ['POST', '/api/v1/decisions', { event_id: none, action: 'APPROVE', justification: 'x' }],
@@ -54,14 +55,88 @@ export default [
     ok(/not earned value/i.test(await text(page, 'stat-spi')), 'SPI is labelled as not earned value');
     ok(/Feb\s+20,\s+2023/.test(await text(page, 'stat-datadate')), 'data date shown');
     await page.waitForSelector('[data-testid=timeline-chart]');
-    await page.goto(`${WEB}/wbs`); await page.waitForSelector('text=WBS Activity Explorer');
-    await until(async () => /WBS groups/.test(await page.locator('main').innerText()), 'the original WBS Explorer loads the PM project');
-    await shot(page, 'pm_wbs');
+    await page.goto(`${WEB}/impact`); await page.waitForSelector('text=Precedence Ripple Impact Preview');       // schedule-only monitoring page the PM keeps
+    await shot(page, 'pm_impact');
     // a historical version is selectable from the shared switcher only when it exists; D has a single version
     await page.getByTestId('project-switcher').click(); await page.getByRole('option').filter({ hasText: 'Siliguri' }).first().click();
     await page.goto(`${WEB}/overview`); await page.waitForSelector('[data-testid=stat-actual]');
     ok(/^.*0%/.test(await text(page, 'stat-actual')), 'upcoming project: zero progress');
     ok(/DURATION/.test(await text(page, 'overview-page')), 'weight basis shown for the upcoming project');
+  }],
+
+  ['PM: Project Intelligence answers from project facts and changes nothing; Audit Trail verifies the chain and downloads the dossier', async ({ S }) => {
+    const { page } = S.pm;
+    const a = await projectId(page, 'NNB-CRUDE');
+    const counts = async () => JSON.stringify((await api(page, 'GET', `/projects/${a}/claim-counts`)).json);
+    const before = await counts();
+    await page.goto(`${WEB}/intelligence`); await page.waitForSelector('text=Supervisory briefing');
+    await until(async () => /Deterministic/i.test(await page.locator('main').innerText()), 'without a language model the briefing is deterministic and says so', 20000);
+    await page.getByPlaceholder(/What is holding up/).fill('What is holding up the project?');
+    await page.getByRole('button', { name: /^Ask$/ }).click();
+    await until(async () => (await page.locator('main').innerText()).length > 700, 'an answer is shown', 30000);
+    eq(await counts(), before, 'the agent cannot approve, reject or change anything');
+    await page.goto(`${WEB}/audit`); await page.waitForSelector('text=Latest records');
+    await until(async () => /VALID/.test(await page.locator('main').innerText()) && /records checked/i.test(await page.locator('main').innerText()), 'chain verified', 20000);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download dossier/ }).click()]);
+    ok(/dossier/i.test(dl.suggestedFilename()), `dossier downloaded: ${dl.suggestedFilename()}`);
+    const body = JSON.stringify(JSON.parse((await import('node:fs')).readFileSync(await dl.path(), 'utf8')).execution_evidence);
+    ok(/RESTRICTED/.test(body), 'the dossier the PM downloads carries no claim content');
+    await shot(page, 'pm_audit');
+  }],
+
+  ['PM: Project Intelligence cites live data and project knowledge, and says what it does not know', async ({ S }) => {
+    const { page } = S.pm;
+    await page.goto(`${WEB}/intelligence`); await page.waitForSelector('[data-testid=project-context]');
+    ok(/project context/i.test(await page.locator('main').innerText()) && /(from the project records|authored|illustrative)/.test(await page.locator('[data-testid=project-context]').innerText()), 'the authored context is shown apart from the live briefing, with its provenance');
+    const ask = async (q, re) => { await page.getByPlaceholder(/What is holding up/).fill(q); await page.getByRole('button', { name: /^Ask$/ }).click(); await until(async () => re.test(await page.locator('main').innerText()), `an answer to "${q}"`, 30000); };
+    await ask('Give me the project overview and scope', /Project context:/);
+    const src = await page.getByTestId('answer-sources').innerText();
+    ok(/Project knowledge/.test(src), `knowledge sections are cited: ${src}`);
+    await ask('How many claims are waiting for review?', /Review queue: \d+ claims? waiting/);
+    ok(/Live: Review queue/.test(await page.getByTestId('answer-sources').innerText()), 'live data is cited as live');
+    ok(!/raw_claim_text|SECRET/.test(await page.locator('main').innerText()), 'no claim wording');
+    await page.getByPlaceholder(/What is holding up/).fill('What colour is the foreman\'s helmet?'); await page.getByRole('button', { name: /^Ask$/ }).click();
+    await until(async () => /cannot answer that from this project/.test(await page.locator('main').innerText()), 'an unknown question is declined, not invented', 30000);
+    await shot(page, 'pm_intelligence');
+  }],
+
+  ['PM: Project Intelligence and Project Knowledge are ONE page with two tabs; the old /knowledge address lands on the Knowledge tab', async ({ S }) => {
+    const { page } = S.pm;
+    await page.goto(`${WEB}/intelligence`); await page.waitForSelector('[data-testid=pi-tab-intelligence]');
+    eq(await page.getByTestId('pi-tab-intelligence').getAttribute('aria-selected'), 'true', 'the Intelligence tab opens first');
+    ok(await page.getByText('Supervising agent').count() > 0, 'the agent view is shown');
+    await page.getByTestId('pi-tab-knowledge').click(); await page.waitForSelector('[data-testid=knowledge-page]');
+    ok(/tab=knowledge/.test(page.url()), 'the tab is in the address');
+    await page.goto(`${WEB}/knowledge`);
+    await until(async () => /\/intelligence\?tab=knowledge/.test(page.url()), '/knowledge redirects into the tab');
+    await page.waitForSelector('[data-testid=knowledge-page]');
+    eq((await navLabels(page)).filter((l) => /Knowledge|Intelligence/.test(l)), ['Project Intelligence'], 'one menu entry, not two');
+  }],
+
+  ['PM: Project Knowledge shows the generated context with provenance; the PM adds, edits and retires an entry', async ({ S }) => {
+    const { page } = S.pm;
+    await page.goto(`${WEB}/intelligence?tab=knowledge`); await page.waitForSelector('[data-testid=knowledge-page]');
+    await until(async () => (await page.getByTestId('knowledge-entry').count()) > 20, 'the generated entries are listed');
+    const text = await page.locator('main').innerText();
+    ok(/From project records/.test(text) && /Illustrative/.test(text) && /Not specified/.test(text), 'every entry is labelled with where it comes from');
+    ok(/Scope of work/.test(text) && /Glossary/.test(text) && /Safety and quality requirements/.test(text), 'the sections are present');
+    await page.getByTestId('add-knowledge').click();
+    await page.getByLabel('Title', { exact: true }).fill('E2E site induction rule');
+    await page.getByLabel('Text', { exact: true }).fill('Every visitor completes the site induction before entering the work area.');
+    await page.getByLabel('Section', { exact: true }).selectOption('SAFETY_QUALITY');
+    await page.getByTestId('save-knowledge').click();
+    const entry = page.locator('[data-testid=knowledge-entry][data-title="E2E site induction rule"]');
+    await entry.waitFor({ timeout: 15000 });
+    ok(/Authored/.test(await entry.innerText()) && /v1/.test(await entry.innerText()), 'the new entry is authored, version 1');
+    await page.getByRole('button', { name: 'Edit E2E site induction rule' }).click();
+    await page.getByLabel('Text', { exact: true }).fill('Every visitor completes the site induction and signs the register.');
+    await page.getByLabel('Provenance', { exact: true }).selectOption('ILLUSTRATIVE');
+    await page.getByTestId('save-knowledge').click();
+    await until(async () => /signs the register/.test(await entry.innerText()) && /v2/.test(await entry.innerText()) && /Illustrative/.test(await entry.innerText()), 'the edit is saved as version 2 with its provenance');
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('button', { name: 'Retire E2E site induction rule' }).click();
+    await until(async () => (await entry.count()) === 0, 'a retired entry disappears from the list');
+    await shot(page, 'pm_knowledge');
   }],
 
   ['PM (rohit): creates a project, rejects an invalid schedule, maps labels, builds, activates, and the project starts at zero', async ({ browser, S }) => {
@@ -127,20 +202,20 @@ export default [
     const { page } = S.rohit;
     await page.goto(`${WEB}/settings`); await page.waitForSelector('[data-testid=settings-page]');
     await page.getByRole('tab', { name: 'Members' }).click();
-    await page.getByLabel('Member email').fill('sneha.pillai@seed.setuai.local');
+    await page.getByLabel('Member email').fill('sneha.pillai@anvyra.demo');
     await page.getByLabel('Member role').selectOption('SITE_ENGINEER');
     await page.getByTestId('add-member').click();
-    await page.waitForSelector('[data-testid=member-row][data-email="sneha.pillai@seed.setuai.local"]');
+    await page.waitForSelector('[data-testid=member-row][data-email="sneha.pillai@anvyra.demo"]');
     await page.getByLabel('Member email').fill('nobody@nowhere.test'); await page.getByTestId('add-member').click();
     await page.waitForSelector('text=No active registered user');
-    await page.getByLabel('Member email').fill('farah.khan@seed.setuai.local'); await page.getByTestId('invite-member').click();
+    await page.getByLabel('Member email').fill('farah.khan@anvyra.demo'); await page.getByTestId('invite-member').click();
     const link = await page.getByTestId('invite-link').inputValue();
     ok(/accept-invitation\?token=/.test(link), 'invitation link shown');
     await page.getByRole('tab', { name: 'Progress rules' }).click();
     await page.getByLabel('Over-baseline tolerance').fill('12');
     await page.getByTestId('save-settings').click(); await page.waitForSelector('text=Settings saved');
     await page.reload(); await page.getByRole('tab', { name: 'Progress rules' }).click();
-    eq(await page.getByLabel('Over-baseline tolerance').inputValue(), '12', 'setting persisted');
+    await until(async () => (await page.getByLabel('Over-baseline tolerance').inputValue()) === '12', 'setting persisted (the form loads the saved value)');
     const bad = await api(page, 'PATCH', `/projects/${S.newProject}/settings`, { over_baseline_tolerance_pct: 500 });
     eq(bad.status, 422, 'the server validates settings too');
   }],

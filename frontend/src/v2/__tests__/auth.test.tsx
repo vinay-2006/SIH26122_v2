@@ -12,7 +12,7 @@ vi.mock('@/v2/api/endpoints', () => ({ authApi: api }));
 let ctx: ReturnType<typeof useAuth>;
 function Probe() { ctx = useAuth(); return <div data-testid="state">{ctx.loading ? 'loading' : ctx.user ? `${ctx.user.role}:${ctx.user.email}` : 'anonymous'}</div>; }
 const mount = () => render(<AuthProviderV2><Probe /></AuthProviderV2>);
-const me = (roles: string[], caps: string[] = []) => ({ id: 'u1', email: 'x@seed.setuai.local', full_name: 'X Person', capabilities: caps, projects: roles.map((r, i) => ({ project_id: `p${i}`, my_role: r })) });
+const me = (roles: string[], caps: string[] = []) => ({ id: 'u1', email: 'x@anvyra.demo', full_name: 'X Person', capabilities: caps, projects: roles.map((r, i) => ({ project_id: `p${i}`, my_role: r })) });
 
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -25,7 +25,7 @@ describe('v2 authentication', () => {
   it.each([['PROJECT_MANAGER', ['PROJECT_MANAGER']], ['SUPERVISOR', ['SITE_ENGINEER', 'SUPERVISOR']], ['SITE_ENGINEER', ['SITE_ENGINEER']]])('restores a %s session from the SERVER’s answer', async (expected, roles) => {
     localStorage.setItem(V2_TOKEN_KEY, 'good');
     api.me.mockResolvedValue(me(roles, expected === 'PROJECT_MANAGER' ? ['CREATE_PROJECT'] : []));
-    mount(); await waitFor(() => expect(screen.getByTestId('state').textContent).toBe(`${expected}:x@seed.setuai.local`));
+    mount(); await waitFor(() => expect(screen.getByTestId('state').textContent).toBe(`${expected}:x@anvyra.demo`));
     expect(ctx.user?.capabilities).toEqual(expected === 'PROJECT_MANAGER' ? ['CREATE_PROJECT'] : []);
   });
 
@@ -34,7 +34,7 @@ describe('v2 authentication', () => {
     localStorage.setItem('user', JSON.stringify({ id: 'u1', role: 'PROJECT_MANAGER', capabilities: ['CREATE_PROJECT', 'PLATFORM_ADMIN'] }));
     localStorage.setItem('role', 'PROJECT_MANAGER');
     api.me.mockResolvedValue(me(['SITE_ENGINEER']));
-    mount(); await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('SITE_ENGINEER:x@seed.setuai.local'));
+    mount(); await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('SITE_ENGINEER:x@anvyra.demo'));
     expect(ctx.user?.capabilities).toEqual([]);
   });
 
@@ -50,10 +50,10 @@ describe('v2 authentication', () => {
     api.localLogin.mockResolvedValue({ access_token: 'new-token', token_type: 'bearer', expires_in: 1 });
     api.me.mockResolvedValue(me(['SUPERVISOR']));
     await act(async () => { await ctx.login(' Lakshmi.Iyer@Seed.SetuAI.local ', 'pw'); });
-    expect(api.localLogin).toHaveBeenCalledWith('lakshmi.iyer@seed.setuai.local', 'pw');
+    expect(api.localLogin).toHaveBeenCalledWith('lakshmi.iyer@anvyra.demo', 'pw');
     expect(localStorage.getItem(V2_TOKEN_KEY)).toBe('new-token');
     expect(Object.keys(localStorage).filter((k) => /role|user/i.test(k))).toEqual([]);          // no role or user object is persisted
-    expect(screen.getByTestId('state').textContent).toBe('SUPERVISOR:x@seed.setuai.local');
+    expect(screen.getByTestId('state').textContent).toBe('SUPERVISOR:x@anvyra.demo');
   });
 
   it('a failed sign-in keeps the person anonymous and shows the reason', async () => {

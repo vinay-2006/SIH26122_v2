@@ -5,7 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useProject } from '@/context/ProjectContext';
-import { agentApi, type AgentFinding, type FindingSeverity } from '@/api/intelligence';
+import { agentApi, type AgentFinding, type AnswerSource, type FindingSeverity } from '@/api/intelligence';
+import { useSearchParams } from 'react-router-dom';
+import { IS_V2 } from '@/config';
+import { useProjectState } from '@/context/ProjectContext';
+import KnowledgePage from '@/v2/pages/KnowledgePage';
 
 const SEVERITY: Record<FindingSeverity, string> = {
   CRITICAL: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-400/50',
@@ -51,7 +55,50 @@ function Finding({ f }: { f: AgentFinding }) {
 }
 
 /** Supervising agent: evidence-backed briefing + questions. Advisory only; every claim links to a record. */
+const PROV: Record<string, string> = { FROM_RECORDS: 'from the project records', AUTHORED: 'authored', ILLUSTRATIVE: 'illustrative, not a contractual fact', NOT_SPECIFIED: 'not specified' };
+
+function SourceChips({ sources }: { sources?: AnswerSource[] }) {
+  if (!sources || sources.length === 0) return null;
+  return (
+    <div data-testid="answer-sources" className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Sources</span>
+      {sources.map((s, i) => (
+        <span key={i} title={s.as_of ? `Computed ${s.as_of}` : undefined}
+          className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', s.kind === 'LIVE_DATA'
+            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-400/50' : 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-400/50')}>
+          {s.kind === 'LIVE_DATA' ? `Live: ${s.label}` : `Project knowledge: ${s.section_label} · ${s.title} (${PROV[s.provenance ?? ''] ?? s.provenance})`}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** The Project Manager gets one page with two tabs: what the supervising agent says about the project, and the project's authored knowledge that the agent and the Time Agent read.
+ *  Everyone else (Site Engineer) sees the agent view alone. The briefing is only requested while its tab is open. */
 export default function ProjectIntelligence() {
+  const { can } = useProjectState();
+  const [params, setParams] = useSearchParams();
+  const isPm = IS_V2 && can('MANAGE_PROJECT');
+  if (!isPm) return <IntelligenceView />;
+  const tab = params.get('tab') === 'knowledge' ? 'knowledge' : 'intelligence';
+  const choose = (t: 'intelligence' | 'knowledge') => setParams(t === 'knowledge' ? { tab: 'knowledge' } : {}, { replace: true });
+  const TabBtn = ({ id, label }: { id: 'intelligence' | 'knowledge'; label: string }) => (
+    <button type="button" role="tab" aria-selected={tab === id} data-testid={`pi-tab-${id}`} onClick={() => choose(id)}
+      className={cn('px-4 h-9 rounded-lg text-sm font-bold cursor-pointer border transition-colors',
+        tab === id ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:text-foreground')}>{label}</button>
+  );
+  return (
+    <div className="space-y-5 max-w-5xl">
+      <div role="tablist" aria-label="Project Intelligence" className="flex gap-2">
+        <TabBtn id="intelligence" label="Intelligence" />
+        <TabBtn id="knowledge" label="Project Knowledge" />
+      </div>
+      {tab === 'knowledge' ? <KnowledgePage /> : <IntelligenceView />}
+    </div>
+  );
+}
+
+function IntelligenceView() {
   const { currentProject } = useProject();
   const [question, setQuestion] = useState('');
   const briefing = useQuery({
@@ -106,6 +153,15 @@ export default function ProjectIntelligence() {
                   </ul>
                 </div>
               )}
+              <div className="space-y-2" data-testid="project-context">
+                <div className="text-xs font-bold uppercase tracking-wider">Project context <span className="font-normal normal-case text-muted-foreground">(authored text, kept apart from the live figures above)</span></div>
+                {b.project_context && b.project_context.length > 0 ? b.project_context.map((c, i) => (
+                  <div key={i} className="rounded-lg border border-border p-2.5 text-xs space-y-0.5">
+                    <div className="font-semibold">{c.section_label} · {c.title} <span className="font-normal text-muted-foreground">({PROV[c.provenance ?? ''] ?? c.provenance})</span></div>
+                    <div className="text-muted-foreground leading-relaxed">{c.excerpt}</div>
+                  </div>
+                )) : <div className="text-xs text-muted-foreground">No project knowledge has been written for this project yet. The Project Manager adds it under Project Knowledge.</div>}
+              </div>
               <div className="space-y-2">
                 <div className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Findings ({b.findings.length})
@@ -142,6 +198,7 @@ export default function ProjectIntelligence() {
           {ask.data && (
             <div className="space-y-2">
               <div className="text-sm leading-relaxed whitespace-pre-wrap">{ask.data.answer}</div>
+              <SourceChips sources={ask.data.sources} />
               {ask.data.recommendations.length > 0 && (
                 <ul className="list-disc pl-5 text-xs text-muted-foreground space-y-0.5">{ask.data.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul>
               )}
@@ -156,7 +213,7 @@ export default function ProjectIntelligence() {
                 </div>
               )}
               {ask.data.agent_status === 'DEGRADED' && (
-                <div className="text-[11px] text-amber-600 flex items-center gap-1"><Info className="w-3 h-3" /> AI unavailable: this answer lists deterministic facts only.</div>
+                <div className="text-[11px] text-amber-600 flex items-center gap-1"><Info className="w-3 h-3" /> This answer is composed from the project's live data and authored knowledge; no figure is generated.</div>
               )}
             </div>
           )}

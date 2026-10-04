@@ -18,9 +18,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ConfidenceBar } from '@/components/ConfidenceBar';
 import { cn } from '@/lib/utils';
 import { useProject } from '@/context/ProjectContext';
+import { ACCEPT_ATTR as ACCEPT, FILE_TYPES_TEXT, fileProblem, kindLabel } from '@/lib/reportFiles';
+import { IS_V2 } from '@/config';
 import { batchApi, type BatchClaim, type BatchFile, type BatchReport } from '@/api/prototype';
 
-const ACCEPT = '.pdf,.xlsx,.xls,.csv,.txt,.xer,.jpg,.jpeg,.png';
 const MAX_FILES = 25;
 
 const METHOD_LABEL: Record<string, string> = {
@@ -55,6 +56,8 @@ function FileRow({ f }: { f: BatchFile }) {
       <div className="min-w-0 flex-1 space-y-1">
         <div className="font-bold truncate">{f.file_name}</div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {IS_V2 && <Chip tone="slate">{kindLabel(f.file_name)}</Chip>}
+          {IS_V2 && <Chip tone={ok ? 'green' : failed ? 'red' : 'amber'}>{ok ? 'Read · claims await review' : failed ? 'Not read' : 'Read · nothing to claim'}</Chip>}
           {ok && <Chip tone="green">{f.claims_extracted} claim{f.claims_extracted === 1 ? '' : 's'} found</Chip>}
           {f.extraction_method && <Chip tone="blue">{METHOD_LABEL[f.extraction_method] ?? f.extraction_method}</Chip>}
           {f.merged_into_claim_ids.length > 0 && (
@@ -182,6 +185,7 @@ export function BatchUploadPanel() {
   const [dragging, setDragging] = useState(false);
   const [report, setReport] = useState<BatchReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rejected, setRejected] = useState<{ name: string; reason: string }[]>([]);
 
   const history = useQuery({
     queryKey: ['v7', 'batches', currentProject.id],
@@ -192,7 +196,10 @@ export function BatchUploadPanel() {
   const addFiles = useCallback((incoming: FileList | File[]) => {
     setError(null);
     // copy NOW: a FileList is live, and the input's value is cleared right after this call
-    const picked = Array.from(incoming);
+    const all = Array.from(incoming);
+    const bad = all.map((f) => ({ name: f.name, reason: fileProblem(f) })).filter((x): x is { name: string; reason: string } => !!x.reason);
+    const picked = all.filter((f) => !fileProblem(f));      // v2: unsupported / oversized / schedule files are refused here, with the reason
+    setRejected(bad);
     setFiles((prev) => {
       const next = [...prev];
       for (const f of picked) {
@@ -227,10 +234,11 @@ export function BatchUploadPanel() {
   return (
     <Card className="border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl">
       <CardHeader className="p-6 pb-4">
-        <CardTitle className="text-base font-extrabold flex items-center gap-2"><Files className="w-5 h-5 text-[#FF7A18]" /> Upload reports in a batch</CardTitle>
+        <CardTitle className="text-base font-extrabold flex items-center gap-2"><Files className="w-5 h-5 text-[#FF7A18]" /> {IS_V2 ? 'Upload Progress Report' : 'Upload reports in a batch'}</CardTitle>
         <CardDescription className="text-xs font-semibold mt-1">
-          Drop several daily reports, spreadsheets, diaries or site photos at once. Each file is read, every reported item becomes a claim,
-          each claim is matched to the schedule, and the same item reported in two files is kept once.
+          {IS_V2
+            ? 'Add one or more progress reports and evidence files: spreadsheets, documents, photographs, or scanned / handwritten site reports. This is not for baseline schedules; a Project Manager imports those under Schedule. Each file is read, every reported item becomes a claim that waits for Supervisor review, and the same item reported in two files is kept once.'
+            : 'Drop several daily reports, spreadsheets, diaries or site photos at once. Each file is read, every reported item becomes a claim, each claim is matched to the schedule, and the same item reported in two files is kept once.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="p-6 pt-0 space-y-4">
@@ -250,7 +258,7 @@ export function BatchUploadPanel() {
         >
           <Upload className="w-7 h-7 mx-auto text-[#FF7A18]" />
           <div className="mt-2 text-sm font-bold">Click to choose files, or drop them here</div>
-          <div className="text-[11px] text-muted-foreground">.pdf · .xlsx · .csv · .txt · .xer · .jpg · .png — up to {MAX_FILES} files</div>
+          <div className="text-[11px] text-muted-foreground">{FILE_TYPES_TEXT} — up to {MAX_FILES} files</div>
         </div>
 
         {files.length > 0 && (
@@ -259,6 +267,8 @@ export function BatchUploadPanel() {
               <div key={`${f.name}-${f.size}`} className="flex items-center gap-2 text-xs p-2 rounded-lg border border-slate-200 dark:border-[#214766]">
                 <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                 <span className="truncate flex-1 font-semibold">{f.name}</span>
+                {IS_V2 && <Chip tone="blue">{kindLabel(f.name)}</Chip>}
+                {IS_V2 && <Chip tone="green">Ready to upload</Chip>}
                 <span className="text-muted-foreground font-mono">{bytes(f.size)}</span>
                 <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setFiles((p) => p.filter((x) => x !== f))} className="cursor-pointer text-muted-foreground hover:text-rose-600"><X className="w-4 h-4" /></button>
               </div>
@@ -266,6 +276,17 @@ export function BatchUploadPanel() {
             <Button onClick={() => upload.mutate()} disabled={upload.isPending} className="w-full gap-2 cursor-pointer font-bold">
               {upload.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading {files.length} file{files.length === 1 ? '' : 's'} and matching to the schedule…</> : <><Upload className="w-4 h-4" /> Process {files.length} file{files.length === 1 ? '' : 's'}</>}
             </Button>
+          </div>
+        )}
+
+{rejected.length > 0 && (
+          <div data-testid="rejected-files" className="space-y-1.5">
+            {rejected.map((x) => (
+              <div key={x.name} role="alert" className="flex items-start gap-2 text-xs p-2.5 rounded-lg border border-rose-300 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300">
+                <FileWarning className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="min-w-0"><div className="font-bold truncate">{x.name} · not uploaded</div><div className="text-[11px]">{x.reason}</div></div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -277,6 +298,7 @@ export function BatchUploadPanel() {
               <div className="text-xs font-bold">Batch result · <span className="font-mono text-muted-foreground">{report.batch_id.slice(0, 8)}</span> · {new Date(report.created_at).toLocaleString()}</div>
               <Chip tone={report.status === 'COMPLETED' ? 'green' : report.status === 'PARTIAL' ? 'amber' : 'red'}>{report.status}</Chip>
             </div>
+            {IS_V2 && <div className="text-[11px] text-muted-foreground">Claims found in these files are waiting for Supervisor review; nothing here changes approved progress. A file marked as failed was not read: check the reason shown and upload it again in a supported form.</div>}
             <BatchResult report={report} />
           </div>
         )}

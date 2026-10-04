@@ -10,7 +10,7 @@ const en = {
     language: 'Language',
     humanInTheLoop: 'Human-in-the-Loop',
     hil: 'HIL',
-    brandTagline: 'SIH26122 · Oil India',
+    brandTagline: 'Where Every Detail Connects.',
     retry: 'Retry',
     dismiss: 'Dismiss',
     previous: 'Previous',
@@ -35,10 +35,10 @@ const en = {
     collapseSidebar: 'Collapse Sidebar',
   },
   login: {
-    tagline: 'SIH26122 · Oil India Progress Verification',
-    heroTitleLine1: 'Smart Infrastructure',
-    heroTitleLine2: 'Progress Tracking',
-    heroTitleLine3: 'for Oil India',
+    tagline: 'Where Every Detail Connects.',
+    heroTitleLine1: 'AI-Powered',
+    heroTitleLine2: 'Infrastructure Execution',
+    heroTitleLine3: 'Intelligence',
     heroDescription:
       'AI-assisted field progress claims, Primavera P6 schedule compliance, and real-time supervisor approval workflow for Oil India infrastructure projects.',
     featureHitl: 'Human-in-the-Loop Supervisor Sign-off',

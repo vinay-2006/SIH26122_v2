@@ -1,13 +1,13 @@
 import { API, CFG, WEB, api, eq, navLabels, ok, projectId, signIn, until } from '../lib.mjs';
 
 export default [
-  ['Login (v2): the role shortcuts fill the email only, never a password; a wrong password is refused and nothing is stored', async ({ browser }) => {
+  ['Login (v2): the role shortcuts fill the email (the NRL-EXPANSION team on the @anvyra.demo domain) and, unless the build sets VITE_V2_DEMO_PASSWORD, never a password; a wrong password is refused and nothing is stored', async ({ browser }) => {
     const ctx = await browser.newContext(); const page = await ctx.newPage();
     await page.goto(`${WEB}/login`);
-    for (const [id, who] of [['identity-anita.bora', 'anita.bora'], ['identity-lakshmi.iyer', 'lakshmi.iyer'], ['identity-arun.nair', 'arun.nair']]) {
+    for (const [id, who] of [['identity-farah.khan', 'farah.khan'], ['identity-imran.hussain', 'imran.hussain'], ['identity-ritu.baruah', 'ritu.baruah']]) {
       await page.getByTestId(id).click();
-      eq(await page.locator('input[type=email]').inputValue(), `${who}@seed.setuai.local`, 'the shortcut fills the email');
-      eq(await page.locator('input[type=password]').inputValue(), '', 'a password is never prefilled');
+      eq(await page.locator('input[type=email]').inputValue(), `${who}@anvyra.demo`, 'the shortcut fills the email');
+      eq(await page.locator('input[type=password]').inputValue(), '', 'no password is prefilled unless the build opts in');
     }
     await page.locator('input[type=password]').fill('definitely-not-the-password');
     await page.getByRole('button', { name: /sign in/i }).click();
@@ -50,7 +50,7 @@ export default [
     const { page, ctx } = await signIn(browser, 'meera.das');
     await ctx.route('**/api/v2/projects', (r) => r.abort());
     await page.reload();
-    await page.waitForSelector('[role=alert]'); ok(/Unable to reach the SetuAI v2 server|Could not load/.test(await page.locator('[role=alert]').innerText()), 'clear message');
+    await page.waitForSelector('[role=alert]'); ok(/Unable to reach the ANVYRA server|Could not load/.test(await page.locator('[role=alert]').innerText()), 'clear message');
     await ctx.unroute('**/api/v2/projects');
     await page.getByRole('button', { name: /retry/i }).click();
     await page.waitForSelector('aside a'); await until(async () => (await page.locator('[role=alert]').count()) === 0, 'recovered after retry');
@@ -62,7 +62,7 @@ export default [
     const pidB = S.newProject;                                               // the project rohit created; sneha was added to it as a Site Engineer
     const m = (await api(pm, 'GET', `/projects/${pidB}/members`)).json;
     const members = Array.isArray(m) ? m : (m.items ?? m.members ?? []);
-    const sneha = members.find((m) => m.email === 'sneha.pillai@seed.setuai.local');
+    const sneha = members.find((m) => m.email === 'sneha.pillai@anvyra.demo');
     eq((await api(pm, 'PATCH', `/projects/${pidB}/members/${sneha.user_id}`, { status: 'SUSPENDED' })).status, 200, 'PM suspends');
     const { page: p2 } = await signIn(S.browser, 'sneha.pillai');
     const codes = (await api(p2, 'GET', '/projects')).json.map((p) => p.project_code);

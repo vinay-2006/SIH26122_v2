@@ -35,7 +35,11 @@ export type Permission =
   /** v2 only: create / edit projects, settings and members (Project Manager) */
   | 'MANAGE_PROJECT'
   /** v2 only: read-only monitoring pages that carry no claim content (issues, root causes, impact) for the Project Manager; Supervisors have them through their reviewer permissions */
-  | 'VIEW_MONITORING';
+  | 'VIEW_MONITORING'
+  /** v2 only page-level permissions (see backend/v2/permissions.py): WBS Explorer (not the Project Manager), Audit Trail (Project Manager only), Project Intelligence (not the Supervisor) */
+  | 'VIEW_WBS_EXPLORER'
+  | 'VIEW_AUDIT_TRAIL'
+  | 'VIEW_PROJECT_INTELLIGENCE';
 
 export interface ProjectListItem {
   project_id: string;

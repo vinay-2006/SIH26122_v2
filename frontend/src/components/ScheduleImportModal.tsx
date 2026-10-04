@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, FileCode2, Loader2, Upload } from 'lucide-
 import { useProjectState } from '@/context/ProjectContext';
 import { scheduleImportApi } from '@/api/projects';
 import { ApiError } from '@/api/client';
+import { uploadCeilingProblem } from '@/config';
 
 interface ScheduleImportModalProps {
   isOpen: boolean;
@@ -74,9 +75,11 @@ export function ScheduleImportModal({ isOpen, onClose }: ScheduleImportModalProp
                 data-testid="schedule-file-input"
                 className="hidden"
                 onChange={(e) => {
-                  setFile(e.target.files?.[0] ?? null);
+                  const f = e.target.files?.[0] ?? null;
+                  const tooBig = f ? uploadCeilingProblem(f) : null;
+                  setFile(tooBig ? null : f);
                   setResult(null);
-                  setError(null);
+                  setError(tooBig);
                 }}
               />
               <Upload className="w-8 h-8 text-[#FF7A18] mb-2" />

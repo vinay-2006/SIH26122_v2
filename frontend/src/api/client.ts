@@ -111,7 +111,7 @@ export async function apiFetch<T>(path: string, options?: ApiFetchOptions): Prom
     res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
   } catch (err: any) {
     if (err instanceof TypeError) {
-      throw new ApiError(0, `Unable to reach the SETUAI backend at ${BASE_URL}. Check that it is running.`, err.message || 'Network error');
+      throw new ApiError(0, `Unable to reach the ANVYRA backend at ${BASE_URL}. Check that it is running.`, err.message || 'Network error');
     }
     throw err;
   }

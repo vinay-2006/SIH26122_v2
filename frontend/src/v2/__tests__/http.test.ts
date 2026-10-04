@@ -71,7 +71,7 @@ describe('v2 http client', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     const e = await request<any>('/me').catch((x: any) => x);
     expect([e.status, e.code, e.isNetwork]).toEqual([0, 'NETWORK_ERROR', true]);
-    expect(e.message).toMatch(/Unable to reach the SetuAI v2 server/);
+    expect(e.message).toMatch(/Unable to reach the ANVYRA server/);
   });
 
   it('lets an aborted request surface as an AbortError, not as an application error', async () => {

@@ -1,3 +1,5 @@
+import { BRAND_NAME, BRAND_TAGLINE } from '@/brand';
+import { PAGE_AUDIT, PAGE_INTELLIGENCE, PAGE_WBS } from '@/layout/pageAccess';
 import React, { useState, useEffect } from 'react';
 import { Outlet, Navigate, useLocation, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -113,11 +115,11 @@ export default function AppShell() {
     { label: t('nav.dashboard'),        path: '/dashboard', icon: LayoutDashboard, requires: ['REVIEW_CLAIM'] },
     { label: t('nav.activityHistory'),  path: '/history',   icon: Clock,           requires: ['REVIEW_CLAIM'] },
     { label: t('nav.impactPreview'),    path: '/impact',    icon: Activity,        requires: ['REVIEW_CLAIM', 'VIEW_MONITORING'] },
-    { label: t('wbs.navLabel'),         path: '/wbs',       icon: FolderTree,      requires: ['VIEW_SCHEDULE'] },
+    { label: t('wbs.navLabel'),         path: '/wbs',       icon: FolderTree,      requires: PAGE_WBS },
     { label: t('nav.executionSummary'), path: '/summary',   icon: Sparkles,        requires: ['REVIEW_CLAIM'] },
     { label: 'Root Cause & Memory',     path: '/root-cause', icon: GitBranch,      requires: ['MANAGE_BLOCKERS', 'VIEW_MONITORING'] },
-    { label: 'Project Intelligence',    path: '/intelligence', icon: Bot,          requires: ['VIEW_PROJECT'] },
-    { label: 'Audit Trail',             path: '/audit',     icon: Fingerprint,     requires: ['VIEW_AUDIT'] },
+    { label: 'Project Intelligence',    path: '/intelligence', icon: Bot,          requires: PAGE_INTELLIGENCE },
+    { label: 'Audit Trail',             path: '/audit',     icon: Fingerprint,     requires: PAGE_AUDIT },
   ];
   const allNavItems = IS_V2 ? [...v2Nav.items, ...legacyNavItems] : legacyNavItems;
   const navItems = projectStatus === 'ready' ? allNavItems.filter((i) => i.requires.some((p) => can(p))) : [];
@@ -165,7 +167,7 @@ export default function AppShell() {
           style={{ borderColor: 'rgba(30, 58, 95, 0.5)' }}
         >
           <div className={cn('flex items-center overflow-hidden', isCollapsed ? 'justify-center' : 'gap-3')}>
-            {/* Setu AI Orange Flame Icon in gradient circle */}
+            {/* ANVYRA Orange Flame Icon in gradient circle */}
             <div
               className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-lg shadow-orange-500/30 bg-gradient-to-br from-[#FF7A18] to-[#FF941F]"
             >
@@ -174,10 +176,10 @@ export default function AppShell() {
             {!isCollapsed && (
               <div className="flex flex-col min-w-0">
                 <span className="font-bold text-base text-white leading-tight truncate tracking-tight">
-                  Setu <span className="text-[#FF941F]">AI</span>
+                  {BRAND_NAME}
                 </span>
-                <span className="text-[10px] font-semibold tracking-wider truncate text-[#94A8B8]">
-                  SIH26122 · Oil India
+                <span className="text-[10px] font-semibold tracking-wide truncate text-[#94A8B8]">
+                  {BRAND_TAGLINE}
                 </span>
               </div>
             )}

@@ -12,7 +12,7 @@ export default {
     language: 'भाषा',
     humanInTheLoop: 'ह्यूमन-इन-द-लूप',
     hil: 'HIL',
-    brandTagline: 'SIH26122 · ऑयल इंडिया',
+    brandTagline: 'Where Every Detail Connects.',
     retry: 'पुनः प्रयास करें',
     dismiss: 'बंद करें',
     previous: 'पिछला',
@@ -37,10 +37,10 @@ export default {
     collapseSidebar: 'साइडबार संक्षिप्त करें',
   },
   login: {
-    tagline: 'SIH26122 · ऑयल इंडिया प्रगति सत्यापन',
-    heroTitleLine1: 'स्मार्ट इंफ्रास्ट्रक्चर',
-    heroTitleLine2: 'प्रगति ट्रैकिंग',
-    heroTitleLine3: 'ऑयल इंडिया के लिए',
+    tagline: 'Where Every Detail Connects.',
+    heroTitleLine1: 'AI-Powered',
+    heroTitleLine2: 'Infrastructure Execution',
+    heroTitleLine3: 'Intelligence',
     heroDescription:
       'ऑयल इंडिया अवसंरचना परियोजनाओं के लिए AI-सहायित फील्ड प्रगति दावे, Primavera P6 शेड्यूल अनुपालन, और रीयल-टाइम सुपरवाइज़र अनुमोदन वर्कफ़्लो।',
     featureHitl: 'ह्यूमन-इन-द-लूप सुपरवाइज़र साइन-ऑफ',

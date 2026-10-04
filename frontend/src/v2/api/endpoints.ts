@@ -128,3 +128,19 @@ export const dashboardApi = {
 };
 
 export { qs };
+
+// ---- project knowledge (the authored context of a project; every member reads, the Project Manager writes)
+export type KnowledgeSection = 'OVERVIEW' | 'SCOPE' | 'CONTRACT' | 'SITE' | 'STAKEHOLDERS' | 'MILESTONES' | 'CONSTRAINTS' | 'RISKS' | 'SAFETY_QUALITY' | 'PROCUREMENT' | 'REPORTING' | 'GLOSSARY';
+export type KnowledgeProvenance = 'FROM_RECORDS' | 'AUTHORED' | 'ILLUSTRATIVE' | 'NOT_SPECIFIED';
+export interface KnowledgeEntry {
+  knowledge_id: string; section: KnowledgeSection; title: string; body: string; provenance: KnowledgeProvenance; tags: string[]; sort_order: number;
+  status: 'ACTIVE' | 'RETIRED'; version: number; updated_at: string;
+}
+export interface KnowledgeInput { section: KnowledgeSection; title: string; body: string; provenance: Exclude<KnowledgeProvenance, 'FROM_RECORDS'>; tags: string[]; sort_order: number }
+export const knowledgeApi = {
+  list: (id: string, includeRetired = false) =>
+    request<{ sections: { section: KnowledgeSection; label: string }[]; items: KnowledgeEntry[] }>(`${P(id)}/knowledge`, { query: includeRetired ? { include_retired: 'true' } : {} }),
+  create: (id: string, body: KnowledgeInput) => request<KnowledgeEntry>(`${P(id)}/knowledge`, { method: 'POST', json: body }),
+  update: (id: string, kid: string, body: KnowledgeInput) => request<KnowledgeEntry>(`${P(id)}/knowledge/${encodeURIComponent(kid)}`, { method: 'PUT', json: body }),
+  retire: (id: string, kid: string) => request<KnowledgeEntry>(`${P(id)}/knowledge/${encodeURIComponent(kid)}/retire`, { method: 'POST' }),
+};
