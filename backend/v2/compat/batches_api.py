@@ -28,6 +28,8 @@ from .claims_api import candidates_for, load_claims, submit_extracted, _claim_te
 from .checks_api import run_check
 from .context import Ctx, legacy_ctx, path_ctx, require_version
 
+from .uploads import IMAGE_EXTENSIONS, refusal  # noqa: E402
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["legacy-contract: batches"])
 MAX_FILES = 25
@@ -38,7 +40,7 @@ MAX_BYTES = 25 * 1024 * 1024
 
 def _extract_file(filename: str, contents: bytes):
     """(drafts, legacy_channel, method). method: STRUCTURED | LLM | RULES_FALLBACK. Raises the original FileParseError / UnsupportedFileError."""
-    from backend.routers.intake import _build_claim_drafts
+    from .uploads import build_drafts as _build_claim_drafts
     from backend.shared.llm_extraction import LLMExtractionError
     from backend.shared.rule_extraction import force_rules, track_rules
     ext = Path(filename or "").suffix.lower()
@@ -108,8 +110,8 @@ def create_batch(files: List[UploadFile] = File(...), schedule_id: Optional[str]
                 logger.exception("batch intake: extraction failed for %s", filename)
                 status, error = "FAILED", f"Could not read the file: {e}"
         doc_id = None
-        if contents:
-            kind = "SITE_REPORT" if ext in (".jpg", ".jpeg", ".png") else "DAILY_REPORT"
+        if contents and not refusal(filename):         # a baseline schedule or legacy Office file is reported with its reason and not stored
+            kind = "EVIDENCE" if ext in IMAGE_EXTENSIONS else "DAILY_REPORT"
             try:
                 doc_id = docsvc.upload_document(ctx.user, ctx.project_id, ctx.access.role, kind, filename, contents, batch_id=batch_id)["document_id"]
             except ApiError as e:

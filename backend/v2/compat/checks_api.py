@@ -66,6 +66,19 @@ def _evidence_checks(c, claim: Dict[str, Any], event_date) -> List[Dict[str, Any
     return issues
 
 
+def _drop_false_missing_plan(c, claim_id: str, act, issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The original rule says "has no planned quantity" when the legacy read model has none to offer. That model offers a single planned quantity only for an activity with
+    EXACTLY ONE measured quantity; an activity with several (joints and spools, panels and cable ...) shows none although each has a baseline. When the claim's unit was bound to
+    one of those measured quantities, the baseline exists and has been compared by the v2 binder (REPORTED_ABOVE_BASELINE), so the warning would be false: drop it. A claim whose
+    unit binds to nothing keeps the warning, because then no baseline could be checked."""
+    if not act or act.get("planned_quantity") is not None:
+        return issues
+    bound = c.execute("select 1 from claim_quantities where event_id = %s and assignment_uid is not null limit 1", (claim_id,)).fetchone()
+    if not bound:
+        return issues
+    return [x for x in issues if not (x.get("rule_code") == "VAL_UNSUPPORTED_ACCUMULATION" and "has no planned quantity" in (x.get("description") or ""))]
+
+
 def run_check(ctx: Ctx, claim_id) -> Dict[str, Any]:
     from backend.routers import checks as lc
     from backend.shared.workflow_flags import with_workflow_flags  # noqa: F401  (imported by the original module; keeps import order identical)
@@ -104,7 +117,7 @@ def run_check(ctx: Ctx, claim_id) -> Dict[str, Any]:
                 i, cf, derived = lc.evaluate_incremental_quantity_anomalies(
                     conn=c, schedule_id=sid, matched_activity_id=matched, event_id=cid, event_date=ev_date, claimed_qty=claimed_qty, claimed_uom=claimed_uom,
                     activity_row=dict(act) if act else None, raw_claim_text=row["raw_claim_text"], current_claim=dict(row))
-                issues += i
+                issues += _drop_false_missing_plan(c, cid, act, i)
                 conflicts += cf
                 if derived is not None:
                     claimed_pct = derived

@@ -326,11 +326,51 @@ def _pdf_lines(content: bytes, budget: Budget) -> Tuple[List[Tuple[str, str]], i
         doc.close()
 
 
+def docx_text(content: bytes) -> str:
+    """the text of a Word (DOCX) document: paragraphs and table cells, in order. No images, no macros, no external content is read."""
+    import io
+    import re
+    import zipfile
+    from xml.etree import ElementTree as ET
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            info = z.getinfo("word/document.xml")
+            if info.file_size > 40 * 1024 * 1024:
+                raise ExtractionError("DOCX_TOO_LARGE", "The document text is too large to read")
+            raw = z.read("word/document.xml")
+    except ExtractionError:
+        raise
+    except Exception as e:
+        raise ExtractionError("UNREADABLE_DOCX", "The Word document could not be opened") from e
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as e:
+        raise ExtractionError("UNREADABLE_DOCX", "The Word document is not valid") from e
+    lines: List[str] = []
+    for para in root.iter(W + "p"):
+        parts = []
+        for node in para.iter():
+            if node.tag == W + "t" and node.text:
+                parts.append(node.text)
+            elif node.tag in (W + "tab", W + "br"):
+                parts.append(" ")
+        line = re.sub(r"\s+", " ", "".join(parts)).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------------------------------------ entry point
 def extract(content: bytes, family: str, ext: str, *, unit_ok: Callable[[str], bool], default_date: Optional[date] = None, budget_s: float = DEFAULT_BUDGET_S) -> Extraction:
     b = Budget(budget_s)
     if family == "image":
         raise ExtractionError("SCANNED_NOT_SUPPORTED", "Photographs are evidence only; reading values from images (OCR / vision) is not available yet")
+    if family == "docx":
+        lines = [(f"line {i}", ln) for i, ln in enumerate(docx_text(content).splitlines(), 1)]
+        if sum(len(l) for _, l in lines) < 20:
+            raise ExtractionError("EMPTY_DOCUMENT", "The Word document has no readable text")
+        return _text_lines(lines, unit_ok, default_date, b, "DOCX_TEXT_RULES")
     if family == "xlsx":
         return _table(_xlsx_rows(content, b), unit_ok, default_date, b, "XLSX_TABLE")
     if family == "pdf":

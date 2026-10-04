@@ -208,7 +208,9 @@ def get_import(project_id, import_id) -> Dict[str, Any]:
             recon = reconcile(load_old_activities(c, project_id, base["version_id"]), new_for_reconcile(ps, ref, d), d.get("reconcile"))
         built = c.execute("select version_id, version_no, status from schedule_versions where project_id = %s and import_id = %s",
                           (project_id, import_id)).fetchone()
+        kept = c.execute("select storage_path is not null as kept from source_documents where document_id = %s", (imp["source_document_id"],)).fetchone()
     return {"import_id": str(import_id), "status": imp["status"], "format": imp["format"], "file_name": imp["file_name"],
+            "original_file_available": bool(kept and kept["kept"]),
             "header": {**{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in ps.to_dict()["project"].items()},
                        **(d.get("header") or {})},
             "report": report, "wbs": [{"code": w.code, "name": w.name, "parent": w.parent_code, "type": types.get(w.code)} for w in norm.wbs],

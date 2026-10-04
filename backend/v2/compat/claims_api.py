@@ -21,7 +21,7 @@ from ..domain.common import DECIDABLE_STATUSES, PM, SE, SUP, ProjectActor, activ
 from ..errors import ApiError, forbidden
 from ..matching import service as matching
 from ..services import documents as docsvc
-from . import shapes
+from . import shapes, uploads
 from .context import Ctx, legacy_ctx, require_version
 
 logger = logging.getLogger(__name__)
@@ -228,6 +228,7 @@ def create_file_claim(file: UploadFile = File(...), purpose: str = Form("EVIDENC
         raise ApiError(422, "EMPTY_FILE", "Uploaded file is empty.")
     name = Path(file.filename or "upload").name
     ext = Path(name).suffix.lower()
+    uploads.refuse_or_pass(name)                      # baseline schedule files and legacy Office files are not progress reports
     attach_only = purpose == "EVIDENCE_PHOTO" and bool(raw_claim_text)
     drafts, channel_v2, kind = [], "TXT", "DAILY_REPORT"
     if attach_only:
@@ -235,7 +236,7 @@ def create_file_claim(file: UploadFile = File(...), purpose: str = Form("EVIDENC
         channel_v2, kind = "TYPED", "EVIDENCE"
     else:
         try:
-            drafts, _doc_type, legacy_channel = li._build_claim_drafts(name, contents, raw_claim_text_fallback=raw_claim_text)
+            drafts, _doc_type, legacy_channel = uploads.build_drafts(name, contents, raw_claim_text)
         except li.UnsupportedFileError as e:
             raise ApiError(415, "UNSUPPORTED_FILE", str(e))
         except li.FileParseError as e:
@@ -243,9 +244,9 @@ def create_file_claim(file: UploadFile = File(...), purpose: str = Form("EVIDENC
         except li.LLMExtractionError as e:
             raise ApiError(502, "EXTRACTION_FAILED", f"Claim extraction failed: {e}. No claims were created — please retry.")
         channel_v2 = {"SCANNED_OCR": "IMAGE", "SCHEDULE_EXPORT": "API"}.get(legacy_channel.value) or {".txt": "TXT", ".pdf": "PDF", ".csv": "CSV", ".xlsx": "XLSX", ".xls": "XLSX"}.get(ext, "TXT")
-        kind = "SITE_REPORT" if ext in (".jpg", ".jpeg", ".png") else "DAILY_REPORT"
+        kind = "EVIDENCE" if ext in uploads.IMAGE_EXTENSIONS else "DAILY_REPORT"      # a scan or photograph is stored as evidence (the file rules reserve report kinds for text documents)
     try:
-        doc = docsvc.upload_document(ctx.user, ctx.project_id, ctx.access.role, kind if not attach_only else ("PHOTO" if ext in (".jpg", ".jpeg", ".png") else "EVIDENCE"), name, contents)
+        doc = docsvc.upload_document(ctx.user, ctx.project_id, ctx.access.role, kind if not attach_only else ("PHOTO" if ext in uploads.IMAGE_EXTENSIONS else "EVIDENCE"), name, contents)
         doc_id = doc["document_id"]
     except ApiError as e:
         if e.code == "DUPLICATE_UPLOAD" and e.details:
@@ -268,77 +269,12 @@ def create_file_claim(file: UploadFile = File(...), purpose: str = Form("EVIDENC
         return load_claims(c, ctx, "e.event_id = any(%(ids)s)", {"ids": out}, order="e.created_at asc")
 
 
-def _xer_progress_claims(ctx: Ctx, name: str, contents: bytes):
-    from backend.routers import intake as li
-    try:
-        drafts = li._xer_claim_drafts(contents)
-    except li.FileParseError as e:
-        raise ApiError(422, "FILE_PARSE_ERROR", str(e))
-    # v2 stores no schedule-format file as a report (those are the Project Manager's); the progress rows are read in memory and each claim records where it came from
-    import hashlib
-    origin = f"{name} (sha256 {hashlib.sha256(contents).hexdigest()[:16]})"
-    out = []
-    for i, d in enumerate(drafts, 1):
-        try:
-            out.append(submit_extracted(ctx, d.extracted, d.raw_text, channel="API", document_id=None, evidence_ids=[], schedule=True, ask=False,
-                                        source_snippet=f"{origin}: {d.raw_text[:3500]}", cell_ref=f"task {i}")["claim_id"])
-        except ApiError as e:
-            if e.code not in ("DUPLICATE_CLAIM", "EMPTY_CLAIM"):             # a row that reports nothing is not a progress report
-                raise
-    if not out:
-        raise ApiError(422, "NO_PROGRESS_ROWS", "The file has no activities with reportable progress (or every claim already exists).")
-    with actor_tx(ctx.actor, readonly=True) as c:
-        return load_claims(c, ctx, "e.event_id = any(%(ids)s)", {"ids": out}, order="e.created_at asc")
-
-
 @router.post("/claims/schedule-export")
 def create_schedule_export_claims(file: UploadFile = File(...), schedule_id: Optional[str] = Form(None), ctx: Ctx = Depends(legacy_ctx(P.SUBMIT_CLAIM, writable=True))):
-    """P6 / MS Project progress export used as a SOURCE OF PROGRESS CLAIMS (not a new baseline): every row names its activity, so no LLM is involved."""
-    require_version(ctx)
-    from backend.shared.tabular_extraction import build_claim_from_row, detect_progress_columns, read_tabular_file
-    contents = file.file.read()
-    if not contents:
-        raise ApiError(422, "EMPTY_FILE", "Uploaded file is empty.")
-    name = Path(file.filename or "upload").name
-    ext = Path(name).suffix.lower()
-    if ext == ".xer":                                     # a Primavera P6 progress export: the ORIGINAL XER progress reader (the original UI sends .xer here)
-        return _xer_progress_claims(ctx, name, contents)
-    if ext == ".xml":
-        raise ApiError(415, "UNSUPPORTED_FILE", "MS Project XML cannot be read as a progress export; export the progress as CSV / XLSX, or send a Primavera .xer export.")
-    try:
-        sheets = read_tabular_file(name, contents)
-    except ValueError as e:
-        raise ApiError(422, "FILE_PARSE_ERROR", f"Could not parse schedule-export file: {e}")
-    cols = {n: detect_progress_columns(list(df.columns)) for n, df in sheets.items()}
-    if not any(v is not None for v in cols.values()):
-        raise ApiError(422, "NO_ACTIVITY_COLUMN", "Schedule-export file has no 'Activity ID' column.")
-    try:
-        doc_id = docsvc.upload_document(ctx.user, ctx.project_id, ctx.access.role, "DAILY_REPORT", name, contents)["document_id"]
-    except ApiError as e:
-        if e.code == "DUPLICATE_UPLOAD" and e.details:
-            doc_id = uuid.UUID(e.details["document_id"])
-        else:
-            raise
-    out = []
-    for sheet, df in sheets.items():
-        if cols[sheet] is None:
-            continue
-        for idx, row in df.iterrows():
-            built = build_claim_from_row(row.to_dict(), cols[sheet], discipline_hint=sheet or None)
-            if built is None:
-                continue
-            raw_text, ex = built
-            try:
-                res = submit_extracted(ctx, ex, raw_text, channel="API", document_id=doc_id, evidence_ids=[doc_id], schedule=True, ask=False,
-                                       source_snippet=str(row.to_dict()), sheet=sheet or None, cell_ref=f"row {int(idx) + 2}")
-                out.append(res["claim_id"])
-            except ApiError as e:
-                if e.code not in ("DUPLICATE_CLAIM", "EMPTY_CLAIM"):
-                    raise
-    if not out:
-        raise ApiError(422, "NO_PROGRESS_ROWS", "The file has no rows with reportable progress (or every claim already exists).")
-    with actor_tx(ctx.actor, readonly=True) as c:
-        return load_claims(c, ctx, "e.event_id = any(%(ids)s)", {"ids": out}, order="e.created_at asc")
+    """Retired for the Site Engineer: Primavera P6 / MS Project files are baseline schedules, imported by a Project Manager under Schedule, not progress reports.
+    The route stays so older clients get a clear answer instead of a 404."""
+    raise ApiError(403, "SCHEDULE_FILES_NOT_ACCEPTED", "Schedule exports (P6 .xer, MS Project .xml) are not accepted as progress reports. A Project Manager imports "
+                   "baseline schedules under Schedule; upload a progress report (CSV, XLSX, PDF, DOCX, TXT or a photo/scan) instead.")
 
 
 # ----------------------------------------------------------------------------------------------------------------------- clarification / match / check

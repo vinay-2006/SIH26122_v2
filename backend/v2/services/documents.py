@@ -27,7 +27,7 @@ DOC_KINDS = ("DAILY_REPORT", "SITE_REPORT", "PHOTO", "EVIDENCE", "ISSUE_REPORT")
 SUP_KINDS = ("EVIDENCE", "ISSUE_REPORT")
 CHANNEL = {"CSV_TABLE": "CSV", "XLSX_TABLE": "XLSX", "TEXT_RULES": "TXT", "PDF_TEXT_RULES": "PDF"}
 _PUBLIC = ("document_id, kind, file_name, mime_type, size_bytes, sha256, uploaded_by, uploaded_at, extraction_status, extraction_method, extraction_error, "
-           "claims_extracted, page_count, captured_at, gps_lat, gps_lon")
+           "claims_extracted, page_count, captured_at, gps_lat, gps_lon, (storage_path is not null) as file_available")
 
 
 def _exif(content: bytes) -> Dict[str, Any]:
@@ -74,8 +74,8 @@ def upload_document(user, project_id, role: str, kind: str, filename: str, conte
     name = filetypes.safe_display_name(filename)
     sha = hashlib.sha256(content).hexdigest()
     meta = _exif(content) if det.family == "image" else {}
-    store = storage.get_store()
     try:
+        store = storage.get_store()
         key = store.put(project_id, content, det.ext)
     except storage.StorageError as e:
         raise ApiError(500, "STORAGE_UNAVAILABLE", "The file could not be stored") from e
@@ -99,7 +99,7 @@ def upload_document(user, project_id, role: str, kind: str, filename: str, conte
         store.delete(key)                                                  # no orphan file behind a refused / failed upload
         raise
     return {"document_id": row["document_id"], "kind": kind, "file_name": name, "mime_type": det.mime, "size_bytes": len(content), "sha256": sha,
-            "uploaded_at": row["uploaded_at"], "extractable": det.family in ("text", "xlsx", "pdf"), **{k: v for k, v in meta.items() if k != "exif"}}
+            "uploaded_at": row["uploaded_at"], "extractable": det.family in ("text", "xlsx", "pdf", "docx"), **{k: v for k, v in meta.items() if k != "exif"}}
 
 
 # ------------------------------------------------------------------------------------------------ reads
@@ -160,10 +160,10 @@ def read_content(actor: ProjectActor, document_id) -> Tuple[bytes, str, str]:
         d = _doc(c, actor.project_id, document_id)
         if not _readable(c, actor, d):
             raise ApiError(404, "DOCUMENT_NOT_FOUND", "No such document")
-    if d["storage_backend"] != storage.get_store().backend or not d["storage_path"]:
+    if not d["storage_path"]:
         raise ApiError(404, "CONTENT_UNAVAILABLE", "The stored file is not available")
     try:
-        data = storage.get_store().read(d["storage_path"])
+        data = storage.store_for(d["storage_backend"]).read(d["storage_path"])
     except storage.StorageError as e:
         raise ApiError(404, "CONTENT_UNAVAILABLE", "The stored file is not available") from e
     if hashlib.sha256(data).hexdigest() != d["sha256"]:
@@ -193,7 +193,7 @@ def extract_document(actor: ProjectActor, document_id, *, event_date: Optional[d
     if not acts:
         raise ApiError(409, "NO_ACTIVE_SCHEDULE", "The project has no active schedule: a Project Manager must activate one first")
     data, mime, _ = read_content(actor, document_id)
-    family = {"application/pdf": "pdf", "image/png": "image", "image/jpeg": "image"}.get(mime) or ("xlsx" if "spreadsheetml" in mime else "text")
+    family = {"application/pdf": "pdf", "image/png": "image", "image/jpeg": "image", "image/webp": "image"}.get(mime) or ("xlsx" if "spreadsheetml" in mime else "docx" if "wordprocessingml" in mime else "text")
     ext = "csv" if mime == "text/csv" else "txt"
     try:
         result = ex.extract(data, family, ext, unit_ok=unit_ok, default_date=event_date)

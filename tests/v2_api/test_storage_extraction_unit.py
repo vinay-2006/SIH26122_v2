@@ -244,3 +244,58 @@ def test_extraction_is_offline_and_never_touches_an_llm():
     src = inspect.getsource(ex)
     for forbidden in ("llm_client", "openai", "requests", "httpx", "urllib", "socket", "anthropic", "groq"):
         assert forbidden not in src.lower().replace("no llm", ""), forbidden
+
+
+# ------------------------------------------------------------------ progress-report formats: DOCX and WebP, legacy Office files
+def docx_bytes(lines, extra=None):
+    from xml.sax.saxutils import escape
+    body = "".join(f"<w:p><w:r><w:t>{escape(l)}</w:t></w:r></w:p>" for l in lines)
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + body + "</w:body></w:document>")
+        for n, c in (extra or {}).items():
+            z.writestr(n, c)
+    return b.getvalue()
+
+
+def webp_bytes():
+    from PIL import Image
+    b = io.BytesIO(); Image.new("RGB", (8, 8)).save(b, "WEBP"); return b.getvalue()
+
+
+def test_docx_and_webp_are_detected_by_content_and_must_match_their_extension():
+    d = filetypes.detect("report.docx", docx_bytes(["A2000 pipe stringing 40 percent complete"]), "DAILY_REPORT")
+    assert (d.ext, d.family) == ("docx", "docx") and d.mime.endswith("wordprocessingml.document")
+    w = filetypes.detect("scan.webp", webp_bytes(), "EVIDENCE")
+    assert (w.ext, w.family, w.mime) == ("webp", "image", "image/webp")
+    with raises("FILE_CONTENT_MISMATCH"):
+        filetypes.detect("report.xlsx", docx_bytes(["x"]), "EVIDENCE")           # a Word file renamed .xlsx
+    with raises("KIND_TYPE_MISMATCH"):
+        filetypes.detect("scan.webp", webp_bytes(), "DAILY_REPORT")             # scans and photographs are evidence, not report kinds
+    with raises("CORRUPT_FILE"):
+        filetypes.detect("bad.docx", b"PK\x03\x04junk", "EVIDENCE")
+    with raises("ACTIVE_CONTENT_REFUSED"):
+        filetypes.detect("macro.docx", docx_bytes(["x"], {"word/vbaProject.bin": b"x"}), "EVIDENCE")
+
+
+def test_legacy_office_files_are_refused_with_the_modern_format_named():
+    for name, word in (("old.xls", "XLSX"), ("old.doc", "DOCX")):
+        with pytest.raises(Exception) as e:
+            filetypes.detect(name, b"\xd0\xcf\x11\xe0" + b"0" * 50, "EVIDENCE")
+        assert getattr(e.value, "code", None) == "UNSUPPORTED_FILE_TYPE" and word in str(e.value.message)
+
+
+def test_docx_text_is_read_in_order_and_feeds_the_report_extractor():
+    lines = ["Daily progress report - 12 Aug 2026", "A2010 welding mainline: 120 joints completed", "Weather clear"]
+    assert ex.docx_text(docx_bytes(lines)).splitlines() == lines
+    out = ex.extract(docx_bytes(lines), "docx", "docx", unit_ok=ok)
+    assert out.method == "DOCX_TEXT_RULES"
+    with raises("EMPTY_DOCUMENT"):
+        ex.extract(docx_bytes(["hi"]), "docx", "docx", unit_ok=ok)
+    with raises("UNREADABLE_DOCX"):
+        ex.docx_text(b"not a zip")
+
+
+def test_the_evidence_store_keeps_the_new_extensions():
+    assert "webp" in storage.EXTENSIONS and "docx" in storage.EXTENSIONS

@@ -26,7 +26,7 @@ def test_activities_carry_the_demo_fields_and_ledger_derived_state(kit, lg, ver)
 
 
 def test_wbs_tree_groups_activities_by_wbs_code(kit, lg, ver):
-    t = lg.get(f"/api/v1/schedules/{ver}/wbs-tree", kit.world.pm).json()
+    t = lg.get(f"/api/v1/schedules/{ver}/wbs-tree", kit.world.sup).json()
     flat = {a["activity_id"] for g in t["wbs_groups"] for a in g["activities"]}
     assert "A2010" in flat and t["schedule_id"] == str(ver) and all(g["wbs_code"] for g in t["wbs_groups"])
 

@@ -95,10 +95,10 @@ def test_the_project_context_is_authoritative_and_isolated(kit, lg, api):
 
 def test_a_structured_progress_file_creates_one_claim_per_row_without_an_llm(kit, lg):
     csv = b"Activity ID,Activity Name,Discipline,Progress Pct\nA2000,Pipe stringing,Piping,40\nA2010,Welding mainline,Piping,10\n"
-    r = lg.post("/api/v1/claims/schedule-export", kit.world.se, files={"file": ("progress.csv", csv, "text/csv")})
+    r = lg.post("/api/v1/claims/file", kit.world.se, files={"file": ("progress.csv", csv, "text/csv")}, data={"purpose": "SCANNED_DIARY"})
     assert r.status_code == 200, r.text
     claims = r.json()
-    assert sorted(c["reported_activity_id"] for c in claims) == ["A2000", "A2010"] and all(c["input_channel"] == "SCHEDULE_EXPORT" for c in claims)
+    assert sorted(c["reported_activity_id"] for c in claims) == ["A2000", "A2010"] and all(c["input_channel"] == "FILE_UPLOAD" for c in claims)
     assert all(c["matched_activity_id"] == c["reported_activity_id"] for c in claims)
     assert kit.count("planner_decisions") == 0
 
@@ -110,10 +110,12 @@ def test_a_text_report_file_is_ingested_through_the_original_batch_extractor(kit
     assert len(r.json()) >= 2 and all(c["input_channel"] == "FILE_UPLOAD" for c in r.json())
 
 
-def test_a_primavera_xer_progress_export_is_read_by_the_original_xer_reader(kit, lg):
+def test_schedule_files_are_not_progress_reports_for_a_site_engineer(kit, lg):
+    """Primavera P6 / MS Project files are baseline schedules: a Project Manager imports them. The engineer's intake refuses them, everywhere."""
     xer = open("sample_data/demo/sih26122_progress_2026-08-16.xer", "rb").read()
+    for name, body in (("progress.xer", xer), ("p.xml", b"<Project/>"), ("plan.mpp", b"x")):
+        r = lg.post("/api/v1/claims/file", kit.world.se, files={"file": (name, body, "application/octet-stream")}, data={"purpose": "SCANNED_DIARY"})
+        assert r.status_code == 415 and "baseline schedule" in r.text, (name, r.status_code, r.text)
     r = lg.post("/api/v1/claims/schedule-export", kit.world.se, files={"file": ("progress.xer", xer, "application/octet-stream")})
-    assert r.status_code == 200, r.text
-    claims = r.json()
-    assert len(claims) >= 1 and all(c["input_channel"] == "SCHEDULE_EXPORT" and c["status"] not in ("APPROVED", "EDITED") for c in claims)
-    assert lg.post("/api/v1/claims/schedule-export", kit.world.se, files={"file": ("p.xml", b"<Project/>", "application/xml")}).status_code == 415
+    assert r.status_code == 403 and "SCHEDULE_FILES_NOT_ACCEPTED" in r.text
+    assert kit.count("execution_events") == 0
