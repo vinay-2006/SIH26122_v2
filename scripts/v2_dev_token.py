@@ -4,7 +4,7 @@
     SUPABASE_JWT_SECRET=<the same local secret the API runs with> python3 scripts/v2_dev_token.py rohit.menon
     curl -H "Authorization: Bearer $(... v2_dev_token.py lakshmi.iyer)" http://127.0.0.1:8020/api/v2/projects
 
-Only the fictional @seed.setuai.local people exist; the secret is read from the environment and never printed. The API itself refuses to start
+Only the fictional @anvyra.demo people exist; the secret is read from the environment and never printed. The API itself refuses to start
 without a verification key, and it re-checks the user's profile and project membership on every request."""
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def main(argv) -> int:
         return 2
     h = argv[1]
     now = dt.datetime.now(dt.timezone.utc)
-    print(jwt.encode({"sub": str(user_id(h)), "email": f"{h}@seed.setuai.local", "aud": "authenticated", "role": "authenticated", "iat": now, "exp": now + dt.timedelta(hours=8)}, secret, algorithm="HS256"))
+    print(jwt.encode({"sub": str(user_id(h)), "email": f"{h}@anvyra.demo", "aud": "authenticated", "role": "authenticated", "iat": now, "exp": now + dt.timedelta(hours=8)}, secret, algorithm="HS256"))
     return 0
 
 

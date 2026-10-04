@@ -150,4 +150,4 @@ def test_issue_plans_reference_real_activities_in_a_state_that_makes_sense():
 def test_user_and_project_ids_are_fixed_by_name():
     assert ps.user_id("anita.bora") == ps.user_id("anita.bora") and ps.user_id("anita.bora") != ps.user_id("rohit.menon")
     assert str(ps.project_uuid("NNB-CRUDE")) == str(ps.project_uuid("NNB-CRUDE"))
-    assert all(ps.email(h).endswith("@seed.setuai.local") for h in ps.PEOPLE)
+    assert all(ps.email(h).endswith("@anvyra.demo") for h in ps.PEOPLE)

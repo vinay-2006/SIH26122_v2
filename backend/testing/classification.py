@@ -17,9 +17,10 @@ DB_FREE = {
     # schedule import: parsers, validation, reconciliation, upload guard (pure logic, no database)
     "tests/schedule_import/test_parsers_golden.py", "tests/schedule_import/test_validation.py",
     "tests/schedule_import/test_reconcile.py", "tests/schedule_import/test_upload_guard.py",
-    "tests/v2_api/test_storage_extraction_unit.py",
+    "tests/v2_api/test_storage_extraction_unit.py", "tests/v2_api/test_storage_supabase_unit.py", "tests/v2_api/test_memory_radar_unit.py", "tests/v2_api/test_request_limit_unit.py", "tests/v2_api/test_hosted_surface_unit.py",
     "tests/v2_api/test_openapi_contract.py",
-    "tests/v2_seed/test_seed_plan_unit.py",
+    "tests/v2_seed/test_seed_plan_unit.py", "tests/v2_seed/test_knowledge_content_unit.py",
+    "tests/v2_hosted_seed/test_hosted_seed.py",         # hosted seed: Admin API client, preflight, runner swap (fake HTTP, no network, no database)
     # pure logic
     "backend/routers/test_matching_semantic.py", "backend/shared/test_llm_extraction.py",
     "backend/shared/test_schedule.py", "backend/shared/test_tabular_extraction.py",
@@ -52,10 +53,10 @@ DB_WRITE = {
     "tests/db_v2/test_profile_sync.py", "tests/db_v2/test_pool.py", "tests/db_v2/test_exec_workflow_constraints.py", "tests/v2_domain/test_claims_service.py", "tests/v2_domain/test_decisions_service.py", "tests/v2_domain/test_concurrency.py",
     "tests/v2_domain/test_issues_service.py", "tests/v2_domain/test_rollups_timeline.py", "tests/v2_domain/test_migration_0013.py", "tests/v2_domain/test_domain_authorization.py", "tests/db_v2/test_posture.py", "tests/db_v2/test_hosted_stamping.py",
     "tests/v2_api/test_api_claims.py",
-    "tests/v2_api/test_api_documents.py",
+    "tests/v2_api/test_api_documents.py", "tests/v2_api/test_api_knowledge.py", "tests/v2_api/test_api_storage_backend.py",
     "tests/v2_api/test_api_issues_dashboard.py",
     "tests/v2_api/test_api_roles.py",
-    "tests/v2_seed/test_seed_database.py",
+    "tests/v2_seed/test_seed_database.py", "tests/v2_seed/test_knowledge_load.py",
     "tests/v2_e2e/test_workflows_1_to_5.py",
     "tests/v2_e2e/test_workflow_6_revision.py",
     "tests/v2_e2e/test_workflow_7_isolation.py", "tests/v2_e2e/test_workflow_8_seed_cli.py",

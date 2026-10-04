@@ -3,7 +3,7 @@
 It is OFF unless the operator sets V2_LOCAL_LOGIN_PASSWORD (12+ characters) when starting the API, and it only ever works when ALL of these hold:
   * the database target is LOCAL (db/target_guard kind 'local': loopback host, setuai_v2_* database) - a hosted target disables it for good;
   * a shared HS256 secret is configured (the token is signed with the same secret the API verifies with);
-  * the email belongs to the local demo domain (V2_LOCAL_LOGIN_DOMAIN, default seed.setuai.local) and to an active profile.
+  * the email belongs to the local demo domain (V2_LOCAL_LOGIN_DOMAIN, default anvyra.demo) and to an active profile.
 The password is compared in constant time; failures are throttled per email and per client address. The token is short-lived (8 hours) and is verified by
 the ordinary token verifier like any other: this endpoint adds no privilege, it only mints the same token a Supabase sign-in would."""
 from __future__ import annotations
@@ -80,7 +80,7 @@ def login(email: str, password: str, client: str) -> Dict[str, object]:
     em = (email or "").strip().lower()
     keys = [f"e:{em}", f"c:{client}"]
     _throttle(keys)
-    domain = os.environ.get("V2_LOCAL_LOGIN_DOMAIN", "seed.setuai.local").lower()
+    domain = os.environ.get("V2_LOCAL_LOGIN_DOMAIN", "anvyra.demo").lower()
     ok_password = hmac.compare_digest((password or "").encode(), expected.encode())
     row = None
     if em.endswith("@" + domain):

@@ -42,7 +42,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8020/api/v2/projects
 ```
 The existing frontend (`frontend/`) runs against this API in v2 mode - see `docs/V2_FRONTEND.md` (`scripts/v2_dev_stack.sh up`, then `npm run dev:v2`).
 
-Seeded people (all `@seed.setuai.local`): PMs `anita.bora` (A, D), `rohit.menon` (B), `farah.khan` (C); Supervisors `kabir.sarma` (A, D), `lakshmi.iyer` (B), `imran.hussain` (B, C), `meera.das` (C);
+Seeded people (all `@anvyra.demo`): PMs `anita.bora` (A, D), `rohit.menon` (B), `farah.khan` (C); Supervisors `kabir.sarma` (A, D), `lakshmi.iyer` (B), `imran.hussain` (B, C), `meera.das` (C);
 Site Engineers `debojit.gogoi`, `nirmali.saikia`, `pranav.rao` (A, D), `arun.nair`, `sneha.pillai` (B), `tenzin.bhutia`, `ritu.baruah`, `manoj.kalita` (C).
 
 Tests need the isolated test database: `SETUAI_ALLOW_DB_TESTS=1 SETUAI_TEST_ENV=integration DATABASE_URL="$(scripts/db_v2.sh url)" python3 -m pytest tests/db_v2 tests/schedule_import tests/v2_hardening tests/v2_domain tests/v2_api tests/v2_seed tests/v2_e2e tests/test_db_test_guard.py`.

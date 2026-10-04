@@ -52,7 +52,7 @@ def test_failures_look_identical_and_do_not_reveal_who_exists(world, client, ena
 
 
 def test_the_domain_and_active_profile_restrictions_hold(world, client, enabled, monkeypatch):
-    monkeypatch.setenv("V2_LOCAL_LOGIN_DOMAIN", "seed.setuai.local")               # the test people are @test.local: not eligible
+    monkeypatch.setenv("V2_LOCAL_LOGIN_DOMAIN", "anvyra.demo")               # the test people are @test.local: not eligible
     assert login(client, world.pm.email).status_code == 401
     monkeypatch.setenv("V2_LOCAL_LOGIN_DOMAIN", "test.local")
     with connect(system=True) as c:

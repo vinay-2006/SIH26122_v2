@@ -5,7 +5,7 @@ from db import target_guard as tg
 
 REF = "abcdefghijklmnopqrst"          # a made-up 20-char project ref
 OLD = "zyxwvutsrqponmlkjihg"
-ENV = {"V2_ALLOW_HOSTED": "1", "V2_ALLOWED_PROJECT_REFS": REF}
+ENV = {"V2_ALLOW_HOSTED": "1", "V2_ALLOWED_PROJECT_REFS": REF, "V2_DENIED_PROJECT_REFS": OLD}
 NOOLD = dict(old_host_fn=lambda: None, old_refs_fn=lambda: set())
 DIRECT = f"postgresql://postgres:s3cr3t-pw@db.{REF}.supabase.co:5432/postgres?sslmode=require"
 POOLER = f"postgresql://postgres.{REF}:s3cr3t-pw@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
@@ -55,7 +55,7 @@ def test_hosted_needs_every_condition():
 
 
 def test_the_allowlist_is_a_list_and_matches_exactly():
-    env = {"V2_ALLOW_HOSTED": "1", "V2_ALLOWED_PROJECT_REFS": f" {OLD} , {REF.upper()} "}
+    env = {"V2_ALLOW_HOSTED": "1", "V2_ALLOWED_PROJECT_REFS": f" {OLD} , {REF.upper()} ", "V2_DENIED_PROJECT_REFS": "none"}
     assert tg.check_target(DIRECT, env=env, **NOOLD).ref == REF                       # whitespace / case tolerated
     refuses(DIRECT.replace(REF, REF[:-1] + "x"), "not in V2_ALLOWED_PROJECT_REFS", env=env)      # near-miss ref
     refuses(DIRECT.replace(REF, REF + "x").replace("db." + REF + "x", "db." + REF + "x"), "cannot determine|not in V2", env=env)
@@ -75,6 +75,44 @@ def test_the_legacy_shared_project_can_never_be_allowed():
     refuses(DIRECT, "OLD shared Supabase project", env=env, old_refs_fn=lambda: {REF})
     refuses(POOLER.replace(REF, OLD), "OLD shared Supabase project", env=env, old_refs_fn=lambda: {OLD})
     refuses(old_url, "old shared database host", env=env, old_host_fn=lambda: f"db.{OLD}.supabase.co")
+
+
+def test_the_explicit_deny_list_refuses_a_project_even_if_it_is_allow_listed():
+    env = {"V2_ALLOW_HOSTED": "1", "V2_ALLOWED_PROJECT_REFS": f"{REF},{OLD}", "V2_DENIED_PROJECT_REFS": f" {OLD.upper()} "}
+    refuses(DIRECT.replace(REF, OLD), "OLD shared Supabase project", env=env)
+    refuses(POOLER.replace(REF, OLD), "OLD shared Supabase project", env=env)
+    assert tg.check_target(DIRECT, env=env, **NOOLD).ref == REF                       # the new project is unaffected
+
+
+def test_a_hosted_target_needs_the_deny_list_to_be_stated_when_no_legacy_env_is_known():
+    env = {"V2_ALLOW_HOSTED": "1", "V2_ALLOWED_PROJECT_REFS": REF}
+    refuses(DIRECT, "V2_DENIED_PROJECT_REFS", env=env)                                # nothing known to protect and nothing stated: fail closed
+    assert tg.check_target(DIRECT, env={**env, "V2_DENIED_PROJECT_REFS": "none"}, **NOOLD).ref == REF
+    assert tg.check_target(DIRECT, env=env, old_host_fn=lambda: None, old_refs_fn=lambda: {OLD}).ref == REF     # a known legacy .env also satisfies it
+    t = tg.check_target("postgresql://postgres@127.0.0.1:54329/setuai_v2_integ", env={}, **NOOLD)                  # local targets are not affected
+    assert t.kind == "local"
+
+
+def test_unexpected_url_parameters_are_refused_before_anything_else():
+    for q in ("host=evil.example", "hostaddr=10.0.0.5", "HOST=evil.example", "service=x", "options=-csearch_path%3Dx", "dbname=postgres", "port=1", "user=x", "password=x"):
+        refuses(DIRECT + "&" + q, "unexpected connection parameter")
+        refuses(f"postgresql://postgres@127.0.0.1:54329/setuai_v2_integ?{q}", "unexpected connection parameter", env={})
+    refuses(DIRECT + "&sslmode=require", "repeated")
+    refuses(f"postgresql://postgres@a.example,127.0.0.1:5432/setuai_v2_integ", "multi-host", env={})
+    ok = tg.check_target(DIRECT + "&connect_timeout=10&application_name=setuai", env=ENV, **NOOLD)
+    assert ok.ref == REF
+    assert tg.check_target("postgresql://postgres@127.0.0.1:54329/setuai_v2_integ?connect_timeout=5", env={}, **NOOLD).kind == "local"
+
+
+def test_the_legacy_env_is_found_through_a_git_worktree(tmp_path, monkeypatch):
+    main = tmp_path / "main"; (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = tmp_path / "wt"; wt.mkdir()
+    (wt / ".git").write_text(f"gitdir: {main}/.git/worktrees/wt\n")
+    (main / ".env").write_text(f"SUPABASE_URL=https://{OLD}.supabase.co\n")
+    monkeypatch.setattr(tg, "ROOT", wt)
+    assert tg.old_project_refs() == {OLD}
+    (wt / ".env").write_text(f"SUPABASE_URL=https://{REF}.supabase.co\n")          # the worktree's own .env wins for a key it defines
+    assert tg.old_project_refs() == {REF}
 
 
 def test_legacy_refs_are_read_from_the_repo_env_without_leaking_it(tmp_path, monkeypatch):

@@ -8,6 +8,11 @@ HOSTED  a Supabase project, ONLY when ALL of these hold:
           * TLS is required in the URL (sslmode=require|verify-ca|verify-full)
           * once connected, the database's own marker row says env=hosted, schema=sih-v2-baseline and project_ref=<this ref>
             (a fresh, EMPTY database may be stamped once by the migration runner; a non-empty database never is)
+Every URL (local or hosted) may carry only these query parameters: sslmode, connect_timeout, application_name. libpq would let `host=`, `hostaddr=`,
+`service=`, `options=` ... silently redirect the connection somewhere the checks never looked, so anything else is refused, as is a multi-host URL.
+Legacy projects: refs found in the legacy .env (the repo's own, or the main checkout's when this is a git worktree) AND refs listed in V2_DENIED_PROJECT_REFS
+are refused; a hosted target additionally needs that deny-list to be non-empty from one source or the other (a fresh clone has no legacy .env: say so explicitly,
+e.g. V2_DENIED_PROJECT_REFS=<legacy ref>, or the placeholder 'none' once you have confirmed there is no legacy project to protect).
 ANYTHING ELSE is refused. Nothing here prints a URL, password or key.
 """
 from __future__ import annotations
@@ -17,7 +22,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional, Set
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -58,14 +63,38 @@ def project_ref_of(host: str, user: str) -> Optional[str]:
     return None
 
 
+def _main_checkout_root() -> Optional[Path]:
+    """When ROOT is a git worktree (.git is a file 'gitdir: <main>/.git/worktrees/<name>'), the main checkout, where the legacy .env lives. Pure file parsing."""
+    g = ROOT / ".git"
+    try:
+        if g.is_file():
+            txt = g.read_text().strip()
+            if txt.startswith("gitdir:"):
+                gd = Path(txt.split(":", 1)[1].strip())
+                if gd.parent.name == "worktrees":
+                    return gd.parent.parent.parent
+    except OSError:
+        return None
+    return None
+
+
+def _legacy_env_files() -> list:
+    files = [ROOT / ".env"]
+    main = _main_checkout_root()
+    if main is not None and main != ROOT:
+        files.append(main / ".env")
+    return files
+
+
 def _legacy_env_values() -> Dict[str, str]:
-    env = ROOT / ".env"
     out: Dict[str, str] = {}
-    if env.exists():
+    for env in _legacy_env_files():
+        if not env.exists():
+            continue
         for line in env.read_text().splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 k, v = line.split("=", 1)
-                out[k.strip()] = v.strip().strip('"').strip("'")
+                out.setdefault(k.strip(), v.strip().strip('"').strip("'"))
     return out
 
 
@@ -93,6 +122,25 @@ def old_project_refs() -> Set[str]:
     return refs
 
 
+def denied_refs(env: Dict[str, str]) -> Set[str]:
+    """explicit deny-list (V2_DENIED_PROJECT_REFS); the placeholder 'none' means 'confirmed: there is no legacy project to protect'"""
+    return {r.strip().lower() for r in (env.get("V2_DENIED_PROJECT_REFS") or "").split(",") if r.strip()}
+
+
+ALLOWED_QUERY_PARAMS = {"sslmode", "connect_timeout", "application_name"}
+
+
+def _reject_unexpected_params(u) -> None:
+    if "," in (u.netloc.rsplit("@", 1)[-1]):
+        raise GuardError("multi-host database URLs are refused")
+    keys = [k.lower() for k, _ in parse_qsl(u.query, keep_blank_values=True)]
+    bad = sorted({k for k in keys if k not in ALLOWED_QUERY_PARAMS})
+    if bad:
+        raise GuardError(f"unexpected connection parameter(s) {', '.join(bad)}: only {', '.join(sorted(ALLOWED_QUERY_PARAMS))} are allowed in the URL")
+    if len(keys) != len(set(keys)):
+        raise GuardError("a connection parameter is repeated in the URL")
+
+
 def allowed_refs(env: Dict[str, str]) -> Set[str]:
     return {r.strip().lower() for r in (env.get("V2_ALLOWED_PROJECT_REFS") or "").split(",") if r.strip()}
 
@@ -103,6 +151,7 @@ def check_target(url: str, env: Optional[Dict[str, str]] = None, old_host_fn: Ca
     u, host, db = _norm(url)
     if not host or not db:
         raise GuardError("database URL must include host and database name")
+    _reject_unexpected_params(u)
     old = old_host_fn()
     if old and host == old:
         raise GuardError("target host equals the old shared database host: refusing")
@@ -119,10 +168,14 @@ def check_target(url: str, env: Optional[Dict[str, str]] = None, old_host_fn: Ca
     ref = project_ref_of(host, user)
     if not ref:
         raise GuardError("cannot determine the Supabase project ref from the host / pooler user: refusing")
-    if ref in old_refs_fn():
+    legacy = old_refs_fn()
+    denied = denied_refs(env)
+    if ref in legacy or ref in denied:
         raise GuardError("the target is the OLD shared Supabase project: refusing")
     if ref not in allowed_refs(env):
         raise GuardError("the target project ref is not in V2_ALLOWED_PROJECT_REFS: refusing")
+    if not legacy and not denied:
+        raise GuardError("no legacy project is known to protect: set V2_DENIED_PROJECT_REFS (the legacy project ref, or 'none' once confirmed) before using a hosted target")
     ssl = (parse_qs(u.query).get("sslmode") or [None])[0]
     if ssl not in ("require", "verify-ca", "verify-full"):
         raise GuardError("hosted targets must set sslmode=require (or verify-ca / verify-full) in the URL")

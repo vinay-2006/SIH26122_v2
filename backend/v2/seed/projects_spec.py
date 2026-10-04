@@ -1,5 +1,5 @@
 """The four demo projects: people, project master data and activity templates. Everything is fictional and synthetic (emails end in
-@seed.setuai.local). Quantities are plausible engineering orders of magnitude, not real contract figures."""
+@anvyra.demo). Quantities are plausible engineering orders of magnitude, not real contract figures."""
 from __future__ import annotations
 
 import uuid
@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from .schedule_gen import Act, Res, r3, schedule
 
 NAMESPACE = uuid.UUID("5e7a0a11-0000-4000-8000-5e7a0a110001")
-DOMAIN = "seed.setuai.local"
+DOMAIN = "anvyra.demo"
 
 
 def user_id(handle: str) -> uuid.UUID:

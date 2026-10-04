@@ -73,6 +73,7 @@ def test_a_local_stamp_cannot_pass_as_hosted(scratch):
 def test_the_local_shim_is_never_applied_to_a_hosted_target(monkeypatch):
     monkeypatch.setenv("V2_ALLOW_HOSTED", "1")
     monkeypatch.setenv("V2_ALLOWED_PROJECT_REFS", REF)
+    monkeypatch.setenv("V2_DENIED_PROJECT_REFS", "none")
     monkeypatch.setattr(migrate, "_old_shared_host", lambda: None)
     monkeypatch.setattr(tg, "old_project_refs", lambda: set())
     with pytest.raises(tg.GuardError, match="shim must never"):
