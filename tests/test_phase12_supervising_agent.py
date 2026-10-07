@@ -505,3 +505,23 @@ def test_api_endpoints_authorized(test_setup):
     res_f = client.get(f"/api/v7/projects/{p_a_id}/agent/findings", headers=headers)
     assert res_f.status_code == 200
     assert isinstance(res_f.json(), list)
+
+
+def test_prompt_context_is_compacted_to_a_fixed_budget_and_stays_valid_json():
+    """A free-tier provider rejects an oversized request outright; the context must fit the budget deterministically."""
+    import json as _json
+    from backend.agents.prompts import PROMPT_CONTEXT_MAX_CHARS, compact_context_json
+
+    big = {
+        "project": {"name": "X", "empty": None},
+        "quality_holds": [{"gate_name": f"gate {i}", "note": "n" * 400, "blank": ""} for i in range(300)],
+        "stages": [{"stage": i, "detail": {"a": [1, 2, 3] * 30}} for i in range(100)],
+    }
+    text = compact_context_json(big)
+    assert len(text) <= PROMPT_CONTEXT_MAX_CHARS
+    parsed = _json.loads(text)
+    assert parsed["quality_holds"][0]["gate_name"] == "gate 0"          # highest-priority (first) items are kept
+    assert "empty" not in parsed["project"] and "blank" not in parsed["quality_holds"][0]
+    assert compact_context_json(big) == text                              # deterministic
+    small = {"a": [1, 2, 3]}
+    assert _json.loads(compact_context_json(small)) == small              # small contexts are untouched

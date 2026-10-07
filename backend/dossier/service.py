@@ -131,10 +131,10 @@ class DossierService:
 
         # 2. Cryptographic Audit Chain Verification
         audit_logs = AuditVerifier.fetch_audit_logs(context, schedule_id=schedule_id)
-        verification_res = AuditVerifier.verify_chain(audit_logs, allow_subchain=True)
+        verification_res = AuditVerifier.verify_project_chain(context)
         audit_sec = AuditChainSection(
             status=SectionStatus.AVAILABLE if verification_res.status == "VALID" else (
-                SectionStatus.PARTIAL if verification_res.status == "EMPTY" else SectionStatus.NOT_AVAILABLE
+                SectionStatus.PARTIAL if verification_res.status in ("EMPTY", "LEGACY_ONLY") else SectionStatus.NOT_AVAILABLE
             ),
             verification=verification_res,
             recent_logs=audit_logs[-20:] if audit_logs else [],
@@ -246,10 +246,10 @@ class DossierService:
 
         # 2. Activity-specific Audit Verification
         audit_logs = AuditVerifier.fetch_audit_logs(project_ctx, schedule_id=schedule_id, entity_id=activity_id)
-        verification_res = AuditVerifier.verify_chain(audit_logs, allow_subchain=True)
+        verification_res = AuditVerifier.verify_project_chain(project_ctx)
         audit_sec = AuditChainSection(
             status=SectionStatus.AVAILABLE if verification_res.status == "VALID" else (
-                SectionStatus.PARTIAL if verification_res.status == "EMPTY" else SectionStatus.NOT_AVAILABLE
+                SectionStatus.PARTIAL if verification_res.status in ("EMPTY", "LEGACY_ONLY") else SectionStatus.NOT_AVAILABLE
             ),
             verification=verification_res,
             recent_logs=audit_logs,

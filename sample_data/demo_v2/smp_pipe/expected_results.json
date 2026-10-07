@@ -1,0 +1,87 @@
+[
+ {
+  "file": "SMP_daily_progress_2026-10-03.csv",
+  "claims": [
+   "SMP-1010->SMP-1010 (EXACT_ID, 1.00)",
+   "SMP-1020->SMP-1020 (EXACT_ID, 1.00)",
+   "SMP-2000->SMP-2000 (EXACT_ID, 1.00)",
+   "SMP-2010->SMP-2010 (EXACT_ID, 1.00)",
+   "SMP-3110->SMP-3110 (EXACT_ID, 1.00)",
+   "SMP-3120->SMP-3120 (EXACT_ID, 1.00)",
+   "SMP-3130->SMP-3130 (EXACT_ID, 1.00)",
+   "SMP-3140->SMP-3140 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "SMP_daily_report_2026-10-01.pdf",
+  "claims": [
+   "SMP-1020->SMP-1020 (EXACT_ID, 1.00)",
+   "SMP-2000->SMP-2000 (EXACT_ID, 1.00)",
+   "SMP-2010->SMP-2010 (EXACT_ID, 1.00)",
+   "SMP-3110->SMP-3110 (EXACT_ID, 1.00)",
+   "SMP-3120->SMP-3120 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "SMP_daily_report_2026-10-02.txt",
+  "claims": [
+   "SMP-1010->SMP-1010 (EXACT_ID, 1.00)",
+   "SMP-1020->SMP-1020 (EXACT_ID, 1.00)",
+   "SMP-2000->SMP-2000 (EXACT_ID, 1.00)",
+   "SMP-2010->SMP-2010 (EXACT_ID, 1.00)",
+   "SMP-3110->SMP-3110 (EXACT_ID, 1.00)",
+   "SMP-3120->SMP-3120 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "SMP_discipline_progress_2026-09-30.xlsx",
+  "claims": [
+   "SMP-1010->SMP-1010 (EXACT_ID, 1.00)",
+   "SMP-1020->SMP-1020 (EXACT_ID, 1.00)",
+   "SMP-2000->SMP-2000 (EXACT_ID, 1.00)",
+   "SMP-2010->SMP-2010 (EXACT_ID, 1.00)",
+   "SMP-3110->SMP-3110 (EXACT_ID, 1.00)",
+   "SMP-3120->SMP-3120 (EXACT_ID, 1.00)",
+   "SMP-3130->SMP-3130 (EXACT_ID, 1.00)",
+   "SMP-3140->SMP-3140 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "SMP_field_note_1_2026-10-03.txt",
+  "claims": [
+   "-->SMP-4010 (HYBRID_FALLBACK, 0.79)"
+  ]
+ },
+ {
+  "file": "SMP_field_note_2_2026-10-02.pdf",
+  "claims": [
+   "-->SMP-4100 (HYBRID_FALLBACK, 0.71)"
+  ]
+ },
+ {
+  "file": "SMP_field_note_3_2026-10-01.docx",
+  "claims": [
+   "-->SMP-5110 (HYBRID_FALLBACK, 0.67)",
+   "-->SMP-5110 (HYBRID_FALLBACK, 0.67)"
+  ]
+ },
+ {
+  "file": "SMP_field_note_with_errors_2026-10-03.csv",
+  "claims": [
+   "SMP-9999->unmatched (HYBRID_FALLBACK, 0.29)"
+  ]
+ },
+ {
+  "file": "SMP_invalid_values_2026-10-03.csv",
+  "not_read": "ValidationError"
+ },
+ {
+  "file": "SMP_site_progress_note_2026-09-30.docx",
+  "claims": [
+   "SMP-1010->SMP-1010 (EXACT_ID, 1.00)",
+   "SMP-1020->SMP-1020 (EXACT_ID, 1.00)",
+   "SMP-2000->SMP-2000 (EXACT_ID, 1.00)",
+   "SMP-2010->SMP-2010 (EXACT_ID, 1.00)"
+  ]
+ }
+]

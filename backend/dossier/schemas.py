@@ -205,8 +205,14 @@ class ImpactSection(BaseModel):
 
 
 class AuditChainVerificationResult(BaseModel):
-    status: str = Field(description="'VALID', 'BROKEN', 'EMPTY', or 'INCOMPLETE'")
+    status: str = Field(description="'VALID' (V7 chain verified), 'BROKEN', 'LEGACY_ONLY', or 'EMPTY'")
     records_checked: int = Field(default=0, description="Total audit log entries inspected")
+    legacy_records: int = Field(default=0, description="LEGACY / PRE-V7 rows: unverifiable, never rewritten")
+    v7_records: int = Field(default=0, description="Rows of the V7 verified chain")
+    legacy_first_log_id: Optional[int] = None
+    legacy_last_log_id: Optional[int] = None
+    anchor_log_id: Optional[int] = Field(default=None, description="Last legacy row: the V7 chain is verified from here onward")
+    failure_type: Optional[str] = Field(default=None, description="TAMPERED_CONTENT | BROKEN_LINK | UNMARKED_ROW_IN_V7_CHAIN | SEQUENCE_ORDER")
     first_log_id: Optional[int] = Field(default=None, description="Starting log_id in chain")
     last_log_id: Optional[int] = Field(default=None, description="Ending log_id in chain")
     broken_at_log_id: Optional[int] = Field(default=None, description="log_id where verification failed")

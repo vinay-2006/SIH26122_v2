@@ -42,8 +42,8 @@ class SchedulePersistenceError(Exception):
 
 
 _INSERT_SCHEDULE_SQL = """
-    INSERT INTO schedules (schedule_id, project_name, data_date, source_format)
-    VALUES (%(schedule_id)s, %(project_name)s, %(data_date)s, %(source_format)s)
+    INSERT INTO schedules (schedule_id, project_name, data_date, source_format, project_id, active)
+    VALUES (%(schedule_id)s, %(project_name)s, %(data_date)s, %(source_format)s, %(project_id)s, %(active)s)
 """
 
 _INSERT_ACTIVITY_SQL = """
@@ -51,12 +51,12 @@ _INSERT_ACTIVITY_SQL = """
         schedule_id, activity_id, activity_name, wbs_code, discipline,
         location, asset_tag, planned_start, planned_finish,
         planned_quantity, uom, baseline_pct_complete,
-        total_float, is_critical
+        total_float, is_critical, project_id
     ) VALUES (
         %(schedule_id)s, %(activity_id)s, %(activity_name)s, %(wbs_code)s, %(discipline)s,
         %(location)s, %(asset_tag)s, %(planned_start)s, %(planned_finish)s,
         %(planned_quantity)s, %(uom)s, %(baseline_pct_complete)s,
-        %(total_float)s, %(is_critical)s
+        %(total_float)s, %(is_critical)s, %(project_id)s
     )
 """
 
@@ -71,7 +71,12 @@ _INSERT_DEPENDENCY_SQL = """
 """
 
 
-def save_schedule(schedule: Schedule, parse_result: ScheduleParseResult) -> int:
+def save_schedule(
+    schedule: Schedule,
+    parse_result: ScheduleParseResult,
+    project_id: Optional[str] = None,
+    activate: bool = True,
+) -> int:
     """Persist a schedule, its activities, and its dependencies in a single transaction.
 
     `parse_result` must already be valid (parse_result.is_valid) — this
@@ -81,6 +86,9 @@ def save_schedule(schedule: Schedule, parse_result: ScheduleParseResult) -> int:
     atomically: if any insert fails (including an already-existing
     schedule_id), nothing is committed. Dependencies are optional — a
     schedule with zero dependencies is perfectly valid.
+
+    `project_id` stamps the schedule and its activities with their owning project (V7 isolation);
+    None keeps the V6 project-less behaviour for direct callers. `activate` sets schedules.active.
 
     Returns the number of activities persisted.
 
@@ -114,10 +122,13 @@ def save_schedule(schedule: Schedule, parse_result: ScheduleParseResult) -> int:
             if existing:
                 raise ScheduleAlreadyExistsError(schedule.schedule_id)
 
-            conn.execute(_INSERT_SCHEDULE_SQL, schedule.model_dump())
+            conn.execute(
+                _INSERT_SCHEDULE_SQL,
+                {**schedule.model_dump(), "project_id": project_id, "active": activate},
+            )
 
             for activity in parse_result.activities:
-                conn.execute(_INSERT_ACTIVITY_SQL, activity.model_dump())
+                conn.execute(_INSERT_ACTIVITY_SQL, {**activity.model_dump(), "project_id": project_id})
 
             for dependency in parse_result.dependencies:
                 conn.execute(_INSERT_DEPENDENCY_SQL, dependency.model_dump())
@@ -177,11 +188,35 @@ def get_active_schedule() -> Optional[Schedule]:
     return Schedule(**row) if row is not None else None
 
 
-def list_schedules() -> list[Schedule]:
-    """List all schedules, ordered by schedule_id."""
+def list_schedules(project_id: Optional[str] = None) -> list[Schedule]:
+    """List schedules ordered by schedule_id. With project_id, only that project's schedules
+    (operational callers must always pass it); without it, every schedule (internal/V6 use only)."""
     with get_connection() as conn:
-        rows = conn.execute(_LIST_SCHEDULES_SQL).fetchall()
+        if project_id is None:
+            rows = conn.execute(_LIST_SCHEDULES_SQL).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT schedule_id, project_name, data_date, source_format
+                FROM schedules WHERE project_id = %s ORDER BY schedule_id
+                """,
+                (project_id,),
+            ).fetchall()
 
+    return [Schedule(**row) for row in rows]
+
+
+def list_active_schedules_for_project(project_id: str) -> list[Schedule]:
+    """Every schedule flagged active for one project. V7 expects exactly one; callers must treat
+    0 as 'none' and >1 as an ambiguity error, never pick one silently."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT schedule_id, project_name, data_date, source_format
+            FROM schedules WHERE project_id = %s AND active ORDER BY schedule_id
+            """,
+            (project_id,),
+        ).fetchall()
     return [Schedule(**row) for row in rows]
 
 

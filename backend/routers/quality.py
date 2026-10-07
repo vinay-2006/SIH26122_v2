@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from backend.context.project import ProjectContext, require_project_context
+from backend.context.schedule import ScheduleContext, require_schedule_context
 from backend.schemas.quality import (
     ITPCreate,
     ITPResponse,
@@ -104,6 +105,20 @@ def list_activity_quality_gates(
     """Lists all quality gates / checkpoints for a specific activity."""
     gates = QualityService.list_activity_quality_gates(context, activity_id)
     return [QualityGateResponse(**gate) for gate in gates]
+
+
+@router.get(
+    "/{project_id}/schedules/{schedule_id}/quality-gates",
+    response_model=List[QualityGateResponse],
+)
+def list_schedule_quality_gates(
+    project_id: uuid.UUID,
+    schedule_id: str,
+    status_filter: Optional[str] = Query(None, alias="status", pattern="^(NOT_REQUIRED|PENDING|SUBMITTED|PASSED|FAILED|WAIVED)$"),
+    context: ScheduleContext = Depends(require_schedule_context),
+) -> List[QualityGateResponse]:
+    """Lists the quality gates of one schedule version (explicit project + schedule; VIEW_QUALITY)."""
+    return [QualityGateResponse(**g) for g in QualityService.list_schedule_quality_gates(context, status_filter)]
 
 
 # ---------------------------------------------------------

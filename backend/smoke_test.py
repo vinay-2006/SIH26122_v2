@@ -152,8 +152,14 @@ def test_router_health_endpoints():
     assert resp.status_code == 200
     assert resp.json() == {"router": "schedule", "status": "ok"}
 
-    # 5. Mock P6 router health
-    resp = client.get("/api/v1/mock-p6/health")
+    # 5. Mock P6 router health (mock P6 exists only in dev mode; hidden -> 404 otherwise)
+    import os
+    from unittest.mock import patch as _patch
+
+    with _patch.dict(os.environ, {"AUTH_DEV_MODE": "false"}):
+        assert client.get("/api/v1/mock-p6/health").status_code == 404
+    with _patch.dict(os.environ, {"AUTH_DEV_MODE": "true"}):
+        resp = client.get("/api/v1/mock-p6/health")
     assert resp.status_code == 200
     assert resp.json() == {"router": "mock-p6", "status": "ok"}
 
@@ -194,20 +200,29 @@ def test_end_to_end_pipeline():
     from backend.routers.mock_p6 import clear_received_payloads, get_received_payloads
     from backend.shared.p6 import P6RestAdapter
 
-    client = TestClient(app)
+    import os
+    from unittest.mock import patch as _patch
 
+    _dev = _patch.dict(os.environ, {"AUTH_DEV_MODE": "true"})  # mock P6 needs dev mode
+    _dev.start()
+    try:
+        _run_end_to_end_pipeline(TestClient(app), get_current_user, clear_received_payloads, get_received_payloads, P6RestAdapter)
+    finally:
+        _dev.stop()
+
+
+def _run_end_to_end_pipeline(client, get_current_user, clear_received_payloads, get_received_payloads, P6RestAdapter):
     # 1. Health & App status
     resp_health = client.get("/health")
     assert resp_health.status_code == 200
     assert resp_health.json() == {"status": "ok"}
 
-    # 2. Authenticate as Supervisor
-    supervisor_user = UserProfile(
-        id="22222222-2222-2222-2222-222222222222",
-        full_name="Demo Supervisor",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor_user
+    # 2. Authenticate as a project SUPERVISOR with an explicit schedule (context resolvers injected;
+    #    the permission gates run for real)
+    from tests.v7ctx import act_as
+
+    _ctx = act_as("SUPERVISOR", schedule_id="SMOKE-SCHEDULE")
+    _ctx.__enter__()
 
     try:
         # 3. CSV Export verification (canonical 5-column header)
@@ -314,25 +329,28 @@ def test_auth_routing_smoke():
         "/api/v1/execution-summary",
     ]
 
+    from tests.v7ctx import act_as
+
     for path in protected_paths:
         # 1. Unauthenticated -> 401 (ensure overrides are clear)
         app.dependency_overrides.clear()
         resp_unauth = client.get(path)
         assert resp_unauth.status_code == 401, f"Expected 401 for unauthenticated {path}, got {resp_unauth.status_code}"
 
-        # 2. Non-supervisor (Site Engineer) -> 403
-        eng_user = UserProfile(id="00000000-0000-0000-0000-000000000001", role="SITE_ENGINEER", full_name="Engineer")
-        app.dependency_overrides[get_current_user] = lambda: eng_user
-        resp_forbid = client.get(path)
+        # 2. Site engineer (no REVIEW_CLAIM in the project) -> 403
+        with act_as("SITE_ENGINEER", schedule_id="SMOKE-SCHEDULE"):
+            resp_forbid = client.get(path)
         assert resp_forbid.status_code == 403, f"Expected 403 for SITE_ENGINEER on {path}, got {resp_forbid.status_code}"
 
-        # 3. Supervisor -> 200
-        sup_user = UserProfile(id="00000000-0000-0000-0000-000000000002", role="SUPERVISOR", full_name="Supervisor")
-        app.dependency_overrides[get_current_user] = lambda: sup_user
-        resp_ok = client.get(path)
+        # 3. Supervisor with an explicit schedule -> 200
+        with act_as("SUPERVISOR", schedule_id="SMOKE-SCHEDULE"):
+            resp_ok = client.get(path)
         assert resp_ok.status_code == 200, f"Expected 200 for SUPERVISOR on {path}, got {resp_ok.status_code}"
 
-        # Reset overrides after iteration
+        # 4. Supervisor WITHOUT an explicit schedule -> 400 (no active-schedule fallback)
+        with act_as("SUPERVISOR", schedule_id=None):
+            assert client.get(path).status_code == 400
+
         app.dependency_overrides.clear()
 
     print("[OK] auth routing smoke (401 unauth, 403 non-supervisor, 200 supervisor across protected endpoints)")

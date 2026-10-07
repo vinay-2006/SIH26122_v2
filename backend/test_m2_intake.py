@@ -120,6 +120,10 @@ class FakeCursor:
                 "clarification_question": params[21] if len(params) > 21 else None,
                 "clarification_answer": params[22] if len(params) > 22 else None,
                 "field_provenance": params[23] if len(params) > 23 else "{}",
+                "project_id": params[24] if len(params) > 24 else None,
+                "stage_id": params[25] if len(params) > 25 else None,
+                "contractor_id": params[26] if len(params) > 26 else None,
+                "work_package_id": params[27] if len(params) > 27 else None,
                 "created_at": datetime.now(timezone.utc),
             }
             ev.setdefault("matched_activity_id", None)
@@ -172,6 +176,10 @@ class FakeCursor:
             schedule_id = params[0]
             res = [e for e in self.db.execution_events if e.get("schedule_id") == schedule_id]
             param_idx = 1
+            if "AND PROJECT_ID = %S" in q_upper:
+                project_id = params[param_idx]
+                param_idx += 1
+                res = [e for e in res if str(e.get("project_id")) == str(project_id)]
             if "AND STATUS = %S" in q_upper:
                 val = params[param_idx]
                 param_idx += 1
@@ -724,10 +732,10 @@ def test_get_and_list_claims(client, fake_db):
     assert r_404.status_code == 404
 
 
-def test_list_claims_scoped_to_active_schedule(client, fake_db):
+def test_list_claims_scoped_to_the_explicit_schedule(client, fake_db):
     """
     ISS-05: GET /api/v1/claims (the Review Workspace queue's data source)
-    must only return the active schedule's claims, never another
+    must only return the EXPLICIT schedule's claims (X-Schedule-ID), never another
     schedule's -- seeded directly into FakeDB so this doesn't depend on
     the live LLM at all.
     """
@@ -743,6 +751,7 @@ def test_list_claims_scoped_to_active_schedule(client, fake_db):
         "claimed_pct": 50.0, "delay_reason": None, "supervisor_id": "eng-1", "photo_path": None,
         "status": "EXTRACTED", "clarification_status": "NONE", "clarification_question": None,
         "clarification_answer": None, "field_provenance": "{}", "created_at": datetime.now(timezone.utc),
+        "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     })
     fake_db.execution_events.append({
         "event_id": "EV-OTHER", "document_id": None, "schedule_id": "some-other-schedule",
@@ -754,6 +763,7 @@ def test_list_claims_scoped_to_active_schedule(client, fake_db):
         "claimed_pct": 50.0, "delay_reason": None, "supervisor_id": "eng-1", "photo_path": None,
         "status": "EXTRACTED", "clarification_status": "NONE", "clarification_question": None,
         "clarification_answer": None, "field_provenance": "{}", "created_at": datetime.now(timezone.utc),
+        "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     })
 
     r_list = client.get("/api/v1/claims", headers=headers_sup)
@@ -763,14 +773,18 @@ def test_list_claims_scoped_to_active_schedule(client, fake_db):
     assert "EV-OTHER" not in event_ids
 
 
-def test_missing_schedule_conflict(client, fake_db):
-    """Attempting intake without any schedule uploaded returns 409 Conflict."""
-    fake_db.schedules.clear()
+def test_missing_or_unknown_schedule_is_rejected(client, fake_db):
+    """No implicit 'active schedule': intake without an explicit schedule is a 400; an unknown one is a 404."""
     headers = {"X-Dev-User-Id": "eng-1", "X-Dev-Role": "SITE_ENGINEER"}
 
-    r = client.post("/api/v1/claims/text", json={"raw_claim_text": "Test claim"}, headers=headers)
-    assert r.status_code == 409
-    assert "No schedule uploaded yet" in r.json()["detail"]
+    no_schedule = client.post("/api/v1/claims/text", json={"raw_claim_text": "Test claim"},
+                              headers={**headers, "X-Schedule-ID": ""})
+    assert no_schedule.status_code == 400
+    assert no_schedule.json()["detail"]["error_code"] == "INVALID_SCHEDULE_CONTEXT"
+
+    fake_db.schedules.clear()
+    unknown = client.post("/api/v1/claims/text", json={"raw_claim_text": "Test claim"}, headers=headers)
+    assert unknown.status_code == 404
 
 
 def test_llm_extraction_schema_and_invariants():
@@ -1146,8 +1160,8 @@ if __name__ == "__main__":
     print("✓ test_get_and_list_claims passed")
 
     db = FakeDB()
-    test_missing_schedule_conflict(c, db)
-    print("✓ test_missing_schedule_conflict passed")
+    test_missing_or_unknown_schedule_is_rejected(c, db)
+    print("✓ test_missing_or_unknown_schedule_is_rejected passed")
 
     test_llm_extraction_schema_and_invariants()
     print("✓ test_llm_extraction_schema_and_invariants passed")

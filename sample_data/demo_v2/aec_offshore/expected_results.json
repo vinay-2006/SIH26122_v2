@@ -1,0 +1,71 @@
+[
+ {
+  "file": "AEC_daily_progress_2026-10-03.csv",
+  "claims": [
+   "OSD-2297->OSD-2297 (EXACT_ID, 1.00)",
+   "OSD-2296->OSD-2296 (EXACT_ID, 1.00)",
+   "OSD-2310->OSD-2310 (EXACT_ID, 1.00)",
+   "OSD-2320->OSD-2320 (EXACT_ID, 1.00)",
+   "OSD-2330->OSD-2330 (EXACT_ID, 1.00)",
+   "OSD-2340->OSD-2340 (EXACT_ID, 1.00)",
+   "OSD-2350->OSD-2350 (EXACT_ID, 1.00)",
+   "OSD-2360->OSD-2360 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "AEC_daily_report_2026-10-01.pdf",
+  "claims": [
+   "OSD-2296->OSD-2296 (EXACT_ID, 1.00)",
+   "OSD-2310->OSD-2310 (EXACT_ID, 1.00)",
+   "OSD-2320->OSD-2320 (EXACT_ID, 1.00)",
+   "OSD-2330->OSD-2330 (EXACT_ID, 1.00)",
+   "OSD-2340->OSD-2340 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "AEC_daily_report_2026-10-02.txt",
+  "claims": [
+   "OSD-2297->OSD-2297 (EXACT_ID, 1.00)",
+   "OSD-2296->OSD-2296 (EXACT_ID, 1.00)",
+   "OSD-2310->OSD-2310 (EXACT_ID, 1.00)",
+   "OSD-2320->OSD-2320 (EXACT_ID, 1.00)",
+   "OSD-2330->OSD-2330 (EXACT_ID, 1.00)",
+   "OSD-2340->OSD-2340 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "AEC_discipline_progress_2026-09-30.xlsx",
+  "claims": [
+   "OSD-2297->OSD-2297 (EXACT_ID, 1.00)",
+   "OSD-2296->OSD-2296 (EXACT_ID, 1.00)",
+   "OSD-2310->OSD-2310 (EXACT_ID, 1.00)",
+   "OSD-2320->OSD-2320 (EXACT_ID, 1.00)",
+   "OSD-2330->OSD-2330 (EXACT_ID, 1.00)",
+   "OSD-2340->OSD-2340 (EXACT_ID, 1.00)",
+   "OSD-2350->OSD-2350 (EXACT_ID, 1.00)",
+   "OSD-2360->OSD-2360 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "AEC_field_note_with_errors_2026-10-03.csv",
+  "claims": [
+   "AEC-9999->unmatched (HYBRID_FALLBACK, 0.09)",
+   "OSD-1000->unmatched (HYBRID_FALLBACK, 0.31)",
+   "OSD-2240->unmatched (HYBRID_FALLBACK, 0.23)",
+   "OSD-2297->OSD-2297 (EXACT_ID, 1.00)"
+  ]
+ },
+ {
+  "file": "AEC_invalid_values_2026-10-03.csv",
+  "not_read": "ValidationError"
+ },
+ {
+  "file": "AEC_site_progress_note_2026-09-30.docx",
+  "claims": [
+   "OSD-2297->OSD-2297 (EXACT_ID, 1.00)",
+   "OSD-2296->OSD-2296 (EXACT_ID, 1.00)",
+   "OSD-2310->OSD-2310 (EXACT_ID, 1.00)",
+   "OSD-2320->OSD-2320 (EXACT_ID, 1.00)"
+  ]
+ }
+]

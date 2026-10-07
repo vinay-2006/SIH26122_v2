@@ -213,6 +213,39 @@ class InstitutionalMemoryRetrievalService:
         return cls.search(context=context, query=query, filters=f, top_k=top_k)
 
     @classmethod
+    def search_for_issue(
+        cls,
+        context: ProjectContext,
+        *,
+        category_code: str,
+        query: str = "",
+        activity_id: Optional[str] = None,
+        stage_id: Optional[uuid.UUID] = None,
+        top_k: int = 5,
+    ) -> MemoryRetrievalResponse:
+        """
+        Historical incidents relevant to an issue: same category (this project's own records and lessons other projects
+        chose to share), ranked by text similarity with bonuses for the same activity / stage in this project.
+        Candidate selection uses the category only; activity/stage are ranking signals, never exclusions, so a lesson
+        from a similar delay elsewhere is still found.
+        """
+        if context is None or context.project_id is None:
+            raise_invalid_project_context("Valid ProjectContext is required for memory retrieval.")
+        candidates = cls._composite_provider.get_candidates(
+            context=context, filters=MemoryFilter(incident_type=category_code)
+        )
+        rank_filters = MemoryFilter(incident_type=category_code, activity_id=activity_id, stage_id=stage_id)
+        ranked, mode = rank_candidates(
+            candidates=candidates, query_text=query, filters=rank_filters,
+            encoder=cls._semantic_encoder, top_k=max(1, min(top_k, 50)),
+        )
+        return MemoryRetrievalResponse(
+            query=query, results=ranked, total_candidates=len(candidates), retrieval_mode=mode,
+            filters_applied={"category_code": category_code, **({"activity_id": activity_id} if activity_id else {}),
+                             **({"stage_id": str(stage_id)} if stage_id else {})},
+        )
+
+    @classmethod
     def search_similar(
         cls,
         context: ProjectContext,

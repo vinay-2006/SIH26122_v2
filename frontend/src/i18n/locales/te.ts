@@ -12,7 +12,7 @@ export default {
     language: 'భాష',
     humanInTheLoop: 'హ్యూమన్-ఇన్-ద-లూప్',
     hil: 'HIL',
-    brandTagline: 'SIH26122 · ఆయిల్ ఇండియా',
+    brandTagline: 'Where Every Detail Connects.',
     retry: 'మళ్ళీ ప్రయత్నించండి',
     dismiss: 'మూసివేయండి',
     previous: 'మునుపటి',
@@ -37,10 +37,10 @@ export default {
     collapseSidebar: 'సైడ్‌బార్ కుదించండి',
   },
   login: {
-    tagline: 'SIH26122 · ఆయిల్ ఇండియా పురోగతి ధృవీకరణ',
-    heroTitleLine1: 'స్మార్ట్ ఇన్‌ఫ్రాస్ట్రక్చర్',
-    heroTitleLine2: 'పురోగతి ట్రాకింగ్',
-    heroTitleLine3: 'ఆయిల్ ఇండియా కోసం',
+    tagline: 'Where Every Detail Connects.',
+    heroTitleLine1: 'AI-Powered',
+    heroTitleLine2: 'Infrastructure Execution',
+    heroTitleLine3: 'Intelligence',
     heroDescription:
       'ఆయిల్ ఇండియా అవస్థాపన ప్రాజెక్టుల కోసం AI-సహాయక ఫీల్డ్ పురోగతి క్లెయిమ్‌లు, Primavera P6 షెడ్యూల్ అనుసరణ, మరియు రియల్-టైమ్ సూపర్‌వైజర్ ఆమోద వర్క్‌ఫ్లో.',
     featureHitl: 'హ్యూమన్-ఇన్-ద-లూప్ సూపర్‌వైజర్ సైన్-ఆఫ్',
@@ -497,8 +497,6 @@ export default {
   },
   compoundImpact: {
     title: 'డౌన్‌స్ట్రీమ్ షెడ్యూల్ ప్రభావం',
-    watchTitle: 'డౌన్‌స్ట్రీమ్ షెడ్యూల్ ప్రభావ వాచ్',
-    watchDesc: 'ఆలస్యమైన, నిలిపివేయబడిన లేదా నాణ్యత గేట్ చేయబడిన కార్యకలాపాల కోసం ప్రిమావెరా డిపెండెన్సీ విశ్లేషణ.',
     criticalImpact: 'తీవ్రమైన ప్రభావం',
     highImpact: 'అధిక ప్రభావం',
     mediumImpact: 'మధ్యస్థ ప్రభావం',

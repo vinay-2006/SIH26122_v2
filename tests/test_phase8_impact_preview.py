@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as
 from backend.routers.schedule import query_impact_preview
 from backend.shared.auth import UserProfile, get_current_user
 
@@ -304,17 +305,9 @@ def test_unknown_activity_raises_404():
 
 def test_invalid_delay_non_integer(monkeypatch):
     client = TestClient(app)
-    supervisor = UserProfile(
-        id="00000000-0000-0000-0000-000000000001",
-        full_name="Supervisor User",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    try:
+    with act_as("SUPERVISOR", schedule_id="SCHED-001"):
         response = client.get("/api/v1/schedule/A1000/impact-preview?delay_days=abc")
-        assert response.status_code == 422
-    finally:
-        app.dependency_overrides.clear()
+    assert response.status_code == 422
 
 
 # ==============================================================================
@@ -331,17 +324,9 @@ def test_negative_delay_rejected(monkeypatch):
 
     # HTTP client query param with ge=0 rejected with 422
     client = TestClient(app)
-    supervisor = UserProfile(
-        id="00000000-0000-0000-0000-000000000001",
-        full_name="Supervisor User",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    try:
+    with act_as("SUPERVISOR", schedule_id="SCHED-001"):
         response = client.get("/api/v1/schedule/A1000/impact-preview?delay_days=-1")
-        assert response.status_code == 422
-    finally:
-        app.dependency_overrides.clear()
+    assert response.status_code == 422
 
 
 # ==============================================================================
@@ -490,34 +475,22 @@ def test_authorization(monkeypatch):
     resp_unauth = client.get("/api/v1/schedule/A1000/impact-preview?delay_days=5")
     assert resp_unauth.status_code == 401
 
-    # 2. Site Engineer -> 403
-    engineer = UserProfile(
-        id="00000000-0000-0000-0000-000000000002",
-        full_name="Site Engineer User",
-        role="SITE_ENGINEER",
-    )
-    app.dependency_overrides[get_current_user] = lambda: engineer
-    try:
+    # 2. Site Engineer (no REVIEW_CLAIM) -> 403
+    with act_as("SITE_ENGINEER", schedule_id="SCHED-001"):
         resp_engineer = client.get("/api/v1/schedule/A1000/impact-preview?delay_days=5")
-        assert resp_engineer.status_code == 403
-    finally:
-        app.dependency_overrides.clear()
+    assert resp_engineer.status_code == 403
 
-    # 3. Supervisor -> 200
-    supervisor = UserProfile(
-        id="00000000-0000-0000-0000-000000000001",
-        full_name="Supervisor User",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    try:
+    # 3. Supervisor, explicit schedule -> 200
+    with act_as("SUPERVISOR", schedule_id="SCHED-001"):
         resp_sup = client.get("/api/v1/schedule/A1000/impact-preview?delay_days=5")
-        assert resp_sup.status_code == 200
-        data = resp_sup.json()
-        assert data["activity_id"] == "A1000"
-        assert len(data["impacts"]) == 1
-    finally:
-        app.dependency_overrides.clear()
+    assert resp_sup.status_code == 200
+    data = resp_sup.json()
+    assert data["activity_id"] == "A1000"
+    assert len(data["impacts"]) == 1
+
+    # 4. No explicit schedule -> 400 (no active/latest fallback)
+    with act_as("SUPERVISOR", schedule_id=None):
+        assert client.get("/api/v1/schedule/A1000/impact-preview?delay_days=5").status_code == 400
 
 
 # ==============================================================================

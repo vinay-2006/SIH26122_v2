@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as
 from backend.routers.investigation import build_investigation_context
 from backend.shared.auth import UserProfile, get_current_user
 
@@ -481,18 +482,14 @@ def test_why_04_existing_data_only_causal_context():
 # ==============================================================================
 def test_why_endpoint_authentication(monkeypatch):
     """
-    Verify /api/v1/investigation/activity/{activity_id} enforces RBAC:
-    - Unauthenticated -> 401
-    - SUPERVISOR -> 200
-    - SITE_ENGINEER -> 200
+    /api/v1/investigation/activity/{activity_id}: unauthenticated -> 401; supervisor and site engineer
+    (VIEW_EXECUTION_EVENTS) -> 200 within an explicit schedule; a role without it -> 403.
     """
     client = TestClient(app)
 
-    # 1. Unauthenticated -> 401
     resp_unauth = client.get("/api/v1/investigation/activity/ACT-TEST-01")
     assert resp_unauth.status_code == 401
 
-    # Mock the builder response for HTTP endpoint testing
     monkeypatch.setattr(
         "backend.routers.investigation.build_investigation_context",
         lambda activity_id, depth=1, schedule_id=None: {
@@ -503,33 +500,10 @@ def test_why_endpoint_authentication(monkeypatch):
             "graph": {"nodes": [], "edges": []},
         },
     )
-
-    # 2. Supervisor -> 200
-    supervisor_user = UserProfile(
-        id="22222222-2222-2222-2222-222222222222",
-        full_name="Bob Supervisor",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor_user
-    try:
-        resp_sup = client.get(
-            "/api/v1/investigation/activity/ACT-TEST-01",
-            headers={"Authorization": "Bearer mock-sup-token"},
-        )
-        assert resp_sup.status_code == 200
-        assert resp_sup.json()["root_activity_id"] == "ACT-TEST-01"
-
-        # 3. Site Engineer -> 200
-        engineer_user = UserProfile(
-            id="11111111-1111-1111-1111-111111111111",
-            full_name="Alice Engineer",
-            role="SITE_ENGINEER",
-        )
-        app.dependency_overrides[get_current_user] = lambda: engineer_user
-        resp_eng = client.get(
-            "/api/v1/investigation/activity/ACT-TEST-01",
-            headers={"Authorization": "Bearer mock-eng-token"},
-        )
-        assert resp_eng.status_code == 200
-    finally:
-        app.dependency_overrides.clear()
+    for role in ("SUPERVISOR", "SITE_ENGINEER"):
+        with act_as(role):
+            resp = client.get("/api/v1/investigation/activity/ACT-TEST-01", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 200, role
+        assert resp.json()["root_activity_id"] == "ACT-TEST-01"
+    with act_as("VIEWER"):
+        assert client.get("/api/v1/investigation/activity/ACT-TEST-01", headers={"Authorization": "Bearer t"}).status_code == 403

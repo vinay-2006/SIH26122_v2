@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import uuid
 from typing import Any, Dict, List, Optional
+
+from fastapi import HTTPException, status
 from backend.audit_context import AuditContext
 from backend.context.errors import raise_permission_denied, raise_resource_not_found
 from backend.context.project import ProjectContext
@@ -186,6 +188,13 @@ class QualityService:
 
         return QualityGateRepository.list_by_activity(context.user_id, context.project_id, activity_id)
 
+    @classmethod
+    def list_schedule_quality_gates(cls, context, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Every quality gate of the caller's explicit project + schedule version (VIEW_QUALITY)."""
+        if not has_permission(context.role, Permission.VIEW_QUALITY):
+            raise_permission_denied(Permission.VIEW_QUALITY.value, context.role)
+        return QualityGateRepository.list_by_schedule(context.user_id, context.project_id, context.schedule_id, status)
+
     # ---------------------------------------------------------
     # Evidence & Gate State Transitions
     # ---------------------------------------------------------
@@ -257,6 +266,20 @@ class QualityService:
         gate = QualityGateRepository.get_by_id(context.user_id, quality_gate_id, context.project_id)
         if not gate:
             raise_resource_not_found("QualityGate", str(quality_gate_id))
+
+        # A required HOLD point is released on evidence, not on assertion: at least one PASS inspection record and
+        # no FAIL record. (Waiving a gate is the separate, justified and audited path.)
+        if gate.get("checkpoint_category") == "HOLD" and gate.get("required"):
+            records = QualityEvidenceRepository.list_by_gate(context.user_id, quality_gate_id)
+            if not any(r.get("result") == "PASS" for r in records) or any(r.get("result") == "FAIL" for r in records):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error_code": "EVIDENCE_REQUIRED",
+                        "message": "A required hold point can only be released with a PASS inspection record and no FAIL record. "
+                                   "Record the evidence first, or waive the gate with a justification.",
+                    },
+                )
 
         old_state = dict(gate)
         updated = QualityGateRepository.update_status(

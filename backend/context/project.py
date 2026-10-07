@@ -41,16 +41,25 @@ def resolve_raw_project_id(
     query_project_id: Optional[str] = Query(None, alias="project_id"),
 ) -> Optional[str]:
     """
-    Extracts raw project_id string from HTTP header, query params, or path parameters.
-    Header X-Project-ID takes precedence.
+    Extracts raw project_id string from path parameters, HTTP header or query params.
+
+    A path parameter is authoritative: it is what the route handler will actually read. Header or
+    query values, if also supplied, MUST agree with it; otherwise a caller could be authorized for
+    project X via X-Project-ID while the handler operates on project Y from the URL.
+    Without a path parameter, X-Project-ID takes precedence over the query parameter (they must agree).
     """
-    if x_project_id:
-        return x_project_id.strip()
-    if query_project_id:
-        return query_project_id.strip()
+    header = x_project_id.strip() if x_project_id and x_project_id.strip() else None
+    query = query_project_id.strip() if query_project_id and query_project_id.strip() else None
     if "project_id" in request.path_params:
-        return str(request.path_params["project_id"]).strip()
-    return None
+        path_value = str(request.path_params["project_id"]).strip()
+        if any(v != path_value for v in (header, query) if v):
+            raise_invalid_project_context(
+                "project_id in the path conflicts with X-Project-ID / project_id query parameter"
+            )
+        return path_value
+    if header and query and header != query:
+        raise_invalid_project_context("X-Project-ID conflicts with project_id query parameter")
+    return header or query
 
 
 def require_project_context(
@@ -108,37 +117,9 @@ def require_project_context(
             project_name=row["project_name"] if isinstance(row, dict) else row[4],
         )
 
-    # If no project_id was explicitly specified, attempt to resolve user's single active project
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT pm.membership_id, pm.project_id, pm.assigned_role, pm.active, p.project_name
-                    FROM project_memberships pm
-                    JOIN projects p ON p.project_id = pm.project_id
-                    WHERE pm.user_id = %s AND pm.active = TRUE
-                    ORDER BY pm.created_at ASC;
-                    """,
-                    (user_uuid,),
-                )
-                rows = cur.fetchall()
-    except Exception as e:
-        raise_project_denied(f"Database error resolving project memberships: {str(e)}")
-
-    if not rows:
-        raise_project_denied(f"Caller '{user_uuid}' has no active project memberships")
-
-    if len(rows) > 1:
-        raise_invalid_project_context(
-            "User is a member of multiple active projects; explicit X-Project-ID header or project_id parameter is required"
-        )
-
-    row = rows[0]
-    return ProjectContext(
-        user=current_user,
-        project_id=row["project_id"] if isinstance(row, dict) else row[1],
-        role=row["assigned_role"] if isinstance(row, dict) else row[2],
-        membership_id=row["membership_id"] if isinstance(row, dict) else row[0],
-        project_name=row["project_name"] if isinstance(row, dict) else row[4],
+    # V7: project context is ALWAYS explicit. There is no implicit "the user's only project" fallback,
+    # because implicit selection is exactly how a request ends up operating on the wrong project.
+    raise_invalid_project_context(
+        "project_id is required: send X-Project-ID (or the project_id path/query parameter). "
+        "Implicit project selection is not allowed."
     )

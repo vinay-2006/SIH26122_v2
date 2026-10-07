@@ -94,6 +94,20 @@ class QualityGateRepository(BaseRepository):
                 return [dict(row) for row in rows]
 
     @classmethod
+    def list_by_schedule(cls, user_id: uuid.UUID | str, project_id: uuid.UUID, schedule_id: str,
+                         status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Quality gates attached to activities of ONE schedule version of a project (optionally one status)."""
+        query = """
+            SELECT * FROM quality_gates
+            WHERE project_id = %s AND schedule_id = %s AND (%s::text IS NULL OR status = %s)
+            ORDER BY activity_id ASC NULLS LAST, created_at ASC;
+        """
+        with cls.rls_connection(user_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (str(project_id), schedule_id, status, status))
+                return [dict(row) for row in cur.fetchall()]
+
+    @classmethod
     def update_status(
         cls,
         user_id: uuid.UUID | str,

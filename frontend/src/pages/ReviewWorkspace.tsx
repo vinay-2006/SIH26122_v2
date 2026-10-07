@@ -34,8 +34,6 @@ import {
   ArrowRight,
   Flame,
   Layers,
-  ShieldCheck,
-  Network,
   HelpCircle,
   Building2,
   Lock,
@@ -65,9 +63,6 @@ import { QualityGateModal } from '@/components/QualityGateModal';
 import { CompoundImpactModal } from '@/components/CompoundImpactModal';
 import { AskWhyPanel } from '@/components/AskWhyPanel';
 import { WBSSplitEditor } from '@/components/WBSSplitEditor';
-import { EvidencePanel } from '@/components/EvidencePanel';
-import { KnowledgeGraph } from '@/components/KnowledgeGraph';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -109,7 +104,6 @@ export default function ReviewWorkspace() {
   const [hasSplits, setHasSplits] = useState<boolean>(false);
 
   // Feature 31: Bottom Inspection Tab ('evidence' vs 'graph')
-  const [bottomTab, setBottomTab] = useState<'evidence' | 'graph'>('evidence');
 
   // Feature 34: Ask Why Drawer / Panel State
   const [isAskWhyOpen, setIsAskWhyOpen] = useState<boolean>(false);
@@ -120,6 +114,11 @@ export default function ReviewWorkspace() {
   const [approvedPct, setApprovedPct] = useState<number | ''>('');
   const [approvedQty, setApprovedQty] = useState<number | ''>('');
   const [justification, setJustification] = useState<string>('');
+  // v2: when the server requires an explicit acknowledgement (approved quantity beyond the baseline tolerance, or a finish below the completion threshold) the decision is
+  // refused with a code; the note is collected here and sent WITH the same decision. It never approves anything by itself.
+  const [ackCode, setAckCode] = useState<'OVERRUN_ACK_REQUIRED' | 'FINISH_BELOW_THRESHOLD' | null>(null);
+  const [ackNote, setAckNote] = useState<string>('');
+  useEffect(() => { setAckCode(null); setAckNote(''); }, [eventIdParam]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [decisionSuccess, setDecisionSuccess] = useState<boolean>(false);
@@ -311,6 +310,11 @@ export default function ReviewWorkspace() {
       return;
     }
 
+    if (ackCode && ackNote.trim().length < 3) {
+      setSubmitError('Add the acknowledgement note below to proceed with this decision.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await decisionsApi.submit({
@@ -320,11 +324,15 @@ export default function ReviewWorkspace() {
         approved_pct: approvedPct !== '' ? Number(approvedPct) : null,
         approved_qty: approvedQty !== '' ? Number(approvedQty) : null,
         justification: justification.trim(),
+        ...(ackCode === 'OVERRUN_ACK_REQUIRED' ? { overrun_ack_note: ackNote.trim() } : {}),
+        ...(ackCode === 'FINISH_BELOW_THRESHOLD' ? { short_close_note: ackNote.trim() } : {}),
       });
       setDecisionSuccess(true);
       loadQueue();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : t('review.errDecisionFailed');
+      const code = (err as { code?: string })?.code;
+      if (code === 'OVERRUN_ACK_REQUIRED' || code === 'FINISH_BELOW_THRESHOLD') setAckCode(code);
       setSubmitError(msg);
     } finally {
       setIsSubmitting(false);
@@ -1360,6 +1368,21 @@ export default function ReviewWorkspace() {
                   />
                 </div>
 
+                {ackCode && (
+                  <div data-testid="ack-note" className="space-y-1.5 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">
+                    <Label className="text-xs text-foreground font-bold flex items-center justify-between">
+                      <span>{ackCode === 'OVERRUN_ACK_REQUIRED' ? 'Acknowledge the baseline overrun' : 'Short-close note'}</span>
+                      <span className="text-[10px] text-destructive uppercase font-bold">{t('review.mandatory')}</span>
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      {ackCode === 'OVERRUN_ACK_REQUIRED'
+                        ? 'The approved quantity exceeds the baseline beyond the project tolerance. Your note is recorded with this decision and in the audit trail; it does not approve anything by itself.'
+                        : 'Finishing below the project completion threshold needs a note. It is recorded with this decision.'}
+                    </p>
+                    <Textarea rows={2} value={ackNote} onChange={(e) => setAckNote(e.target.value)} className="text-xs" />
+                  </div>
+                )}
+
                 {/* Completed Activity Lock Notice in Decision Form */}
                 {(() => {
                   const selAct = activities.find((a) => a.activity_id === selectedActivityId);
@@ -1482,52 +1505,6 @@ export default function ReviewWorkspace() {
             </CardContent>
           </Card>
         </div>
-      </div>
-
-      {/* Feature 31: Multi-Source Evidence Fusion & Construction Knowledge Graph Section */}
-      <div className="space-y-4 pt-4 border-t border-border">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-2 bg-card p-1 rounded-xl border border-border">
-            <button
-              type="button"
-              onClick={() => setBottomTab('evidence')}
-              className={cn(
-                'flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg border transition-all',
-                bottomTab === 'evidence'
-                  ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 shadow-xs'
-                  : 'bg-transparent border-transparent text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <ShieldCheck className="w-4 h-4 text-blue-500" />
-              Multi-Source Evidence Fusion
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setBottomTab('graph')}
-              className={cn(
-                'flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg border transition-all cursor-pointer',
-                bottomTab === 'graph'
-                  ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-900 text-[#003087] dark:text-blue-300 shadow-xs'
-                  : 'bg-transparent border-transparent text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Network className="w-4 h-4 text-[#1565C0]" />
-              Construction Knowledge Graph
-            </button>
-          </div>
-        </div>
-
-        <ErrorBoundary
-          label={bottomTab === 'evidence' ? 'Evidence panel' : 'Knowledge graph'}
-          resetKey={`${event.event_id}:${bottomTab}`}
-        >
-          {bottomTab === 'evidence' ? (
-            <EvidencePanel eventId={event.event_id} />
-          ) : (
-            <KnowledgeGraph eventId={event.event_id} />
-          )}
-        </ErrorBoundary>
       </div>
 
       {/* Quality Gate Modal */}

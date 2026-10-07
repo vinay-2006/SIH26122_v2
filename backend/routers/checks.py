@@ -6,16 +6,16 @@ from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.context import gates
+from backend.context.event import EventContext
+from backend.context.project import ProjectContext
+from backend.context.schedule import ScheduleContext
+
 from backend.shared.actuals import approved_split_quantity
 from backend.shared.audit import get_audit_trail, list_recent_audit_logs, write_audit_log
 from backend.shared.db import get_connection
 
-try:
-    from backend.shared.auth import UserProfile, get_current_user, require_role
-    _supervisor_dep = [Depends(require_role("SUPERVISOR"))]
-except Exception:
-    from backend.shared.auth import UserProfile, get_current_user, require_role
-    _supervisor_dep = [Depends(require_role("SUPERVISOR"))]
+from backend.shared.auth import UserProfile
 
 SYSTEM_ACTOR_M4 = "SYSTEM:M4"
 CONFLICT_TOLERANCE_PCT = float(os.getenv("CONFLICT_TOLERANCE_PCT", "10.0"))
@@ -2257,7 +2257,7 @@ def evaluate_smart_review_priority(
 @router.post("/claims/{event_id}/check")
 def check_claim(
     event_id: str,
-    current_user: UserProfile = Depends(get_current_user),
+    event_context: EventContext = Depends(gates.event_process),
 ):
     with get_connection() as conn:
         with conn.transaction():
@@ -2675,9 +2675,13 @@ def check_claim(
                 entity_type="execution_events",
                 entity_id=event_id,
                 action="CHECK_CLAIM",
-                actor_id=SYSTEM_ACTOR_M4,
+                actor_id=str(event_context.project_context.user.id),
                 before_state=before_state,
                 after_state=after_state,
+                payload={"performed_by": SYSTEM_ACTOR_M4},
+                project_id=event_context.project_id,
+                schedule_id=schedule_id,
+                role=event_context.role,
             )
 
             return {
@@ -2692,8 +2696,8 @@ def check_claim(
             }
 
 
-@router.get("/claims/{event_id}/conflicts", dependencies=_supervisor_dep)
-def get_claim_conflicts(event_id: str):
+@router.get("/claims/{event_id}/conflicts")
+def get_claim_conflicts(event_id: str, _event_context: EventContext = Depends(gates.event_review)):
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -2706,8 +2710,8 @@ def get_claim_conflicts(event_id: str):
         return {"event_id": event_id, "conflicts": [dict(r) for r in rows]}
 
 
-@router.get("/claims/{event_id}/validation", dependencies=_supervisor_dep)
-def get_claim_validation(event_id: str):
+@router.get("/claims/{event_id}/validation")
+def get_claim_validation(event_id: str, _event_context: EventContext = Depends(gates.event_review)):
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -2722,8 +2726,8 @@ def get_claim_validation(event_id: str):
         }
 
 
-@router.get("/claims/{event_id}/evidence", dependencies=_supervisor_dep)
-def get_claim_evidence(event_id: str):
+@router.get("/claims/{event_id}/evidence")
+def get_claim_evidence(event_id: str, _event_context: EventContext = Depends(gates.event_review)):
     """
     GET /api/v1/claims/{event_id}/evidence
     PRD v6 Feature 31 Evidence Fusion read endpoint (SUPERVISOR protected).
@@ -2823,12 +2827,13 @@ def get_claim_evidence(event_id: str):
         }
 
 
-@router.get("/review-queue", dependencies=_supervisor_dep)
+@router.get("/review-queue")
 def get_review_queue(
     sort: Optional[str] = "priority",
-    schedule_id: Optional[str] = None,
+    schedule_id: Optional[str] = None,  # validated via schedule_context (explicit, belongs to the project)
     status: Optional[str] = None,
     current_time: Optional[datetime] = None,
+    schedule_context: ScheduleContext = Depends(gates.claim_review_schedule),
 ):
     """
     GET /api/v1/review-queue?sort=priority
@@ -2855,11 +2860,9 @@ def get_review_queue(
         query = f"""
             SELECT * FROM execution_events
             WHERE status IN ({','.join(['%s'] * len(filter_statuses))})
+              AND schedule_id = %s AND project_id = %s
         """
-        params: List[Any] = list(filter_statuses)
-        if schedule_id:
-            query += " AND schedule_id = %s"
-            params.append(schedule_id)
+        params: List[Any] = list(filter_statuses) + [schedule_context.schedule_id, str(schedule_context.project_id)]
 
         rows = conn.execute(query, tuple(params)).fetchall()
 
@@ -3050,15 +3053,14 @@ def get_review_queue(
         }
 
 
-@router.get("/activities/{activity_id}/rollup", dependencies=_supervisor_dep)
-def get_activity_rollup(activity_id: str, schedule_id: Optional[str] = None):
+@router.get("/activities/{activity_id}/rollup")
+def get_activity_rollup(
+    activity_id: str,
+    schedule_id: Optional[str] = None,  # validated via schedule_context
+    schedule_context: ScheduleContext = Depends(gates.events_view),
+):
+    schedule_id = schedule_context.schedule_id
     with get_connection() as conn:
-        if not schedule_id:
-            sched_row = conn.execute(
-                "SELECT schedule_id FROM schedules ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
-            schedule_id = sched_row["schedule_id"] if sched_row else None
-
         planned_quantity = 0.0
         if schedule_id:
             act_row = conn.execute(
@@ -3125,37 +3127,28 @@ def get_activity_rollup(activity_id: str, schedule_id: Optional[str] = None):
         }
 
 
-@router.get("/audit", dependencies=_supervisor_dep)
-def get_recent_audit(limit: int = 20):
-    """General recent-activity feed across all entities (newest first) --
+@router.get("/audit")
+def get_recent_audit(limit: int = 20, project_context: ProjectContext = Depends(gates.audit_view)):
+    """Recent-activity feed of THIS PROJECT's audit chain (newest first) --
     distinct from GET /audit/{entity_id}'s per-entity chain view below."""
-    return list_recent_audit_logs(limit=limit)
+    return list_recent_audit_logs(limit=limit, project_id=project_context.project_id)
 
 
-@router.get("/audit/{entity_id}", dependencies=_supervisor_dep)
-def get_audit(entity_id: str):
-    return get_audit_trail(entity_id)
+@router.get("/audit/{entity_id}")
+def get_audit(entity_id: str, project_context: ProjectContext = Depends(gates.audit_view)):
+    return get_audit_trail(entity_id, project_id=project_context.project_id)
 
 
-@router.get("/alerts/silent-activities", dependencies=_supervisor_dep)
-@router.get("/claims/silent-activities", dependencies=_supervisor_dep)
-@router.get("/claims/checks/silent-activities", dependencies=_supervisor_dep)
-@router.get("/dashboard/silent-activities", dependencies=_supervisor_dep)
-def get_silent_activities(schedule_id: Optional[str] = None):
+@router.get("/alerts/silent-activities")
+@router.get("/claims/silent-activities")
+@router.get("/claims/checks/silent-activities")
+@router.get("/dashboard/silent-activities")
+def get_silent_activities(
+    schedule_id: Optional[str] = None,  # validated via schedule_context
+    schedule_context: ScheduleContext = Depends(gates.events_view),
+):
+    schedule_id = schedule_context.schedule_id
     with get_connection() as conn:
-        # Default to the current active schedule (same "most recently
-        # created" resolution get_activity_rollup above already uses),
-        # not every schedule ever uploaded. Without this, repeated test/demo
-        # re-uploads of the same baseline each contribute their own
-        # never-claimed activities, multiplying the silent count by however
-        # many duplicate schedule rows exist rather than reflecting the one
-        # schedule actually in use.
-        if not schedule_id:
-            sched_row = conn.execute(
-                "SELECT schedule_id FROM schedules ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
-            schedule_id = sched_row["schedule_id"] if sched_row else None
-
         query = """
             SELECT sa.activity_id, sa.schedule_id, sa.activity_name, sa.discipline,
                    sa.location, sa.planned_start, sa.planned_finish, sa.baseline_pct_complete
@@ -3170,10 +3163,8 @@ def get_silent_activities(schedule_id: Optional[str] = None):
                     AND ee.created_at >= CURRENT_DATE - INTERVAL '3 days'
               )
         """
-        params = []
-        if schedule_id:
-            query += " AND sa.schedule_id = %s"
-            params.append(schedule_id)
+        params = [schedule_id, str(schedule_context.project_id)]
+        query += " AND sa.schedule_id = %s AND sa.project_id = %s"
 
         query += " ORDER BY sa.planned_start ASC"
 

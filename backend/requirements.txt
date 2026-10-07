@@ -2,9 +2,11 @@ fastapi
 uvicorn[standard]
 pydantic>=2.0
 python-dotenv
+pydantic-settings   # backend/shared/config.py
 
 # Auth / JWT
 PyJWT
+cryptography   # required by PyJWT for ES256 / RS256 (Supabase asymmetric JWT signing keys)
 
 # M4 (evidence/checks)
 Pillow
@@ -22,7 +24,7 @@ openai  # also used for Groq/Gemini via their OpenAI-compatible endpoints
 
 # Database (PRD v5: Supabase Postgres, direct connection)
 psycopg2-binary
-psycopg[binary]
+psycopg[binary]>=3.1
 
 # Auth (Supabase Auth; supabase-py used for auth only, not table access)
 supabase

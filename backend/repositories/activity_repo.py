@@ -94,50 +94,70 @@ class ProjectActivityRepository(BaseRepository):
     @classmethod
     def update_attribution(
         cls,
-        context: Union[ScheduleContext, ProjectContext],
+        context: ScheduleContext,
         activity_id: str,
-        contractor_id: Optional[str] = None,
-        work_package_id: Optional[str] = None,
-        stage_id: Optional[str] = None,
+        changes: Dict[str, Optional[str]],
     ) -> Optional[Dict[str, Any]]:
-        existing = cls.get(context, activity_id)
-        if not existing:
-            return None
-
-        fields = []
-        params = []
-        if contractor_id is not None:
-            fields.append("contractor_id = %s")
-            params.append(contractor_id if contractor_id else None)
-        if work_package_id is not None:
-            fields.append("work_package_id = %s")
-            params.append(work_package_id if work_package_id else None)
-        if stage_id is not None:
-            fields.append("stage_id = %s")
-            params.append(stage_id if stage_id else None)
-
-        if not fields:
-            return existing
-
-        params.extend([activity_id, context.project_id])
-        schedule_id = getattr(context, "schedule_id", None)
-        where_clause = "WHERE activity_id = %s AND project_id = %s"
-        if schedule_id:
-            where_clause += " AND schedule_id = %s"
-            params.append(schedule_id)
-
-        query = f"""
-            UPDATE schedule_activities
-            SET {', '.join(fields)}
-            {where_clause}
-            RETURNING activity_id, schedule_id, project_id, stage_id, contractor_id,
-                      work_package_id, activity_name, wbs_code, discipline, location;
         """
+        Set stage / contractor / work-package of ONE activity in ONE schedule version.
 
+        `changes` contains only the fields the caller supplied (a None value clears the field). Every referenced
+        entity must belong to the caller's project (a stage also to this schedule version); when both a work
+        package and a contractor are given the work package's contractor must agree; a work package alone
+        derives its contractor. The change is audited in the same transaction.
+        """
+        from backend.shared.audit import append_audit_record
+
+        cols = "activity_id, schedule_id, project_id, stage_id, contractor_id, work_package_id, activity_name, wbs_code, discipline, location"
         with cls.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:
-                cur.execute(query, tuple(params))
-                row = cur.fetchone()
+                cur.execute(
+                    f"SELECT {cols} FROM schedule_activities WHERE activity_id = %s AND schedule_id = %s AND project_id = %s FOR UPDATE",
+                    (activity_id, context.schedule_id, context.project_id),
+                )
+                before = cur.fetchone()
+                if before is None:
+                    return None
+                before = dict(before)
+                new = {k: v for k, v in changes.items() if k in ("stage_id", "contractor_id", "work_package_id")}
+
+                def _exists(sql, *args):
+                    cur.execute(sql, args)
+                    return cur.fetchone()
+
+                if new.get("stage_id") and not _exists(
+                    "SELECT 1 FROM stages WHERE stage_id = %s AND project_id = %s AND schedule_id = %s",
+                    new["stage_id"], context.project_id, context.schedule_id):
+                    raise LookupError("stage_id")
+                if new.get("contractor_id") and not _exists(
+                    "SELECT 1 FROM contractors WHERE contractor_id = %s AND project_id = %s", new["contractor_id"], context.project_id):
+                    raise LookupError("contractor_id")
+                if new.get("work_package_id"):
+                    wp = _exists("SELECT contractor_id FROM work_packages WHERE work_package_id = %s AND project_id = %s",
+                                 new["work_package_id"], context.project_id)
+                    if not wp:
+                        raise LookupError("work_package_id")
+                    wp_con = wp["contractor_id"]
+                    if new.get("contractor_id") and wp_con and str(wp_con) != str(new["contractor_id"]):
+                        raise ValueError("contractor_id does not match the contractor of the work package")
+                    if "contractor_id" not in new and wp_con:
+                        new["contractor_id"] = str(wp_con)  # a work package alone derives its contractor
+
+                if not new:
+                    return before
+                sets = ", ".join(f"{k} = %s" for k in new)
+                cur.execute(
+                    f"UPDATE schedule_activities SET {sets} WHERE activity_id = %s AND schedule_id = %s AND project_id = %s RETURNING {cols}",
+                    (*new.values(), activity_id, context.schedule_id, context.project_id),
+                )
+                after = dict(cur.fetchone())
+                append_audit_record(
+                    cur, entity_type="SCHEDULE_ACTIVITY", entity_id=f"{context.schedule_id}:{activity_id}",
+                    action="ATTRIBUTION_UPDATED", actor_id=str(context.user_id),
+                    before_state={k: (str(v) if v is not None else None) for k, v in before.items()},
+                    after_state={k: (str(v) if v is not None else None) for k, v in after.items()},
+                    project_id=context.project_id, schedule_id=context.schedule_id, role=context.role,
+                )
                 conn.commit()
-                return dict(row) if row else None
+                return after
 

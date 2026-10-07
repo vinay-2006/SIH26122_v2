@@ -51,15 +51,19 @@ class ContextBuilder:
         """
         project = get_project_status(context)
         active_sched = get_active_schedule(context)
+        # Every schedule-scoped number comes from ONE explicit schedule version: the project's single active one.
+        # With none (or an ambiguous several) the briefing reports no schedule-derived numbers instead of summing
+        # across versions (a superseded revision must never inflate blocked / hold / stage counts).
+        sid = active_sched["schedule_id"] if active_sched else None
         progress = get_project_progress(context)
-        stages = get_stages_summary(context)
-        activities = get_critical_and_blocked_activities(context)
+        stages = get_stages_summary(context, schedule_id=sid) if sid else []
+        activities = get_critical_and_blocked_activities(context, schedule_id=sid) if sid else {"blocked": [], "rework": [], "delayed": []}
         quality_holds = get_quality_holds(context)
         contractors = get_contractor_summaries(context)
         review_queue = get_review_queue(context)
         recent_incidents = get_recent_incidents(context, limit=5)
         audit_verif = get_audit_verification(context)
-        impact = get_impact_summary(context)
+        impact = get_impact_summary(context, schedule_id=sid) if sid else {}
 
         # Retrieve relevant historical lessons using Phase 11
         # Query for general delays/holds relevant to current blocked items
@@ -76,6 +80,13 @@ class ContextBuilder:
             "active_schedule": active_sched,
             "overall_progress": progress,
             "stages": stages[:15],  # Cap to top stages
+            # true totals (the lists below are capped samples, so a length would be capped at 10)
+            "counts": {
+                "quality_holds": len(quality_holds),
+                "blocked_activities": sum(1 for x in activities.get("blocked", []) if x.get("workflow_condition") == "BLOCKED"),
+                "quality_hold_activities": sum(1 for x in activities.get("blocked", []) if x.get("workflow_condition") == "QUALITY_HOLD"),
+                "rework_activities": len(activities.get("rework", [])),
+            },
             "critical_activities": activities.get("delayed", [])[:10],
             "blocked_activities": activities.get("blocked", [])[:10],
             "rework_activities": activities.get("rework", [])[:10],
@@ -114,7 +125,8 @@ class ContextBuilder:
 
         # 1. Activity-specific analysis
         if activity_id:
-            act_state = get_activity_state(context, activity_id)
+            _active = get_active_schedule(context)
+            act_state = get_activity_state(context, activity_id, schedule_id=_active["schedule_id"] if _active else None)
             act_progress = get_activity_progress(context, activity_id)
             act_quality = get_activity_quality_status(context, activity_id)
             memories = search_institutional_memory(

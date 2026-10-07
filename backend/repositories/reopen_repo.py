@@ -14,11 +14,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import psycopg
 
+from backend.shared.workflow_flags import with_workflow_flags
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.repositories.base import BaseRepository
 from backend.schemas.stage import CanonicalExecutionState, WorkflowCondition
 from backend.services.stage_service import StageService
+from backend.shared.audit import append_audit_record
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -78,61 +80,49 @@ def _insert_audit_log_tx(
     after_state: Dict[str, Any],
     entity_context: Optional[Dict[str, Any]] = None,
 ) -> int:
-    """Inserts a tamper-evident audit log entry within the caller's transaction."""
-    schedule_id = getattr(context, "schedule_id", None)
+    """Appends a tamper-evident audit log entry within the caller's transaction (shared chain logic)."""
     ctx_payload = {
         "old_state": _serialize_dict(before_state),
         "new_state": _serialize_dict(after_state),
     }
-    payload_bytes = json.dumps(ctx_payload, sort_keys=True, default=str).encode("utf-8")
-    payload_hash = hashlib.sha256(payload_bytes).hexdigest()
-
-    cur.execute(
-        "SELECT current_hash FROM audit_logs WHERE project_id = %s ORDER BY log_id DESC LIMIT 1;",
-        (context.project_id,),
-    )
-    prev_row = cur.fetchone()
-    prev_hash = "GENESIS"
-    if prev_row:
-        prev_hash = prev_row["current_hash"] if isinstance(prev_row, dict) else prev_row[0]
-    current_hash = hashlib.sha256(f"{prev_hash}:{payload_hash}".encode("utf-8")).hexdigest()
-
     full_context = dict(entity_context or {})
     full_context.update(ctx_payload)
-
-    cur.execute(
-        """
-        INSERT INTO audit_logs (
-            project_id, schedule_id, actor_id, role, action,
-            entity_type, entity_id, before_state, after_state,
-            payload_hash, previous_hash, current_hash, entity_context
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING log_id;
-        """,
-        (
-            context.project_id,
-            schedule_id,
-            str(context.user_id),
-            context.role,
-            action,
-            entity_type,
-            entity_id,
-            json.dumps(_serialize_dict(before_state), default=str),
-            json.dumps(_serialize_dict(after_state), default=str),
-            payload_hash,
-            prev_hash,
-            current_hash,
-            json.dumps(full_context, default=str),
-        ),
+    return append_audit_record(
+        cur,
+        project_id=context.project_id,
+        schedule_id=getattr(context, "schedule_id", None),
+        actor_id=str(context.user_id),
+        role=context.role,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        before_state=_serialize_dict(before_state),
+        after_state=_serialize_dict(after_state),
+        entity_context=full_context,
     )
-    row = cur.fetchone()
-    return row[0] if isinstance(row, tuple) else row["log_id"]
 
 
 class ProjectReopenRepository(BaseRepository):
     """
     Project- and Schedule-scoped repository for Phase 7 Reopen/Rework lifecycle.
     """
+
+    @classmethod
+    def list_reopen_activity_ids(cls, context: ScheduleContext) -> List[str]:
+        """Activities of the caller's project + schedule that have at least one reopen event."""
+        with cls.rls_connection(context.user_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT matched_activity_id
+                    FROM execution_events
+                    WHERE project_id = %s AND schedule_id = %s AND reopen_status != 'NONE'
+                      AND matched_activity_id IS NOT NULL
+                    ORDER BY matched_activity_id;
+                    """,
+                    (context.project_id, context.schedule_id),
+                )
+                return [r["matched_activity_id"] for r in cur.fetchall()]
 
     @classmethod
     def get_reopen_status(
@@ -150,14 +140,14 @@ class ProjectReopenRepository(BaseRepository):
             with conn.cursor() as cur:
                 # 1. Fetch activity
                 cur.execute(
-                    """
+                    with_workflow_flags("""
                     SELECT sa.activity_id, sa.schedule_id, sa.project_id, sa.stage_id,
                            sa.activity_name, sa.planned_start, sa.planned_finish,
-                           sa.planned_quantity, sa.baseline_pct_complete
+                           sa.planned_quantity, sa.baseline_pct_complete, sa.quality_gate_required
                     FROM schedule_activities sa
                     WHERE sa.activity_id = %s AND sa.project_id = %s
                       AND (%s::text IS NULL OR sa.schedule_id = %s);
-                    """,
+                    """),
                     (activity_id, project_id, schedule_id, schedule_id),
                 )
                 act_row = cur.fetchone()
@@ -459,6 +449,7 @@ class ProjectReopenRepository(BaseRepository):
                         """
                         UPDATE execution_events
                         SET reopen_status = 'REJECTED',
+                            status = 'REJECTED',
                             reopen_decided_by = %s
                         WHERE event_id = %s;
                         """,
@@ -491,6 +482,7 @@ class ProjectReopenRepository(BaseRepository):
                         """
                         UPDATE execution_events
                         SET reopen_status = 'APPROVED',
+                            status = 'APPROVED',
                             reopen_decided_by = %s
                         WHERE event_id = %s;
                         """,

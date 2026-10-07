@@ -1,0 +1,21 @@
+DAILY PROGRESS REPORT - 2026-10-02
+Report date: 2026-10-02
+Siliguri-Mughalsarai Petroleum Products Pipeline (SMP-PIPE)
+Reporting period: 0800 h to 1800 h
+
+WORK EXECUTED
+1. SMP-1010 | Civil | Land acquisition and ROW compensation.
+   Today: 75 nos | Cumulative: 75/14952 nos | Physical progress: 0.6%
+2. SMP-1020 | Civil | Route survey and alignment sheets.
+   Today: 3 km | Cumulative: 3/534 km | Physical progress: 0.7%
+3. SMP-2000 | Logistics | Line pipe procurement and delivery.
+   Today: 101 tonnes | Cumulative: 101/20292 tonnes | Physical progress: 0.6%
+4. SMP-2010 | Logistics | Valves, fittings and pig traps delivery.
+   Today: 1 nos | Cumulative: 1/101 nos | Physical progress: 1.1%
+5. SMP-3110 | Piping | Pipe stringing - Spread 1 Siliguri-Purnea.
+   Today: 1 km | Cumulative: 1/140 km | Physical progress: 0.8%
+6. SMP-3120 | Piping | Pipe welding - Spread 1 Siliguri-Purnea.
+   Today: 57 joints | Cumulative: 57/11475 joints | Physical progress: 0.6%
+
+Prepared by: R. Baruah, Site Engineer
+Fictional demonstration data for ANVYRA. Not a real project record.

@@ -40,3 +40,15 @@ uploads/
 
 # Local scratch / dev test scripts
 scratch/
+
+# SetuAI v2 local evidence store (never committed)
+.local/
+
+# frontend v2 build output
+frontend/dist-v2/
+frontend/e2e/artifacts/
+
+# Embedding model weights for the serverless deployment (91 MB; produced by scripts/export_minilm_onnx.py, not committed)
+backend/v2/matching/onnx_model/model.onnx
+.local/
+.vercel

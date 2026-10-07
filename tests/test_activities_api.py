@@ -385,24 +385,28 @@ def test_filter_mechanics():
 # Endpoint Integration & RBAC Tests
 # ==============================================================================
 
-def test_activities_endpoint_rbac():
-    supervisor = UserProfile(id="sup-uuid", email="sup@oil.in", role="SUPERVISOR", full_name="Supervisor Test")
-    site_eng = UserProfile(id="eng-uuid", email="eng@oil.in", role="SITE_ENGINEER", full_name="Engineer Test")
+def test_activities_endpoint_rbac(monkeypatch):
+    from tests.v7ctx import act_as
 
     client = TestClient(app, raise_server_exceptions=False)
+    # Schedule scoping is covered by the integration tests; here the role gate is under test.
+    monkeypatch.setattr(
+        "backend.routers.activities.query_activities",
+        lambda **_kw: {"items": [], "total": 0, "page": 1, "page_size": 25, "schedule_id": "SCH-1",
+                       "metrics": {"total": 0, "in_progress": 0, "completed": 0, "not_started": 0,
+                                   "critical": 0, "changed": 0}},
+    )
 
     # Anonymous -> 401
-    resp_anon = client.get("/api/v1/activities")
-    assert resp_anon.status_code == 401
+    assert client.get("/api/v1/activities").status_code == 401
 
-    # Site Engineer -> 403
-    app.dependency_overrides[get_current_user] = lambda: site_eng
-    resp_eng = client.get("/api/v1/activities")
-    assert resp_eng.status_code == 403
+    # Site Engineer (no REVIEW_CLAIM) -> 403
+    with act_as("SITE_ENGINEER", schedule_id="SCH-1"):
+        assert client.get("/api/v1/activities").status_code == 403
 
-    # Supervisor -> 200
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    resp_sup = client.get("/api/v1/activities")
+    # Supervisor, explicit schedule -> 200
+    with act_as("SUPERVISOR", schedule_id="SCH-1"):
+        resp_sup = client.get("/api/v1/activities")
     assert resp_sup.status_code == 200
     body = resp_sup.json()
     assert "items" in body
@@ -414,4 +418,6 @@ def test_activities_endpoint_rbac():
     assert "critical" in body["metrics"]
     assert "changed" in body["metrics"]
 
-    app.dependency_overrides.clear()
+    # No explicit schedule -> 400
+    with act_as("SUPERVISOR", schedule_id=None):
+        assert client.get("/api/v1/activities").status_code == 400

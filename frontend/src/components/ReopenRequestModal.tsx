@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/auth/AuthProvider';
-import { reopenApi, ScheduleActivity, ReopenRequest } from '../api';
+import { reopenApi, REOPEN_REASON_OPTIONS, ScheduleActivity, ReopenRequest } from '../api';
 import { ExecutionStateBadge } from './ExecutionStateBadge';
 import { AlertTriangle, Lock, ShieldAlert, CheckCircle, X } from 'lucide-react';
 
@@ -12,13 +12,6 @@ interface ReopenRequestModalProps {
   onSuccess: (request: ReopenRequest) => void;
 }
 
-const REOPEN_REASONS = [
-  'Scope Modification / Additional Work Required',
-  'Rework / QC Rectification Work',
-  'Testing & Commissioning Verification Extension',
-  'Inadvertent Early Closure / Punchlist Work',
-  'Client / PMIS Variance Reconciliation',
-];
 
 export const ReopenRequestModal: React.FC<ReopenRequestModalProps> = ({
   activity,
@@ -28,7 +21,7 @@ export const ReopenRequestModal: React.FC<ReopenRequestModalProps> = ({
   onSuccess,
 }) => {
   const { user } = useAuth();
-  const [reason, setReason] = useState(REOPEN_REASONS[0]);
+  const [reason, setReason] = useState(REOPEN_REASON_OPTIONS[0].value);
   const [justification, setJustification] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,8 +30,8 @@ export const ReopenRequestModal: React.FC<ReopenRequestModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!justification.trim()) {
-      setError('Please provide a formal justification for reopening this completed activity.');
+    if (justification.trim().length < 10) {
+      setError('Please provide a formal justification (at least 10 characters) for reopening this completed activity.');
       return;
     }
 
@@ -49,8 +42,6 @@ export const ReopenRequestModal: React.FC<ReopenRequestModalProps> = ({
         activity_id: activity.activity_id,
         reason,
         justification: justification.trim(),
-        requested_by_role: user?.role || 'SITE_ENGINEER',
-        requested_by_name: user?.full_name || 'Site Engineer',
         event_id: eventId,
       });
       onSuccess(req);
@@ -152,9 +143,9 @@ export const ReopenRequestModal: React.FC<ReopenRequestModalProps> = ({
                 onChange={(e) => setReason(e.target.value)}
                 className="w-full text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
-                {REOPEN_REASONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+                {REOPEN_REASON_OPTIONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </select>

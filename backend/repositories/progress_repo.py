@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.repositories.base import BaseRepository
+from backend.shared.workflow_flags import with_workflow_flags
 
 
 class ProjectProgressRepository(BaseRepository):
@@ -53,6 +54,7 @@ class ProjectProgressRepository(BaseRepository):
         if schedule_id:
             query += " AND sa.schedule_id = %(schedule_id)s"
             params["schedule_id"] = schedule_id
+        query = with_workflow_flags(query)
 
         with cls.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:
@@ -102,6 +104,7 @@ class ProjectProgressRepository(BaseRepository):
             params["stage_id"] = str(stage_id)
 
         query += " ORDER BY sa.activity_id ASC;"
+        query = with_workflow_flags(query)
 
         with cls.rls_connection(context.user_id) as conn:
             with conn.cursor() as cur:

@@ -27,7 +27,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from backend.shared.auth import UserProfile, require_role
+from backend.context import gates
+from backend.context.event import EventContext, load_event_in_project
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -150,7 +152,7 @@ def build_claim_graph(conn, event_id: str) -> Dict[str, Any]:
 
 
 @router.get("/claims/{event_id}/knowledge-graph")
-def claim_knowledge_graph(event_id: str, current_user: UserProfile = Depends(require_role("SUPERVISOR"))):
+def claim_knowledge_graph(event_id: str, _event_context: EventContext = Depends(gates.event_review)):
     with get_connection() as conn:
         return build_claim_graph(conn, event_id)
 
@@ -263,15 +265,14 @@ def ask_why(
     activity_id: str,
     event_id: Optional[str] = Query(default=None),
     depth: int = Query(default=1, ge=1, le=6),
-    schedule_id: Optional[str] = Query(default=None),
-    current_user: UserProfile = Depends(require_role("SUPERVISOR")),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.review_or_view_schedule),
 ):
+    schedule_id = schedule_context.schedule_id
+    if event_id:
+        # the event must belong to this project AND to this schedule
+        ev = load_event_in_project(schedule_context.project_context, event_id)
+        if ev.schedule_id != schedule_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "event_id does not belong to the requested schedule")
     with get_connection() as conn:
-        if event_id and not schedule_id:
-            schedule_id = _load_event(conn, event_id)["schedule_id"]
-        if not schedule_id:
-            row = conn.execute("SELECT schedule_id FROM schedules ORDER BY created_at DESC LIMIT 1").fetchone()
-            schedule_id = row["schedule_id"] if row else None
-        if not schedule_id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "No schedule available")
         return explain_activity(conn, activity_id, schedule_id, event_id, depth)

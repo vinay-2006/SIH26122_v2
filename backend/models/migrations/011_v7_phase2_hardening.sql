@@ -97,6 +97,31 @@ DROP POLICY IF EXISTS "authenticated_activity_splits_select" ON claim_activity_s
 DROP POLICY IF EXISTS "authenticated_evidence_links_select" ON evidence_links;
 DROP POLICY IF EXISTS "authenticated_execution_summaries_select" ON execution_summaries;
 DROP POLICY IF EXISTS "authenticated_wbs_select" ON claim_wbs_splits;
+-- Reproducibility: also drop every policy created unconditionally below, so a clean
+-- database (010 then 011) migrates without 'policy already exists'.
+DROP POLICY IF EXISTS "v7_schedules_insert" ON schedules;
+DROP POLICY IF EXISTS "v7_schedules_update" ON schedules;
+DROP POLICY IF EXISTS "v7_schedules_delete" ON schedules;
+DROP POLICY IF EXISTS "v7_activities_insert" ON schedule_activities;
+DROP POLICY IF EXISTS "v7_activities_update" ON schedule_activities;
+DROP POLICY IF EXISTS "v7_activities_delete" ON schedule_activities;
+DROP POLICY IF EXISTS "v7_dependencies_insert" ON schedule_dependencies;
+DROP POLICY IF EXISTS "v7_dependencies_update" ON schedule_dependencies;
+DROP POLICY IF EXISTS "v7_dependencies_delete" ON schedule_dependencies;
+DROP POLICY IF EXISTS "v7_events_update" ON execution_events;
+DROP POLICY IF EXISTS "v7_events_delete" ON execution_events;
+DROP POLICY IF EXISTS "v7_actuals_insert" ON approved_actuals;
+DROP POLICY IF EXISTS "v7_actuals_update" ON approved_actuals;
+DROP POLICY IF EXISTS "v7_actuals_delete" ON approved_actuals;
+DROP POLICY IF EXISTS "v7_audit_insert" ON audit_logs;
+DROP POLICY IF EXISTS "v7_incident_evidence_select" ON incident_evidence;
+DROP POLICY IF EXISTS "v7_incident_evidence_insert" ON incident_evidence;
+DROP POLICY IF EXISTS "v7_incident_evidence_update" ON incident_evidence;
+DROP POLICY IF EXISTS "v7_incident_evidence_delete" ON incident_evidence;
+DROP POLICY IF EXISTS "v7_activity_splits_select" ON claim_activity_splits;
+DROP POLICY IF EXISTS "v7_activity_splits_insert" ON claim_activity_splits;
+DROP POLICY IF EXISTS "v7_wbs_splits_select" ON claim_wbs_splits;
+DROP POLICY IF EXISTS "v7_wbs_splits_insert" ON claim_wbs_splits;
 
 -- ============================================================================
 -- 7. CREATE STRICT PROJECT ISOLATION POLICIES (NO NULL BYPASS)

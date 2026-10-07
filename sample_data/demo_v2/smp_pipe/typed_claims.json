@@ -1,0 +1,37 @@
+[
+ {
+  "activity": "SMP-4010",
+  "text": "HDD crossing - Ganga at Patna commenced today: 7 m installed (HDD1_PILOT_M).",
+  "expected": "first report on a not-started activity (actual start)"
+ },
+ {
+  "activity": "SMP-4100",
+  "text": "Railway crossings (cased) commenced today: 2 nos installed (RAIL_XINGS).",
+  "expected": "first report on a not-started activity (actual start)"
+ },
+ {
+  "activity": "SMP-5110",
+  "text": "Siliguri Dispatch Terminal - civil works and foundations commenced today: 2 tonnes installed (ST1_REBAR_T).",
+  "expected": "first report on a not-started activity (actual start)"
+ },
+ {
+  "activity": "SMP-5130",
+  "text": "Siliguri Dispatch Terminal - electrical installation commenced today: 46 m installed (ST1_CABLE_M).",
+  "expected": "first report on a not-started activity (actual start)"
+ },
+ {
+  "activity": "SMP-5140",
+  "text": "Siliguri Dispatch Terminal - instrumentation and SCADA commenced today: 2 nos installed (ST1_LOOPS).",
+  "expected": "first report on a not-started activity (actual start)"
+ },
+ {
+  "activity": "SMP-4010",
+  "text": "HDD crossing - Ganga at Patna completed today: 1440 m installed (HDD1_PILOT_M).",
+  "expected": "far more than the baseline allows: above-baseline warning, Supervisor acknowledgement needed"
+ },
+ {
+  "activity": "-",
+  "text": "Good progress on site today, all teams working well.",
+  "expected": "vague: no activity, no quantity, so it is not matched and goes to a Supervisor"
+ }
+]

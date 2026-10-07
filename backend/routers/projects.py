@@ -8,12 +8,14 @@ from __future__ import annotations
 from datetime import date
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel
 
+from backend.context import gates
 from backend.auth.dependencies import get_current_user
 from backend.auth.models import CurrentUser
 from backend.context.project import ProjectContext, require_project_context
+from backend.context.schedule import ScheduleContext, require_schedule_context
 from backend.schemas.project import (
     ProjectCreate,
     ProjectListItem,
@@ -58,6 +60,64 @@ def list_user_projects(
     """
     projects = ProjectService.get_user_projects(current_user)
     return [ProjectListItem(**p) for p in projects]
+
+
+class ProjectMeResponse(BaseModel):
+    project_id: uuid.UUID
+    project_name: Optional[str] = None
+    user_id: str
+    full_name: Optional[str] = None
+    role: str
+    permissions: List[str]
+
+
+@router.get("/{project_id}/me", response_model=ProjectMeResponse)
+def get_my_project_role(
+    project_id: uuid.UUID,
+    context: ProjectContext = Depends(require_project_context),
+) -> ProjectMeResponse:
+    """
+    The caller's project role and the permissions it grants (server-authoritative, from the same
+    RBAC table every route enforces). The frontend gates screens and actions by these permissions.
+    """
+    from backend.rbac.permissions import ROLE_PERMISSIONS
+
+    return ProjectMeResponse(
+        project_id=context.project_id,
+        project_name=context.project_name,
+        user_id=str(context.user.id),
+        full_name=context.user.full_name,
+        role=context.role,
+        permissions=sorted(p.value for p in ROLE_PERMISSIONS.get(context.role, set())),
+    )
+
+
+@router.get("/{project_id}/schedules/{schedule_id}/export")
+def export_schedule_version(
+    project_id: uuid.UUID,
+    schedule_id: str,
+    format: str = Query("csv", pattern="^(csv|xer)$"),
+    context: ScheduleContext = Depends(gates.schedule_view),
+) -> Response:
+    """
+    Exports ONE schedule version (activities + dependencies exactly as stored) as canonical CSV or P6-style XER.
+    Same source of truth as import: re-importing the file reproduces the activities and dependency logic.
+    Explicit project + schedule required; VIEW_SCHEDULE permission (every project role).
+    """
+    from backend.shared import schedule_repository as repo
+    from backend.shared.schedule_export import export_schedule_csv, export_schedule_xer
+
+    meta = repo.get_schedule(context.schedule_id)
+    acts = [a.model_dump() for a in repo.list_schedule_activities(context.schedule_id)]
+    deps = [d.model_dump() for d in repo.list_schedule_dependencies(context.schedule_id)]
+    if format == "xer":
+        body = export_schedule_xer(acts, deps, project_short_name=((meta.project_name if meta else None) or "PROJECT").replace(" ", "_")[:40],
+                                   data_date=str(meta.data_date) if meta and meta.data_date else date.today().isoformat())
+        media = "application/octet-stream"
+    else:
+        body, media = export_schedule_csv(acts, deps), "text/csv"
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="schedule_{context.schedule_id}.{format}"'})
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -256,27 +316,34 @@ class ActivityAttributionRequest(BaseModel):
 
 
 @router.patch(
-    "/{project_id}/activities/{activity_id}/attribution",
+    "/{project_id}/schedules/{schedule_id}/activities/{activity_id}/attribution",
 )
 def update_activity_attribution(
     project_id: uuid.UUID,
+    schedule_id: str,
     activity_id: str,
     payload: ActivityAttributionRequest,
-    context: ProjectContext = Depends(require_project_context),
+    context: ScheduleContext = Depends(require_schedule_context),
 ):
     """
-    Associates an activity with contractor_id, work_package_id, and/or stage_id within the project.
+    Sets stage / contractor / work package of ONE activity in ONE schedule version (MANAGE_SCHEDULE).
+    Referenced stage, contractor and work package must belong to the caller's project (stage: to this schedule
+    version). Audited. Fields omitted from the body are left unchanged; an explicit null clears the field.
     """
+    from fastapi import HTTPException
+    from backend.context.errors import raise_permission_denied, raise_resource_not_found
+    from backend.rbac.permissions import Permission, has_permission
     from backend.repositories.activity_repo import ProjectActivityRepository
-    from backend.context.errors import raise_resource_not_found
 
-    updated = ProjectActivityRepository.update_attribution(
-        context=context,
-        activity_id=activity_id,
-        contractor_id=str(payload.contractor_id) if payload.contractor_id else None,
-        work_package_id=str(payload.work_package_id) if payload.work_package_id else None,
-        stage_id=str(payload.stage_id) if payload.stage_id else None,
-    )
+    if not has_permission(context.role, Permission.MANAGE_SCHEDULE):
+        raise_permission_denied(Permission.MANAGE_SCHEDULE.value, context.role)
+    changes = {k: (str(v) if v else None) for k, v in payload.model_dump(exclude_unset=True).items()}
+    try:
+        updated = ProjectActivityRepository.update_attribution(context, activity_id, changes)
+    except LookupError as exc:
+        raise_resource_not_found(str(exc).strip("'\""))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if not updated:
         raise_resource_not_found("Activity", activity_id)
     return updated

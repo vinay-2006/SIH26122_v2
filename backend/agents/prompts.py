@@ -105,15 +105,68 @@ Respond with a JSON object adhering to this schema:
 """
 
 
+# Free-tier providers reject oversized requests outright (Groq on-demand: 8k tokens/min), which silently forced the agent
+# into deterministic mode. The context is therefore compacted to a fixed budget (~4 chars/token) before it is sent.
+PROMPT_CONTEXT_MAX_CHARS = 12000
+
+
+def _strip_empty(value: Any) -> Any:
+    if isinstance(value, dict):
+        out = {k: _strip_empty(v) for k, v in value.items()}
+        return {k: v for k, v in out.items() if v not in (None, "", [], {})}
+    if isinstance(value, list):
+        return [_strip_empty(v) for v in value]
+    return value
+
+
+def _longest_list(value: Any, path=()):
+    """(length, container, key) of the longest list nested anywhere in `value`."""
+    best = (0, None, None)
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+    for k, v in list(items):
+        if isinstance(v, list) and len(v) > best[0]:
+            best = (len(v), value, k)
+        sub = _longest_list(v, path + (k,))
+        if sub[0] > best[0]:
+            best = sub
+    return best
+
+
+def compact_context_json(context: Dict[str, Any], max_chars: int = PROMPT_CONTEXT_MAX_CHARS) -> str:
+    """Deterministic, budgeted JSON of the (untrusted) context: no empty fields, no indentation; when still over
+    budget the longest list is halved (keeping the first, highest-priority items) until it fits."""
+    data = _strip_empty(json.loads(json.dumps(context, default=str)))
+    text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    guard = 0
+    while len(text) > max_chars and guard < 200:
+        guard += 1
+        length, container, key = _longest_list(data)
+        if container is not None and length > 1:
+            container[key] = container[key][: max(1, length // 2)]
+        else:
+            # nothing left to trim structurally: shorten long strings
+            def _clip(v):
+                if isinstance(v, str) and len(v) > 160:
+                    return v[:160] + "…"
+                if isinstance(v, dict):
+                    return {k: _clip(x) for k, x in v.items()}
+                if isinstance(v, list):
+                    return [_clip(x) for x in v]
+                return v
+            data = _clip(data)
+            text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+            break
+        text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    return text
+
+
 def format_briefing_prompt(context: Dict[str, Any]) -> str:
     """Formats the briefing user prompt with JSON-serialized untrusted context."""
-    context_str = json.dumps(context, default=str, indent=2)
-    return BRIEFING_USER_PROMPT_TEMPLATE.format(context_json=context_str)
+    return BRIEFING_USER_PROMPT_TEMPLATE.format(context_json=compact_context_json(context))
 
 
 def format_query_prompt(user_query: str, context: Dict[str, Any]) -> str:
     """Formats the query user prompt with sanitized user query and untrusted context."""
     # Strip dangerous XML tags from user_query to avoid delimiter breakout
     sanitized_query = user_query.replace("<untrusted_project_evidence>", "").replace("</untrusted_project_evidence>", "")
-    context_str = json.dumps(context, default=str, indent=2)
-    return QUERY_USER_PROMPT_TEMPLATE.format(user_query=sanitized_query, context_json=context_str)
+    return QUERY_USER_PROMPT_TEMPLATE.format(user_query=sanitized_query, context_json=compact_context_json(context))

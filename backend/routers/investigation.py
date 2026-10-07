@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.routers.graph import build_activity_graph
-from backend.shared.auth import UserProfile, get_current_user
+from backend.context import gates
+from backend.context.schedule import ScheduleContext
 from backend.shared.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -249,12 +250,12 @@ def build_investigation_context(
 def get_activity_investigation(
     activity_id: str,
     depth: int = Query(default=1, ge=0, le=10, description="Investigation graph depth"),
-    schedule_id: Optional[str] = Query(default=None, description="Optional schedule_id filter"),
-    current_user: UserProfile = Depends(get_current_user),
+    schedule_id: Optional[str] = Query(default=None, description="Required (or X-Schedule-ID); validated against the project"),
+    schedule_context: ScheduleContext = Depends(gates.events_view),
 ) -> Dict[str, Any]:
     """
-    Supervisor Ask Why / Investigation Context Endpoint.
-    Gated to SUPERVISOR and SITE_ENGINEER roles.
+    Supervisor Ask Why / Investigation Context Endpoint, within an EXPLICIT schedule of the caller's
+    project (VIEW_EXECUTION_EVENTS).
     Returns:
       {
         "root_activity_id": "ACT-001",
@@ -264,14 +265,8 @@ def get_activity_investigation(
         "graph": { ... }
       }
     """
-    if current_user.role not in ("SUPERVISOR", "SITE_ENGINEER"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: insufficient role permissions",
-        )
-
     return build_investigation_context(
         activity_id=activity_id,
         depth=depth,
-        schedule_id=schedule_id,
+        schedule_id=schedule_context.schedule_id,
     )

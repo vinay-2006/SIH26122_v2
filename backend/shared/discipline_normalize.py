@@ -27,6 +27,29 @@ _DISCIPLINE_ALIASES = {
     "health, safety and environment": "HSE",
     "health safety environment": "HSE",
     "health safety and environment": "HSE",
+    # prototype disciplines (kept in step with the `disciplines` / `discipline_aliases` tables, migration 016)
+    "structural": "STRUCTURAL",
+    "structural works": "STRUCTURAL",
+    "structure": "STRUCTURAL",
+    "structures": "STRUCTURAL",
+    "steel structure": "STRUCTURAL",
+    "process": "PROCESS",
+    "commissioning": "PROCESS",
+    "process and commissioning": "PROCESS",
+    "drilling": "DRILLING",
+    "well engineering": "DRILLING",
+    "drilling and well engineering": "DRILLING",
+    "logistics": "LOGISTICS",
+    "marine logistics": "LOGISTICS",
+    "materials logistics": "LOGISTICS",
+    # short forms used in field reports (previously a private map inside routers/matching.py)
+    "mech": "STATIC_ROTATING_EQUIPMENT",
+    "elec": "ELECTRICAL",
+    "inst": "INSTRUMENTATION",
+    "static equipment": "STATIC_ROTATING_EQUIPMENT",
+    "rotating equipment": "STATIC_ROTATING_EQUIPMENT",
+    "equipment": "STATIC_ROTATING_EQUIPMENT",
+    "safety": "HSE",
 }
 
 

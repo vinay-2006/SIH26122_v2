@@ -1,3 +1,5 @@
+import { BRAND_NAME, BRAND_TAGLINE } from '@/brand';
+import { PAGE_AUDIT, PAGE_INTELLIGENCE, PAGE_WBS } from '@/layout/pageAccess';
 import React, { useState, useEffect } from 'react';
 import { Outlet, Navigate, useLocation, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -6,7 +8,11 @@ import { useAuth } from '@/auth/AuthProvider';
 import { useTheme } from '@/theme/ThemeProvider';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 import { digestApi } from '@/api';
+import { updatesApi } from '@/api/prototype';
 import {
+  AlertOctagon,
+  BellRing,
+  GitBranch,
   LayoutDashboard,
   ClipboardList,
   Layers,
@@ -26,19 +32,25 @@ import {
   FolderTree,
   Sparkles,
   Bot,
+  Fingerprint,
   Briefcase,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import GlobalIndustrialBackground from '@/components/GlobalIndustrialBackground';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { IS_MOCK_MODE } from '@/api';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
+import { ProjectGate } from '@/components/ProjectGate';
+import { useProjectState, SELECTED_PROJECT_KEY } from '@/context/ProjectContext';
+import type { Permission } from '@/api/projects';
+import { IS_V2 } from '@/config';
+import { useV2NavData } from '@/v2/nav';
 
 const SIDEBAR_COLLAPSED_KEY = 'setu_sidebar_collapsed_v1';
 
 export default function AppShell() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
+  const { can, role, status: projectStatus, currentProject } = useProjectState();
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation();
   const location = useLocation();
@@ -53,50 +65,73 @@ export default function AppShell() {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
   }, [isCollapsed]);
 
-  if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
-  }
+  const isReviewer = can('REVIEW_CLAIM');
 
-  const isSupervisor = user.role === 'SUPERVISOR';
-
-  // Live pending/actionable count for the sidebar badges (ISS-19). Claims with
-  // status REVIEW_REQUIRED or VALIDATED are the ones a Supervisor still needs
-  // to act on -- same definition Dashboard.tsx's KPI card uses. A 60s refetch
-  // interval keeps this current without polling aggressively.
+  // Live pending/actionable count for the sidebar badges. Claims with status REVIEW_REQUIRED or VALIDATED
+  // are the ones a reviewer still needs to act on. Only asked once a project + schedule are selected.
   const { data: pendingClaims } = useQuery({
-    queryKey: ['sidebar-pending-count'],
+    queryKey: ['sidebar-pending-count', projectStatus],
     queryFn: () => digestApi.getAll(),
-    enabled: isSupervisor,
+    enabled: isAuthenticated && isReviewer && projectStatus === 'ready',
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+  // Site engineer: unread decisions on their own claims (persisted notifications, recipient-only on the backend).
+  const isEngineer = can('CREATE_EXECUTION_EVENT') && !isReviewer;
+  const selectedProjectId = localStorage.getItem(SELECTED_PROJECT_KEY);
+  const { data: unreadUpdates } = useQuery({
+    queryKey: ['v7', 'notifications', selectedProjectId, 'sidebar'],
+    queryFn: () => updatesApi.notifications(selectedProjectId!, { unreadOnly: true, limit: 1 }),
+    enabled: isAuthenticated && isEngineer && projectStatus === 'ready' && !!selectedProjectId,
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+  });
+  const unreadCount = unreadUpdates?.unread_count ?? 0;
+  const v2Nav = useV2NavData(IS_V2 && isAuthenticated && projectStatus === 'ready', currentProject?.id ?? null, can);
   const pendingCount = (pendingClaims || []).filter(
     (c) => c.status === 'REVIEW_REQUIRED' || c.status === 'VALIDATED'
   ).length;
 
-  const supervisorNavItems = [
-    { label: t('nav.dailyDigest'),     path: '/digest',    icon: ClipboardList, badge: pendingCount },
-    { label: t('nav.reviewWorkspace'), path: '/review',    icon: Layers, badge: pendingCount },
-    { label: t('nav.timeAgent', { defaultValue: 'Time Agent' }), path: '/time-agent', icon: Bot },
-    { label: t('nav.dashboard'),       path: '/dashboard', icon: LayoutDashboard },
-    { label: t('nav.activityHistory'), path: '/history',   icon: Clock },
-    { label: t('nav.impactPreview'),   path: '/impact',    icon: Activity },
-    { label: t('wbs.navLabel'),        path: '/wbs',       icon: FolderTree },
-    { label: t('nav.executionSummary'), path: '/summary',  icon: Sparkles },
-  ];
+  // Session restore is asynchronous: do not bounce a returning user to /login before it has finished.
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-xs text-slate-400 font-mono">
+        Restoring session…
+      </div>
+    );
+  }
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
 
-  const siteEngineerNavItems = [
-    { label: t('nav.claimIntake'), path: '/intake', icon: PlusCircle, badge: 0 },
+  // Navigation is driven by the caller's PROJECT permissions (the same RBAC table the backend enforces).
+  const legacyNavItems: { label: string; path: string; icon: any; badge?: number; requires: Permission[] }[] = [
+    { label: t('nav.claimIntake'),      path: '/intake',    icon: PlusCircle,      requires: ['CREATE_EXECUTION_EVENT'] },
+    { label: 'Issues & Delays',         path: '/issues',    icon: AlertOctagon,    requires: ['REPORT_ISSUE', 'VIEW_MONITORING'] },
+    { label: 'My Updates',              path: '/updates',   icon: BellRing,        badge: unreadCount, requires: ['CREATE_EXECUTION_EVENT'] },
+    { label: t('nav.dailyDigest'),      path: '/digest',    icon: ClipboardList,   badge: pendingCount, requires: ['REVIEW_CLAIM'] },
+    { label: t('nav.reviewWorkspace'),  path: '/review',    icon: Layers,          badge: pendingCount, requires: ['REVIEW_CLAIM'] },
+    { label: t('nav.timeAgent', { defaultValue: 'Time Agent' }), path: '/time-agent', icon: Bot, requires: ['REVIEW_CLAIM'] },
+    { label: t('nav.dashboard'),        path: '/dashboard', icon: LayoutDashboard, requires: ['REVIEW_CLAIM'] },
+    { label: t('nav.activityHistory'),  path: '/history',   icon: Clock,           requires: ['REVIEW_CLAIM'] },
+    { label: t('nav.impactPreview'),    path: '/impact',    icon: Activity,        requires: ['REVIEW_CLAIM', 'VIEW_MONITORING'] },
+    { label: t('wbs.navLabel'),         path: '/wbs',       icon: FolderTree,      requires: PAGE_WBS },
+    { label: t('nav.executionSummary'), path: '/summary',   icon: Sparkles,        requires: ['REVIEW_CLAIM'] },
+    { label: 'Root Cause & Memory',     path: '/root-cause', icon: GitBranch,      requires: ['MANAGE_BLOCKERS', 'VIEW_MONITORING'] },
+    { label: 'Project Intelligence',    path: '/intelligence', icon: Bot,          requires: PAGE_INTELLIGENCE },
+    { label: 'Audit Trail',             path: '/audit',     icon: Fingerprint,     requires: PAGE_AUDIT },
   ];
-
-  const navItems = isSupervisor ? supervisorNavItems : siteEngineerNavItems;
+  const allNavItems = IS_V2 ? [...v2Nav.items, ...legacyNavItems] : legacyNavItems;
+  const navItems = projectStatus === 'ready' ? allNavItems.filter((i) => i.requires.some((p) => can(p))) : [];
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const userInitials = isSupervisor ? 'SP' : 'SE';
+  const userInitials = (user.full_name || user.email || 'U').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const isSupervisor = isReviewer;
+  const isProjectManager = IS_V2 && role === 'PROJECT_MANAGER';
 
   return (
     <div className="min-h-screen flex text-foreground font-sans antialiased selection:bg-[#FF7A18] selection:text-white transition-colors duration-200 relative bg-background">
@@ -132,7 +167,7 @@ export default function AppShell() {
           style={{ borderColor: 'rgba(30, 58, 95, 0.5)' }}
         >
           <div className={cn('flex items-center overflow-hidden', isCollapsed ? 'justify-center' : 'gap-3')}>
-            {/* Setu AI Orange Flame Icon in gradient circle */}
+            {/* ANVYRA Orange Flame Icon in gradient circle */}
             <div
               className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-lg shadow-orange-500/30 bg-gradient-to-br from-[#FF7A18] to-[#FF941F]"
             >
@@ -141,10 +176,10 @@ export default function AppShell() {
             {!isCollapsed && (
               <div className="flex flex-col min-w-0">
                 <span className="font-bold text-base text-white leading-tight truncate tracking-tight">
-                  Setu <span className="text-[#FF941F]">AI</span>
+                  {BRAND_NAME}
                 </span>
-                <span className="text-[10px] font-semibold tracking-wider truncate text-[#94A8B8]">
-                  SIH26122 · Oil India
+                <span className="text-[10px] font-semibold tracking-wide truncate text-[#94A8B8]">
+                  {BRAND_TAGLINE}
                 </span>
               </div>
             )}
@@ -242,20 +277,22 @@ export default function AppShell() {
                 <div
                   className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 border border-[#1E3A5F] bg-[#0A2340]"
                 >
-                  {isSupervisor
-                    ? <ShieldCheck className="w-4 h-4 text-[#14B8A6]" />
-                    : <HardHat className="w-4 h-4 text-[#FF8A25]" />}
+                  {isProjectManager
+                    ? <Briefcase className="w-4 h-4 text-[#0284C7]" />
+                    : isSupervisor
+                      ? <ShieldCheck className="w-4 h-4 text-[#14B8A6]" />
+                      : <HardHat className="w-4 h-4 text-[#FF8A25]" />}
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span className="text-xs font-semibold text-[#F5F7FA] truncate">
-                    {user.full_name || (isSupervisor ? 'Supervisor' : 'Site Engineer')}
+                    {user.full_name || user.email}
                   </span>
                   <span className="text-[10px] font-medium truncate flex items-center gap-1 text-[#94A8B8]">
                     <span
                       className="w-1.5 h-1.5 rounded-full"
-                      style={{ backgroundColor: isSupervisor ? '#14B8A6' : '#FF8A25' }}
+                      style={{ backgroundColor: isProjectManager ? '#0284C7' : isSupervisor ? '#14B8A6' : '#FF8A25' }}
                     />
-                    {user.role}
+                    {role ?? '—'}
                   </span>
                 </div>
               </div>
@@ -295,15 +332,6 @@ export default function AppShell() {
           </div>
 
           <div className="flex items-center gap-3">
-            {IS_MOCK_MODE && (
-              <div
-                id="mock-mode-indicator"
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400 text-amber-300 text-xs font-bold font-mono tracking-wide"
-                title="Mock mode active (VITE_USE_MOCKS=true)"
-              >
-                <span>⚠️ DEMO / MOCK DATA MODE</span>
-              </div>
-            )}
             {/* Language Toggle */}
             <LanguageSwitcher variant="adaptive" />
 
@@ -331,7 +359,7 @@ export default function AppShell() {
             {/* User Initial Avatar */}
             <div
               className="w-8 h-8 rounded-full bg-gradient-to-br from-[#14B8A6] to-[#0D9488] text-white font-bold text-xs flex items-center justify-center shadow-xs shrink-0"
-              title={user.full_name || user.role}
+              title={`${user.full_name || user.email}${role ? ' · ' + role : ''}`}
             >
               {userInitials}
             </div>
@@ -342,7 +370,9 @@ export default function AppShell() {
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           {/* Keeps the sidebar/header alive if a page crashes; resets on navigation. */}
           <ErrorBoundary label="This page" resetKey={location.pathname + location.search}>
-            <Outlet />
+            <ProjectGate>
+              <Outlet />
+            </ProjectGate>
           </ErrorBoundary>
         </main>
       </div>

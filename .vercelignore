@@ -1,0 +1,15 @@
+# What the API deployment (project root = repository root, entrypoint app.py) must not upload. The frontend is its own Vercel project (root directory: frontend).
+.git
+.local
+frontend
+tests
+docs
+sample_data
+**/__pycache__
+.env
+.env.*
+*.md
+verify_*.py
+technical_approach_network_slide.html
+.pytest_cache
+render.yaml

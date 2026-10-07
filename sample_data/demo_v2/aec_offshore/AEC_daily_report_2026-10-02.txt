@@ -1,0 +1,21 @@
+DAILY PROGRESS REPORT - 2026-10-02
+Report date: 2026-10-02
+Andaman and East Coast Offshore Drilling Campaign (AEC-OFFSHORE)
+Reporting period: 0800 h to 1800 h
+
+WORK EXECUTED
+1. OSD-2297 | Logistics | W2 - bulk cement, barite and mud chemical supply.
+   Today: 11 tonnes | Cumulative: 453/2189 tonnes | Physical progress: 20.7%
+2. OSD-2296 | Logistics | W2 - supply vessel runs and material transfers.
+   Today: 1 nos | Cumulative: 1/44 nos | Physical progress: 2.4%
+3. OSD-2310 | Drilling | W3 - drive conductor and spud.
+   Today: 1 m | Cumulative: 1/110 m | Physical progress: 1.0%
+4. OSD-2320 | Drilling | W3 - drill 26 in hole section.
+   Today: 2 m | Cumulative: 2/446 m | Physical progress: 0.5%
+5. OSD-2330 | Drilling | W3 - run and cement 20 in casing.
+   Today: 1 tonnes | Cumulative: 1/160 tonnes | Physical progress: 0.7%
+6. OSD-2340 | Drilling | W3 - drill 17.5 in hole section.
+   Today: 5 m | Cumulative: 5/1042 m | Physical progress: 0.6%
+
+Prepared by: R. Baruah, Site Engineer
+Fictional demonstration data for ANVYRA. Not a real project record.

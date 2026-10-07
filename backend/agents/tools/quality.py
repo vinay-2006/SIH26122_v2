@@ -25,10 +25,14 @@ def get_quality_holds(context: ProjectContext) -> List[Dict[str, Any]]:
                 FROM quality_gates qg
                 LEFT JOIN stages st ON qg.stage_id = st.stage_id
                 LEFT JOIN schedule_activities sa ON qg.activity_id = sa.activity_id
-                     AND sa.project_id = qg.project_id
+                     AND sa.project_id = qg.project_id AND sa.schedule_id = qg.schedule_id
                 WHERE qg.project_id = %(project_id)s
                   AND qg.required = TRUE
-                  AND qg.status IN ('PENDING', 'FAILED')
+                  AND qg.status IN ('PENDING', 'SUBMITTED', 'FAILED')
+                  -- a "hold" is a HOLD-category point not yet released, or any failed required gate;
+                  -- an ordinary pending inspection is not a hold
+                  AND (qg.status = 'FAILED' OR qg.checkpoint_category = 'HOLD'
+                       OR qg.gate_type IN ('INTERMEDIATE_HOLD', 'PRE_COMMENCEMENT'))
                 ORDER BY qg.created_at DESC
             """
             rows = conn.execute(query, {"project_id": context.project_id}).fetchall()

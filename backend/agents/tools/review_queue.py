@@ -25,10 +25,11 @@ def get_review_queue(context: ProjectContext, limit: int = 20) -> Dict[str, Any]
                        sa.activity_name, st.stage_name
                 FROM execution_events ee
                 LEFT JOIN schedule_activities sa ON ee.matched_activity_id = sa.activity_id
-                     AND sa.project_id = ee.project_id
+                     AND sa.project_id = ee.project_id AND sa.schedule_id = ee.schedule_id
                 LEFT JOIN stages st ON sa.stage_id = st.stage_id
                 WHERE ee.project_id = %(project_id)s
                   AND ee.status IN ('VALIDATED', 'REVIEW_REQUIRED', 'HOLD')
+                  AND ee.event_type <> 'REOPEN_REQUEST'  -- reopen requests are listed separately below
                 ORDER BY ee.created_at ASC
                 LIMIT %(limit)s
             """
@@ -45,7 +46,7 @@ def get_review_queue(context: ProjectContext, limit: int = 20) -> Dict[str, Any]
                        ee.reopen_requested_by AS requested_by, sa.activity_name
                 FROM execution_events ee
                 LEFT JOIN schedule_activities sa ON ee.matched_activity_id = sa.activity_id
-                     AND sa.project_id = ee.project_id
+                     AND sa.project_id = ee.project_id AND sa.schedule_id = ee.schedule_id
                 WHERE ee.project_id = %(project_id)s
                   AND ee.reopen_status = 'REQUESTED'
                 ORDER BY ee.created_at ASC

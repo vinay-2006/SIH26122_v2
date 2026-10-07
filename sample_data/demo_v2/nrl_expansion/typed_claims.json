@@ -1,0 +1,37 @@
+[
+ {
+  "activity": "NRE-2060",
+  "text": "Crude Distillation Unit 2 electrical cabling and power distribution: 2 panels installed today (CDU2_PANELS_NOS).",
+  "expected": "clean claim"
+ },
+ {
+  "activity": "NRE-4050",
+  "text": "Hydrotreater process piping fabrication and erection: 110 joints welded today (HDT_PIPING_JOINTS).",
+  "expected": "clean claim"
+ },
+ {
+  "activity": "NRE-4060",
+  "text": "Hydrotreater electrical cabling and power distribution: 150 m of cable tray installed today (HDT_TRAY_M).",
+  "expected": "clean claim"
+ },
+ {
+  "activity": "NRE-4070",
+  "text": "Hydrotreater instrumentation installation and loop checking commenced today: 300 m of instrument cable laid (HDT_INSTR_CABLE_M).",
+  "expected": "first report on a not-started activity (actual start)"
+ },
+ {
+  "activity": "NRE-4060",
+  "text": "Hydrotreater electrical cabling and power distribution: 60 panels installed today (HDT_PANELS_NOS).",
+  "expected": "more panels than the baseline holds: above-baseline warning, Supervisor acknowledgement needed"
+ },
+ {
+  "activity": "NRE-4050",
+  "text": "Hydrotreater process piping fabrication and erection: 8 tonnes of pipe material received today.",
+  "expected": "wrong unit for the activity (it measures joints and spools)"
+ },
+ {
+  "activity": "-",
+  "text": "Good progress on site today, all teams working well.",
+  "expected": "vague: no activity, no quantity, so it is not matched and goes to a Supervisor"
+ }
+]

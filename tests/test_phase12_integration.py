@@ -21,8 +21,9 @@ def test_root_health_endpoint():
     assert resp.json() == {"status": "ok"}
 
 
-def test_m6_router_health_endpoints():
+def test_m6_router_health_endpoints(monkeypatch):
     """Verify all M6 router health endpoints respond with status 200 and their exact contract."""
+    monkeypatch.setenv("AUTH_DEV_MODE", "true")  # mock P6 routes exist only in development mode
     client = TestClient(app)
 
     expected_health_endpoints = {

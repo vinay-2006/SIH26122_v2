@@ -28,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { useProjectState } from '@/context/ProjectContext';
+import { useAuth } from '@/auth/AuthProvider';
 
 interface QualityGateModalProps {
   isOpen: boolean;
@@ -49,6 +51,11 @@ export function QualityGateModal({
   onGateUpdated,
 }: QualityGateModalProps) {
   const { t } = useTranslation();
+  const { can } = useProjectState();
+  const { user } = useAuth();
+  const [evidenceGateId, setEvidenceGateId] = useState<string | null>(null);
+  const [evidenceType, setEvidenceType] = useState('INSPECTION_NOTE');
+  const [evidenceNotes, setEvidenceNotes] = useState('');
   const [waivingGateId, setWaivingGateId] = useState<string | null>(null);
   const [waiverJustification, setWaiverJustification] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -56,7 +63,32 @@ export function QualityGateModal({
 
   if (!isOpen) return null;
 
-  const isSupervisor = userRole === 'SUPERVISOR';
+  // Permissions come from the server-authoritative project role, not a client-side role string.
+  const canRelease = can('APPROVE_QUALITY') || can('MANAGE_QUALITY');
+  const canWaive = can('WAIVE_QUALITY');
+
+  const handleRecordAndDecide = async (gate: QualityGate, result: 'PASS' | 'FAIL') => {
+    setIsSubmitting(true);
+    setActionError(null);
+    try {
+      await qualityGatesApi.recordEvidence(gate.id, {
+        evidence_type: evidenceType,
+        result,
+        inspector_name: user?.full_name || undefined,
+        notes: evidenceNotes.trim() || undefined,
+      });
+      if (result === 'PASS') await qualityGatesApi.completeGate(gate.id);
+      else await qualityGatesApi.failGate(gate.id, evidenceNotes.trim() || undefined);
+      setEvidenceGateId(null);
+      setEvidenceNotes('');
+      if (onGateUpdated) onGateUpdated();
+      window.dispatchEvent(new Event('setu:quality-gate-changed'));
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to record the inspection');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleCompleteGate = async (gate: QualityGate) => {
     setIsSubmitting(true);
@@ -340,11 +372,11 @@ export function QualityGateModal({
                   </div>
 
                   {/* Supervisor Action Controls */}
-                  {isSupervisor && !isResolved && (
+                  {canRelease && !isResolved && (
                     <div className="pt-2 border-t border-slate-200/60 dark:border-[#1E3A5F]/60 flex flex-col sm:flex-row sm:items-center justify-end gap-2">
                       {!isWaivingThis ? (
                         <>
-                          <Button
+                          {canWaive && (<Button
                             size="sm"
                             variant="outline"
                             onClick={() => {
@@ -356,16 +388,49 @@ export function QualityGateModal({
                           >
                             <Unlock className="w-3 h-3 mr-1" />
                             {t('quality.waiveGate', { defaultValue: 'Waive Gate' })}
-                          </Button>
+                          </Button>)}
                           <Button
                             size="sm"
-                            onClick={() => handleCompleteGate(gate)}
+                            onClick={() => (gate.evidenceRequired ? (setEvidenceGateId(gate.id), setActionError(null)) : handleCompleteGate(gate))}
                             disabled={isSubmitting}
                             className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
                           >
                             <Check className="w-3 h-3 mr-1" />
-                            {t('quality.markComplete', { defaultValue: 'Mark Complete' })}
+                            {gate.evidenceRequired ? 'Record inspection…' : t('quality.markComplete', { defaultValue: 'Mark Complete' })}
                           </Button>
+                          {evidenceGateId === gate.id && (
+                            <div className="w-full space-y-2 p-2.5 rounded-lg bg-blue-50/70 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800">
+                              <Label className="text-[11px] font-bold text-blue-900 dark:text-blue-200">
+                                Inspection record (a required hold point is released on evidence)
+                              </Label>
+                              <select
+                                value={evidenceType}
+                                onChange={(e) => setEvidenceType(e.target.value)}
+                                aria-label="Evidence type"
+                                className="w-full h-8 rounded-md border border-blue-300 dark:border-blue-800 bg-white dark:bg-[#071A2D] px-2 text-xs"
+                              >
+                                {['INSPECTION_NOTE', 'TEST_REPORT', 'PHOTO', 'POUR_CARD', 'WELD_INSPECTION', 'NDT_RESULT', 'MATERIAL_CERTIFICATE', 'THIRD_PARTY_CERT', 'CLIENT_APPROVAL', 'OTHER'].map((v) => (
+                                  <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>
+                                ))}
+                              </select>
+                              <Textarea
+                                value={evidenceNotes}
+                                onChange={(e) => setEvidenceNotes(e.target.value)}
+                                placeholder="Inspection findings (dimensions, readings, reference numbers)…"
+                                rows={2}
+                                className="text-xs bg-white dark:bg-[#071A2D] border-blue-300 dark:border-blue-800"
+                              />
+                              <div className="flex items-center justify-end gap-2">
+                                <Button size="sm" variant="ghost" onClick={() => setEvidenceGateId(null)} className="h-7 text-xs">Cancel</Button>
+                                <Button size="sm" variant="outline" disabled={isSubmitting} onClick={() => handleRecordAndDecide(gate, 'FAIL')} className="h-7 text-xs border-rose-300 text-rose-700">
+                                  Record FAIL
+                                </Button>
+                                <Button size="sm" disabled={isSubmitting} onClick={() => handleRecordAndDecide(gate, 'PASS')} className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold">
+                                  Record PASS &amp; release
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <div className="w-full space-y-2 p-2.5 rounded-lg bg-purple-50/70 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-800">

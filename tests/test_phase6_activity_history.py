@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as
 from backend.routers.activities import query_activity_history
 from backend.shared.auth import UserProfile, get_current_user
 
@@ -186,13 +187,13 @@ def test_activity_filtering_no_leakage():
         """
     )
 
-    data = query_activity_history("A1000", conn=db)
+    data = query_activity_history("A1000", schedule_id="SCH-1", conn=db)
     assert data["activity_id"] == "A1000"
     assert len(data["timeline"]) == 1
     assert data["timeline"][0]["event_id"] == "EV-1"
 
     # Querying A1001 returns only A1001
-    data_1001 = query_activity_history("A1001", conn=db)
+    data_1001 = query_activity_history("A1001", schedule_id="SCH-1", conn=db)
     assert data_1001["activity_id"] == "A1001"
     assert len(data_1001["timeline"]) == 1
     assert data_1001["timeline"][0]["event_id"] == "EV-2"
@@ -215,7 +216,7 @@ def test_execution_events_included():
         """
     )
 
-    data = query_activity_history("ACT-SINGLE", conn=db)
+    data = query_activity_history("ACT-SINGLE", schedule_id="SCH-1", conn=db)
     assert data["activity_id"] == "ACT-SINGLE"
     assert len(data["timeline"]) == 1
     ev = data["timeline"][0]
@@ -241,7 +242,7 @@ def test_multiple_execution_events():
             (f"EV-{i}", f"2026-08-0{i}", f"Claim {i}", i * 25.0, f"2026-08-0{i} 08:00:00"),
         )
 
-    data = query_activity_history("ACT-MULTI", conn=db)
+    data = query_activity_history("ACT-MULTI", schedule_id="SCH-1", conn=db)
     assert data["activity_id"] == "ACT-MULTI"
     assert len(data["timeline"]) == 3
     event_ids = [item["event_id"] for item in data["timeline"]]
@@ -268,7 +269,7 @@ def test_source_references_included():
         """
     )
 
-    data = query_activity_history("ACT-SREF", conn=db)
+    data = query_activity_history("ACT-SREF", schedule_id="SCH-1", conn=db)
     assert len(data["timeline"]) == 1
     assert len(data["timeline"][0]["source_references"]) == 1
     assert data["timeline"][0]["source_references"][0]["reference_id"] == "REF-1"
@@ -308,7 +309,7 @@ def test_multiple_source_references():
         """
     )
 
-    data = query_activity_history("ACT-REFS", conn=db)
+    data = query_activity_history("ACT-REFS", schedule_id="SCH-1", conn=db)
     assert len(data["timeline"]) == 1
     event_entry = data["timeline"][0]
     assert event_entry["type"] == "execution_event"
@@ -345,7 +346,7 @@ def test_final_planner_decision_included():
         """
     )
 
-    data = query_activity_history("ACT-DEC", conn=db)
+    data = query_activity_history("ACT-DEC", schedule_id="SCH-1", conn=db)
     # Timeline should have execution_event, followed by planner_decision
     assert len(data["timeline"]) == 2
     assert data["timeline"][0]["type"] == "execution_event"
@@ -385,7 +386,7 @@ def test_earlier_decision_does_not_replace_final():
         """
     )
 
-    data = query_activity_history("ACT-REV", conn=db)
+    data = query_activity_history("ACT-REV", schedule_id="SCH-1", conn=db)
     decisions_in_timeline = [item for item in data["timeline"] if item["type"] == "planner_decision"]
     # Multiple historical decisions appear chronologically without earlier replacing final
     assert len(decisions_in_timeline) == 2
@@ -432,7 +433,7 @@ def test_chronological_ordering():
         """
     )
 
-    data = query_activity_history("ACT-TIME", conn=db)
+    data = query_activity_history("ACT-TIME", schedule_id="SCH-1", conn=db)
     timeline_ids = [
         item["decision_id"] if item["type"] == "planner_decision" else item["event_id"]
         for item in data["timeline"]
@@ -468,7 +469,7 @@ def test_deterministic_tie_handling():
         """
     )
 
-    data = query_activity_history("ACT-TIE", conn=db)
+    data = query_activity_history("ACT-TIE", schedule_id="SCH-1", conn=db)
     # Events come first (ordered by event_id: EV-A, EV-B), followed by decision
     timeline_ids = [
         item["decision_id"] if item["type"] == "planner_decision" else item["event_id"]
@@ -485,7 +486,7 @@ def test_deterministic_tie_handling():
 def test_empty_history_handled_safely():
     db = create_test_db()
     _seed_activity(db, "ACT-NO-HISTORY", activity_name="Cable Tray Install")
-    data = query_activity_history("ACT-NO-HISTORY", conn=db)
+    data = query_activity_history("ACT-NO-HISTORY", schedule_id="SCH-1", conn=db)
     assert data["activity_id"] == "ACT-NO-HISTORY"
     assert data["activity_name"] == "Cable Tray Install"
     assert data["schedule_id"] == "SCH-1"
@@ -501,7 +502,7 @@ def test_empty_history_handled_safely():
 def test_unknown_activity_returns_404():
     db = create_test_db()
     with pytest.raises(HTTPException) as exc_info:
-        query_activity_history("NONEXISTENT-ACT-9999", conn=db)
+        query_activity_history("NONEXISTENT-ACT-9999", schedule_id="SCH-1", conn=db)
     assert exc_info.value.status_code == 404
 
 
@@ -513,37 +514,27 @@ def test_authorization(monkeypatch):
     client = TestClient(app)
 
     # 1. Unauthenticated -> 401
-    resp = client.get("/api/v1/activities/ACT-1/history")
+    resp = client.get("/api/v1/activities/ACT-1/history?schedule_id=SCH-1")
     assert resp.status_code == 401
 
-    # 2. SITE_ENGINEER -> 403
-    engineer = UserProfile(id="11111111-1111-1111-1111-111111111111", full_name="Alice", role="SITE_ENGINEER")
-    app.dependency_overrides[get_current_user] = lambda: engineer
-    try:
-        resp = client.get(
-            "/api/v1/activities/ACT-1/history",
-            headers={"Authorization": "Bearer mock-token"},
-        )
-        assert resp.status_code == 403
-    finally:
-        app.dependency_overrides.clear()
+    # 2. SITE_ENGINEER (no REVIEW_CLAIM) -> 403
+    with act_as("SITE_ENGINEER", schedule_id="SCH-1"):
+        resp = client.get("/api/v1/activities/ACT-1/history", headers={"Authorization": "Bearer mock-token"})
+    assert resp.status_code == 403
 
-    # 3. SUPERVISOR -> 200
-    supervisor = UserProfile(id="22222222-2222-2222-2222-222222222222", full_name="Bob", role="SUPERVISOR")
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    monkeypatch.setattr(
-        "backend.routers.activities.query_activity_history",
-        lambda activity_id, schedule_id=None, conn=None: {"activity_id": activity_id, "timeline": []},
-    )
-    try:
-        resp = client.get(
-            "/api/v1/activities/ACT-1/history",
-            headers={"Authorization": "Bearer mock-token"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["activity_id"] == "ACT-1"
-    finally:
-        app.dependency_overrides.clear()
+    # 3. SUPERVISOR -> 200, scoped to the validated schedule
+    captured = {}
+
+    def _stub(activity_id, schedule_id=None, conn=None):
+        captured["schedule_id"] = schedule_id
+        return {"activity_id": activity_id, "timeline": []}
+
+    monkeypatch.setattr("backend.routers.activities.query_activity_history", _stub)
+    with act_as("SUPERVISOR", schedule_id="SCH-1"):
+        resp = client.get("/api/v1/activities/ACT-1/history", headers={"Authorization": "Bearer mock-token"})
+    assert resp.status_code == 200
+    assert resp.json()["activity_id"] == "ACT-1"
+    assert captured["schedule_id"] == "SCH-1"
 
 
 def test_endpoint_404_passthrough_not_masked_as_500(monkeypatch):
@@ -553,21 +544,14 @@ def test_endpoint_404_passthrough_not_masked_as_500(monkeypatch):
     activity -- those must reach the client as-is, not become a 500.
     """
     client = TestClient(app)
-    supervisor = UserProfile(id="22222222-2222-2222-2222-222222222222", full_name="Bob", role="SUPERVISOR")
-    app.dependency_overrides[get_current_user] = lambda: supervisor
 
     def _raise_404(activity_id, schedule_id=None, conn=None):
         raise HTTPException(status_code=404, detail=f"Activity '{activity_id}' not found")
 
     monkeypatch.setattr("backend.routers.activities.query_activity_history", _raise_404)
-    try:
-        resp = client.get(
-            "/api/v1/activities/NOPE/history",
-            headers={"Authorization": "Bearer mock-token"},
-        )
-        assert resp.status_code == 404
-    finally:
-        app.dependency_overrides.clear()
+    with act_as("SUPERVISOR", schedule_id="SCH-1"):
+        resp = client.get("/api/v1/activities/NOPE/history", headers={"Authorization": "Bearer mock-token"})
+    assert resp.status_code == 404
 
 
 # =========================================================================
@@ -596,7 +580,7 @@ def test_response_contract():
         """
     )
 
-    data = query_activity_history("ACT-C", conn=db)
+    data = query_activity_history("ACT-C", schedule_id="SCH-1", conn=db)
     assert set(data.keys()) == {
         "activity_id", "schedule_id", "activity_name", "discipline",
         "location", "wbs_code", "planned_start", "planned_finish", "timeline",
@@ -646,11 +630,11 @@ def test_planner_override_activity_routing():
     )
 
     # Under ACT-A: Timeline is empty (reassigned)
-    data_a = query_activity_history("ACT-A", conn=db)
+    data_a = query_activity_history("ACT-A", schedule_id="SCH-1", conn=db)
     assert data_a["timeline"] == []
 
     # Under ACT-B: Timeline contains the event and decision
-    data_b = query_activity_history("ACT-B", conn=db)
+    data_b = query_activity_history("ACT-B", schedule_id="SCH-1", conn=db)
     assert len(data_b["timeline"]) == 2
     assert data_b["timeline"][0]["event_id"] == "EV-OVERRIDE"
     assert data_b["timeline"][1]["decision_id"] == "DEC-OVERRIDE"
@@ -720,7 +704,13 @@ def test_cross_schedule_isolation_same_activity_id():
     actual_ids_b = {item.get("actual_id") for item in data_b["timeline"] if item["type"] == "approved_actual"}
     assert actual_ids_b == {"ACTL-B"}
 
-    # No schedule_id given, and the activity_id is ambiguous -> 409, never a silent guess
+    # No schedule_id given -> 400, never a silent guess (no active/latest fallback, no cross-schedule lookup)
     with pytest.raises(HTTPException) as exc_info:
         query_activity_history("ACT-001", conn=db)
-    assert exc_info.value.status_code == 409
+    assert exc_info.value.status_code == 400
+
+    # An activity that exists only in ANOTHER schedule is not resolvable through this one
+    _seed_activity(db, "ACT-ONLY-B", schedule_id="SCHED_B")
+    with pytest.raises(HTTPException) as exc_info:
+        query_activity_history("ACT-ONLY-B", schedule_id="SCHED_A", conn=db)
+    assert exc_info.value.status_code == 404

@@ -4,6 +4,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as
 from backend.routers.dashboard import query_forecast
 from backend.shared.auth import UserProfile, get_current_user
 
@@ -503,42 +504,32 @@ def test_authorization(monkeypatch):
     resp = client.get("/api/v1/dashboard/forecast?activity_id=A1000")
     assert resp.status_code == 401
 
-    # 2. SITE_ENGINEER -> 403
-    engineer = UserProfile(id="11111111-1111-1111-1111-111111111111", full_name="Alice", role="SITE_ENGINEER")
-    app.dependency_overrides[get_current_user] = lambda: engineer
-    try:
-        resp = client.get(
-            "/api/v1/dashboard/forecast?activity_id=A1000",
-            headers={"Authorization": "Bearer mock-token"},
-        )
-        assert resp.status_code == 403
-    finally:
-        app.dependency_overrides.clear()
+    # 2. SITE_ENGINEER (no REVIEW_CLAIM) -> 403
+    with act_as("SITE_ENGINEER"):
+        resp = client.get("/api/v1/dashboard/forecast?activity_id=A1000", headers={"Authorization": "Bearer mock-token"})
+    assert resp.status_code == 403
 
-    # 3. SUPERVISOR -> 200
-    supervisor = UserProfile(id="22222222-2222-2222-2222-222222222222", full_name="Bob", role="SUPERVISOR")
-    app.dependency_overrides[get_current_user] = lambda: supervisor
-    monkeypatch.setattr(
-        "backend.routers.dashboard.query_forecast",
-        lambda activity_id=None, discipline=None, conn=None: {
+    # 3. SUPERVISOR -> 200, scoped to the caller's project and explicit schedule
+    captured = {}
+
+    def _stub(activity_id=None, discipline=None, conn=None, project_id=None, schedule_id=None):
+        captured.update(project_id=project_id, schedule_id=schedule_id)
+        return {
             "activity_id": activity_id or "A1000",
             "discipline": "CIVIL",
             "planned_duration": 30,
             "historical_ratio": 1.167,
             "forecast_duration": 35,
-        },
-    )
-    try:
-        resp = client.get(
-            "/api/v1/dashboard/forecast?activity_id=A1000",
-            headers={"Authorization": "Bearer mock-token"},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["activity_id"] == "A1000"
-        assert body["forecast_duration"] == 35
-    finally:
-        app.dependency_overrides.clear()
+        }
+
+    monkeypatch.setattr("backend.routers.dashboard.query_forecast", _stub)
+    with act_as("SUPERVISOR", schedule_id="SCH-F"):
+        resp = client.get("/api/v1/dashboard/forecast?activity_id=A1000", headers={"Authorization": "Bearer mock-token"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["activity_id"] == "A1000"
+    assert body["forecast_duration"] == 35
+    assert captured["schedule_id"] == "SCH-F" and captured["project_id"]
 
 
 # =========================================================================

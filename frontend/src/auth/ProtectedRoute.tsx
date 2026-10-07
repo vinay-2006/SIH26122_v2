@@ -1,14 +1,29 @@
 import React from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useAuth, UserRole } from '@/auth/AuthProvider';
+import { useAuth } from '@/auth/AuthProvider';
+import { useProjectState } from '@/context/ProjectContext';
+import type { Permission } from '@/api/projects';
 import { Loader2 } from 'lucide-react';
+import { IS_V2 } from '@/config';
+import { landingForV2 } from '@/v2/permissions';
 
 interface ProtectedRouteProps {
-  allowedRoles?: UserRole[]; // omit to allow any logged-in role
+  /** Any-of. The caller's PROJECT permissions (server-authoritative), not a global role. */
+  requires?: Permission[];
 }
 
-export default function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
+/** Where a user with these permissions lands. */
+export function landingFor(can: (p: Permission) => boolean): string {
+  if (IS_V2) return landingForV2(can);
+  if (can('REVIEW_CLAIM')) return '/dashboard';
+  if (can('CREATE_EXECUTION_EVENT')) return '/intake';
+  if (can('VIEW_AUDIT') && !can('MANAGE_QUALITY')) return '/audit'; // auditor: read-only oversight
+  return '/wbs';
+}
+
+export default function ProtectedRoute({ requires }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
+  const { status, can } = useProjectState();
   const location = useLocation();
 
   if (loading) {
@@ -20,15 +35,12 @@ export default function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
   }
 
   if (!user) {
-    // Not logged in — bounce to login, remembering where we were headed.
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    // Logged in, but wrong role for this route — send to their own landing page,
-    // never a raw error page, per the PRD.
-    const ownLandingPage = user.role === 'SUPERVISOR' ? '/digest' : '/intake';
-    return <Navigate to={ownLandingPage} replace />;
+  // Permissions are only known once a project is selected; the ProjectGate renders the wait/empty state.
+  if (requires && status === 'ready' && !requires.some((p) => can(p))) {
+    return <Navigate to={landingFor(can)} replace />;
   }
 
   return <Outlet />;

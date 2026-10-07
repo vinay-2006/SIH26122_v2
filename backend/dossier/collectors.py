@@ -10,6 +10,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Set
 
+from backend.shared.workflow_flags import with_workflow_flags
 from backend.context.project import ProjectContext
 from backend.context.schedule import ScheduleContext
 from backend.dossier.schemas import (
@@ -195,7 +196,7 @@ class DossierBulkCollector:
                 sa.activity_id, sa.schedule_id, sa.project_id, sa.stage_id,
                 sa.activity_name, sa.wbs_code, sa.discipline, sa.location,
                 sa.planned_start, sa.planned_finish, sa.planned_quantity,
-                sa.weight_factor,
+                sa.weight_factor, sa.quality_gate_required,
                 aa.actual_pct_complete, aa.actual_quantity, aa.actual_start,
                 aa.actual_finish, aa.is_reopened
             FROM schedule_activities sa
@@ -212,7 +213,7 @@ class DossierBulkCollector:
             query += " AND sa.activity_id = %(activity_id)s"
             params["activity_id"] = activity_id
 
-        query += " ORDER BY sa.activity_id ASC;"
+        query = with_workflow_flags(query + " ORDER BY sa.activity_id ASC;")
 
         try:
             with get_connection() as conn:

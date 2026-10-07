@@ -1,0 +1,3 @@
+Report Date,Activity ID,Task ID,Discipline,Work Description,Unit,Planned Qty,Prior Actual,Today Actual,Cumulative Actual,Progress Pct,Status,Evidence Reference,Remarks
+2026-10-03,SMP-9999,SMP-9999-01,Civil,Unscheduled works at an unknown location,M2,0,0,40,40,12.0,Ongoing,,Activity id is not in the schedule
+2026-10-03,,,Piping,"Work carried out on site, good progress today",,,,,,30.0,Ongoing,,No activity id and no quantity

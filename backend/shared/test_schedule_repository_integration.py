@@ -106,7 +106,8 @@ def test_persists_schedule_and_activities_with_correct_field_mapping():
         assert first["activity_id"] == expected.activity_id
         assert first["activity_name"] == expected.activity_name
         assert first["wbs_code"] == expected.wbs_code
-        assert first["discipline"] == expected.discipline
+        # the stored discipline is the canonical code (migration 016 normalises spellings on write)
+        assert first["discipline"] == expected.discipline.upper()
         assert first["location"] == expected.location
         assert first["asset_tag"] is None
         assert str(first["planned_start"]) == str(expected.planned_start)

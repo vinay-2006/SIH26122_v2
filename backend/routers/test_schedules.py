@@ -37,12 +37,51 @@ Run directly (requires a reachable DATABASE_URL):
 
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
+from backend.auth.dependencies import get_current_user
+from backend.auth.models import CurrentUser
 from backend.main import app
 from backend.shared.db import get_connection
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _authenticated_project_manager():
+    """/api/v1/schedules now requires authentication and project membership (MANAGE_SCHEDULE to
+    create). Each run gets its own project + PROJECT_MANAGER member; identity is injected, while
+    membership, project scoping and RBAC still run against the real rows."""
+    user_id, project_id = str(uuid.uuid4()), str(uuid.uuid4())
+    tag = uuid.uuid4().hex[:8]
+    with get_connection() as conn:
+        conn.execute("INSERT INTO profiles (id, full_name, role) VALUES (%s, 'M1 API Test PM', 'SUPERVISOR')", (user_id,))
+        conn.execute(
+            "INSERT INTO projects (project_id, project_code, project_name, status) VALUES (%s, %s, 'V7-INTEG m1 api', 'ACTIVE')",
+            (project_id, f"V7-INTEG-M1-{tag}"),
+        )
+        conn.execute(
+            "INSERT INTO project_memberships (user_id, project_id, assigned_role, active, status) "
+            "VALUES (%s, %s, 'PROJECT_MANAGER', TRUE, 'ACTIVE')",
+            (user_id, project_id),
+        )
+        conn.commit()
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(id=user_id, full_name="M1 API Test PM", role="SUPERVISOR")
+    client.headers.update({"X-Project-ID": project_id})
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        client.headers.pop("X-Project-ID", None)
+        with get_connection() as conn:
+            conn.execute("DELETE FROM schedule_dependencies WHERE schedule_id IN (SELECT schedule_id FROM schedules WHERE project_id = %s)", (project_id,))
+            conn.execute("DELETE FROM schedule_activities WHERE project_id = %s", (project_id,))
+            conn.execute("DELETE FROM schedules WHERE project_id = %s", (project_id,))
+            conn.execute("DELETE FROM project_memberships WHERE project_id = %s", (project_id,))
+            conn.execute("DELETE FROM projects WHERE project_id = %s", (project_id,))
+            conn.execute("DELETE FROM profiles WHERE id = %s", (user_id,))
+            conn.commit()
 
 _CSV_TEMPLATE = (
     "L1,L2,L3,L4,L5 Activity ID,L6 Task ID,Discipline,Activity,Unit,"
@@ -141,7 +180,7 @@ def test_create_and_read_schedule_end_to_end():
         one_resp = client.get(f"/api/v1/schedules/{schedule_id}/activities/{activity_prefix}-01")
         assert one_resp.status_code == 200
         one = one_resp.json()
-        assert one["discipline"] == "Civil"
+        assert one["discipline"] == "CIVIL"  # normalised to the canonical discipline code on write (migration 016)
         assert one["planned_quantity"] == 40
 
         deps_resp = client.get(f"/api/v1/schedules/{schedule_id}/dependencies")

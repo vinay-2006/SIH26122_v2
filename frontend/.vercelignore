@@ -1,0 +1,9 @@
+# The frontend project uploads only what the build needs. Local env files never leave the machine (the dashboard's environment variables are the source on Vercel).
+.env
+.env.*
+node_modules
+dist
+dist-v2
+e2e
+.vite
+*.log

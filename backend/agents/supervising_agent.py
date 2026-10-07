@@ -246,10 +246,14 @@ class SupervisingAgent:
             )
             recommended_reviews.append("Clear Pending Review Queue Items")
 
+        counts = raw_context.get("counts") or {}
+        n_holds = counts.get("quality_holds", len(quality_holds))
+        n_blocked = counts.get("blocked_activities", sum(1 for x in blocked_acts if x.get("workflow_condition") == "BLOCKED"))
+        n_held = counts.get("quality_hold_activities", sum(1 for x in blocked_acts if x.get("workflow_condition") == "QUALITY_HOLD"))
         summary = (
             f"Supervisory Briefing (Deterministic Mode / Engine Standby): Overall project progress is currently "
-            f"{progress_pct}%. There are {len(quality_holds)} active quality holds, {len(blocked_acts)} blocked activities, "
-            f"and {total_claims + total_reopens} items in the supervisor review queue."
+            f"{progress_pct}%. There are {n_holds} unreleased quality hold points, {n_blocked} blocked activities, "
+            f"{n_held} activities held by quality, and {total_claims + total_reopens} items in the supervisor review queue."
         )
 
         return SupervisoryBriefing(

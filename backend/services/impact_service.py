@@ -574,3 +574,55 @@ class ImpactService:
         seed = SeedActivityInput(activity_id=activity_id, delay_days=delay_days, reason="Single Activity Simulation")
         res = cls.evaluate_compound_impact(context, [seed], scenario_name=f"Preview {activity_id} +{delay_days}d")
         return res.model_dump()
+
+    WATCH_REASONS = {
+        "BLOCKED": "Activity is blocked by an open blocker",
+        "QUALITY_HOLD": "Activity or a predecessor is on a quality hold",
+        "REOPEN_REQUESTED": "A reopen request is awaiting decision",
+        "REWORK_IN_PROGRESS": "Approved rework is in progress",
+    }
+
+    @classmethod
+    def get_watchlist(cls, context: ScheduleContext, sensitivity_days: int = 1) -> List[Dict[str, Any]]:
+        """
+        Impact watch list: every activity whose derived workflow condition is not NONE (blocked / quality hold /
+        reopen / rework), with its real downstream reach if it slips `sensitivity_days`. The slip is a fixed
+        sensitivity probe, NOT a forecast: the list ranks how far a problem would propagate through the stored
+        network. Deterministic, read-only, project- and schedule-scoped.
+        """
+        if not has_permission(context.role, Permission.VIEW_SCHEDULE):
+            raise_permission_denied(Permission.VIEW_SCHEDULE.value, context.role)
+        from backend.services.progress_service import ProgressService
+
+        rank = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+        out: List[Dict[str, Any]] = []
+        for a in ProgressService.get_schedule_progress(context).get("activities", []):
+            cond = a.get("workflow_condition") or "NONE"
+            if cond == "NONE":
+                continue
+            res = cls.evaluate_compound_impact(
+                context, [SeedActivityInput(activity_id=a["activity_id"], delay_days=sensitivity_days, reason=cond)],
+                scenario_name=f"Watch {a['activity_id']}",
+            )
+            stages: Dict[str, Dict[str, Any]] = {}
+            for x in res.affected_activities:
+                if x.stage_id:
+                    st = stages.setdefault(str(x.stage_id), {"stage_id": str(x.stage_id), "stage_name": x.stage_name, "count": 0})
+                    st["count"] += 1
+            severity = res.severity.value if hasattr(res.severity, "value") else str(res.severity)
+            out.append({
+                "activity_id": a["activity_id"],
+                "activity_name": a["activity_name"],
+                "stage_id": str(a["stage_id"]) if a.get("stage_id") else None,
+                "workflow_condition": cond,
+                "severity": severity,
+                "sensitivity_days": sensitivity_days,
+                "direct_successor_count": sum(1 for x in res.affected_activities if x.propagation_depth == 1),
+                "total_downstream_count": len(res.affected_activities),
+                "critical_downstream_count": sum(1 for x in res.affected_activities if x.is_critical),
+                "stages": list(stages.values()),
+                "project_completion_impact_days": res.project_completion_impact_days,
+                "primary_reason": cls.WATCH_REASONS.get(cond, cond),
+            })
+        out.sort(key=lambda r: (-rank.get(r["severity"], 0), -r["total_downstream_count"], r["activity_id"]))
+        return out

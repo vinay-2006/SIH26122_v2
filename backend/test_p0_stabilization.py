@@ -19,7 +19,22 @@ def _override_get_current_user(request: Request) -> UserProfile:
     role = request.headers.get("X-Dev-Role", "SITE_ENGINEER")
     return UserProfile(id=user_id, full_name=user_id, role=role)
 
-app.dependency_overrides[get_current_user] = _override_get_current_user
+
+
+@pytest.fixture(autouse=True)
+def _dev_header_auth_override():
+    """Scoped to this module's tests. It used to be assigned at import time, which leaked a
+    header-driven auth override into every other test in the session."""
+    previous = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+    try:
+        yield
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_current_user, None)
+        else:
+            app.dependency_overrides[get_current_user] = previous
+
 
 client = TestClient(app)
 
@@ -27,35 +42,55 @@ ENG_HEADERS = {"X-Dev-User-Id": ENGINEER_ID, "X-Dev-Role": "SITE_ENGINEER"}
 SUP_HEADERS = {"X-Dev-User-Id": SUPERVISOR_ID, "X-Dev-Role": "SUPERVISOR"}
 
 
-def _get_or_create_schedule():
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT schedule_id FROM schedules ORDER BY created_at DESC LIMIT 1")
-            row = cur.fetchone()
-            if row:
-                schedule_id = row["schedule_id"]
-            else:
-                schedule_id = str(uuid.uuid4())
-                cur.execute(
-                    "INSERT INTO schedules (schedule_id, project_name) VALUES (%s, %s)",
-                    (schedule_id, "P0 Test Schedule"),
-                )
+_STATE: dict = {}
 
-            # Ensure activity CIV-PS3-FND-001 exists for this schedule
-            cur.execute(
-                "SELECT * FROM schedule_activities WHERE schedule_id = %s AND activity_id = %s",
-                (schedule_id, "CIV-PS3-FND-001"),
+
+def _get_or_create_schedule():
+    """This module's OWN project + schedule + activity (created once by the module fixture below).
+    Intake now requires an explicit project (X-Project-ID) and schedule (X-Schedule-ID) and the caller must be
+    a member; nothing here reuses 'the latest schedule' of some other project any more."""
+    return _STATE["schedule_id"]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _p0_project_and_schedule():
+    project_id, schedule_id = str(uuid.uuid4()), f"P0-{uuid.uuid4().hex[:10]}"
+    with get_connection() as conn:
+        for pid, name, role in ((ENGINEER_ID, "P0 Engineer", "SITE_ENGINEER"), (SUPERVISOR_ID, "P0 Supervisor", "SUPERVISOR")):
+            conn.execute("INSERT INTO profiles (id, full_name, role) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING", (pid, name, role))
+        conn.execute(
+            "INSERT INTO projects (project_id, project_code, project_name, status) VALUES (%s, %s, 'V7-INTEG p0', 'ACTIVE')",
+            (project_id, f"V7-INTEG-P0-{uuid.uuid4().hex[:6]}"),
+        )
+        for pid, role in ((ENGINEER_ID, "SITE_ENGINEER"), (SUPERVISOR_ID, "SUPERVISOR")):
+            conn.execute(
+                "INSERT INTO project_memberships (user_id, project_id, assigned_role, active, status) VALUES (%s, %s, %s, TRUE, 'ACTIVE')",
+                (pid, project_id, role),
             )
-            if not cur.fetchone():
-                cur.execute(
-                    """INSERT INTO schedule_activities (
-                        schedule_id, activity_id, activity_name, discipline, location,
-                        planned_start, planned_finish, baseline_pct_complete
-                    ) VALUES (%s, %s, %s, %s, %s, CURRENT_DATE, CURRENT_DATE + 10, 0.0)""",
-                    (schedule_id, "CIV-PS3-FND-001", "Pump P-101/P-102 Foundation Blinding", "CIVIL", "Pump Station 3"),
-                )
-            conn.commit()
-    return schedule_id
+        conn.execute("INSERT INTO schedules (schedule_id, project_name, project_id) VALUES (%s, 'P0 Test Schedule', %s)", (schedule_id, project_id))
+        conn.execute(
+            """INSERT INTO schedule_activities (
+                schedule_id, activity_id, activity_name, discipline, location,
+                planned_start, planned_finish, baseline_pct_complete, project_id
+            ) VALUES (%s, %s, %s, %s, %s, CURRENT_DATE, CURRENT_DATE + 10, 0.0, %s)""",
+            (schedule_id, "CIV-PS3-FND-001", "Pump P-101/P-102 Foundation Blinding", "CIVIL", "Pump Station 3", project_id),
+        )
+        conn.commit()
+    _STATE.update(project_id=project_id, schedule_id=schedule_id)
+    for h in (ENG_HEADERS, SUP_HEADERS):
+        h.update({"X-Project-ID": project_id, "X-Schedule-ID": schedule_id})
+    yield
+    with get_connection() as conn:
+        conn.execute("DELETE FROM validation_issues WHERE event_id IN (SELECT event_id FROM execution_events WHERE schedule_id = %s)", (schedule_id,))
+        conn.execute("DELETE FROM candidate_matches WHERE schedule_id = %s", (schedule_id,))
+        conn.execute("DELETE FROM source_references WHERE event_id IN (SELECT event_id FROM execution_events WHERE schedule_id = %s)", (schedule_id,))
+        conn.execute("DELETE FROM audit_logs WHERE project_id = %s", (project_id,))
+        conn.execute("DELETE FROM execution_events WHERE schedule_id = %s", (schedule_id,))
+        conn.execute("DELETE FROM schedule_activities WHERE schedule_id = %s", (schedule_id,))
+        conn.execute("DELETE FROM schedules WHERE schedule_id = %s", (schedule_id,))
+        conn.execute("DELETE FROM project_memberships WHERE project_id = %s", (project_id,))
+        conn.execute("DELETE FROM projects WHERE project_id = %s", (project_id,))
+        conn.commit()
 
 
 def test_typed_claim_with_evidence_photo():

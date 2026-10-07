@@ -4,6 +4,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tests.v7ctx import act_as
 from backend.routers.dashboard import query_institutional_memory
 from backend.shared.auth import UserProfile, get_current_user
 
@@ -91,16 +92,11 @@ def test_endpoint_is_registered():
 
 def test_supervisor_access_succeeds(monkeypatch):
     client = TestClient(app)
-    supervisor = UserProfile(
-        id="22222222-2222-2222-2222-222222222222",
-        full_name="Bob Supervisor",
-        role="SUPERVISOR",
-    )
-    app.dependency_overrides[get_current_user] = lambda: supervisor
+    captured = {}
 
-    monkeypatch.setattr(
-        "backend.routers.dashboard.query_institutional_memory",
-        lambda discipline=None, conn=None: {
+    def _stub(discipline=None, conn=None, project_id=None):
+        captured["project_id"] = project_id
+        return {
             "activities": [
                 {
                     "activity_id": "A1000",
@@ -111,21 +107,17 @@ def test_supervisor_access_succeeds(monkeypatch):
                 }
             ],
             "total_activities": 1,
-        },
-    )
+        }
 
-    try:
-        resp = client.get(
-            "/api/v1/dashboard/institutional-memory",
-            headers={"Authorization": "Bearer mocked-sup-token"},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["total_activities"] == 1
-        assert len(body["activities"]) == 1
-        assert body["activities"][0]["activity_id"] == "A1000"
-    finally:
-        app.dependency_overrides.clear()
+    monkeypatch.setattr("backend.routers.dashboard.query_institutional_memory", _stub)
+    with act_as("SUPERVISOR"):
+        resp = client.get("/api/v1/dashboard/institutional-memory", headers={"Authorization": "Bearer mocked-sup-token"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_activities"] == 1
+    assert len(body["activities"]) == 1
+    assert body["activities"][0]["activity_id"] == "A1000"
+    assert captured["project_id"], "history must be scoped to the caller's project"
 
 
 # =========================================================================
@@ -152,21 +144,9 @@ def test_unauthenticated_rejected():
 
 def test_site_engineer_forbidden():
     client = TestClient(app)
-    engineer = UserProfile(
-        id="11111111-1111-1111-1111-111111111111",
-        full_name="Alice Engineer",
-        role="SITE_ENGINEER",
-    )
-    app.dependency_overrides[get_current_user] = lambda: engineer
-
-    try:
-        resp = client.get(
-            "/api/v1/dashboard/institutional-memory",
-            headers={"Authorization": "Bearer mocked-eng-token"},
-        )
-        assert resp.status_code == 403
-    finally:
-        app.dependency_overrides.clear()
+    with act_as("SITE_ENGINEER"):
+        resp = client.get("/api/v1/dashboard/institutional-memory", headers={"Authorization": "Bearer mocked-eng-token"})
+    assert resp.status_code == 403
 
 
 # =========================================================================

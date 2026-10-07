@@ -32,7 +32,6 @@ import {
   mockP6Api,
   activitiesApi,
   ScheduleActivity,
-  IS_MOCK_MODE,
 } from '@/api';
 import { cn } from '@/lib/utils';
 
@@ -134,7 +133,7 @@ export function P6SyncStagingModal({ isOpen, onClose }: P6SyncStagingModalProps)
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `setu_approved_actuals_p6_staging_${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `anvyra_approved_actuals_p6_staging_${new Date().toISOString().split('T')[0]}.csv`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -214,7 +213,7 @@ export function P6SyncStagingModal({ isOpen, onClose }: P6SyncStagingModalProps)
                 <Database className="w-3.5 h-3.5" /> 1. Approved Actuals
               </div>
               <div className="p-2.5 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-800/60 text-[#FF7A18] font-bold flex items-center justify-center gap-1.5 shadow-2xs">
-                <Layers className="w-3.5 h-3.5" /> 2. Setu AI Staging
+                <Layers className="w-3.5 h-3.5" /> 2. ANVYRA Staging
               </div>
               <div className="p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-blue-800 dark:text-blue-300 font-bold flex items-center justify-center gap-1.5 shadow-2xs">
                 <Code2 className="w-3.5 h-3.5" /> 3. Adapter / CSV
@@ -230,7 +229,7 @@ export function P6SyncStagingModal({ isOpen, onClose }: P6SyncStagingModalProps)
         <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200">
           <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <p className="text-[11px] leading-relaxed">
-            <strong>Compliance Note:</strong> Setu AI maintains a verified, tamper-evident buffer of approved actuals and produces production-grade RFC-4180 CSV and P6 EPPM REST-compliant payloads for secure ingestion. <em>This prototype prepares synchronized export payloads and integrates with a local mock server; it does not claim live, unmediated write access to internal Oil India Limited enterprise P6/SAP infrastructure.</em>
+            <strong>Compliance Note:</strong> ANVYRA maintains a verified, tamper-evident buffer of approved actuals and produces production-grade RFC-4180 CSV and P6 EPPM REST-compliant payloads for secure ingestion. <em>This prototype prepares synchronized export payloads and integrates with a local mock server; it does not claim live, unmediated write access to internal Oil India Limited enterprise P6/SAP infrastructure.</em>
           </p>
         </div>
 

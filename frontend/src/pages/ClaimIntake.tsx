@@ -4,6 +4,7 @@ import {
   Mic,
   MicOff,
   FileText,
+  Files,
   Upload,
   CheckCircle2,
   AlertTriangle,
@@ -25,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { BatchUploadPanel } from '@/components/BatchUploadPanel';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorState } from '@/components/ui/error-state';
 import {
@@ -38,24 +40,28 @@ import {
   ExecutionState,
   QualityGate,
   CompoundImpact,
+  timeAgentApi,
+  ClaimHandoff,
 } from '@/api';
 import { cn } from '@/lib/utils';
 import { useProject } from '@/context/ProjectContext';
 import { ExecutionStateBadge } from '@/components/ExecutionStateBadge';
 import { ReopenRequestModal } from '@/components/ReopenRequestModal';
+import { HandoffDrafts } from '@/components/HandoffDrafts';
+import { ACCEPT_ATTR, ACCEPTED_FILE_EXTS, FILE_TYPES_TEXT, fileProblem } from '@/lib/reportFiles';
+import { IS_V2 } from '@/config';
 
-type InputTab = 'text' | 'voice' | 'file';
+type InputTab = 'batch' | 'text' | 'voice' | 'file';
 
 const MAX_TEXT_LENGTH = 2000;
 const MIN_TEXT_LENGTH = 10;
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
-const ACCEPTED_FILE_EXTS = ['.pdf', '.xlsx', '.xls', '.csv', '.txt', '.xer', '.jpg', '.jpeg', '.png'];
 
 export default function ClaimIntake() {
   const { t } = useTranslation();
   const { currentProject, currentScheduleVersion } = useProject();
 
-  const [activeTab, setActiveTab] = useState<InputTab>('text');
+  const [activeTab, setActiveTab] = useState<InputTab>('batch');
 
   // Text Tab State
   const [textValue, setTextValue] = useState('');
@@ -103,6 +109,9 @@ export default function ClaimIntake() {
   const [reopenModalActivity, setReopenModalActivity] = useState<ScheduleActivity | null>(null);
   const [reopenModalEventId, setReopenModalEventId] = useState<string | undefined>(undefined);
   const [reopenedActivityIds, setReopenedActivityIds] = useState<Set<string>>(new Set());
+  // v2: a draft handed off by the Supervisor's Time Agent that this engineer is filing
+  const handoffRef = useRef<string | null>(null);
+  const [handoffTick, setHandoffTick] = useState(0);
 
   // Web Speech API Initialization
   useEffect(() => {
@@ -194,6 +203,13 @@ export default function ClaimIntake() {
       return;
     }
 
+    const problem = fileProblem(file);                      // v2: progress reports only, with the reason a file is refused
+    if (problem) {
+      setFileError(problem);
+      setSelectedFile(null);
+      return;
+    }
+
     if (file.size > MAX_FILE_SIZE_BYTES) {
       setFileError(t('intake.errFileTooLarge'));
       setSelectedFile(null);
@@ -222,6 +238,12 @@ export default function ClaimIntake() {
       return;
     }
     const ext = `.${file.name.split('.').pop()?.toLowerCase()}`;
+    const evidenceProblem = fileProblem(file);
+    if (evidenceProblem) {
+      setEvidenceError(evidenceProblem);
+      setEvidenceFile(null);
+      return;
+    }
     if (!ACCEPTED_FILE_EXTS.includes(ext)) {
       setEvidenceError(t('intake.errFileType'));
       setEvidenceFile(null);
@@ -234,7 +256,7 @@ export default function ClaimIntake() {
     }
     setEvidenceError(null);
     setEvidenceFile(file);
-    if (file.type.startsWith('image/') || ['.jpg', '.jpeg', '.png'].includes(ext)) {
+    if (file.type.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
       setEvidencePreviewUrl(URL.createObjectURL(file));
     }
   };
@@ -397,6 +419,11 @@ export default function ClaimIntake() {
       }
 
       setCreatedEvents(events);
+      if (handoffRef.current && events[0]) {
+        const hid = handoffRef.current;
+        handoffRef.current = null;
+        timeAgentApi.filed(hid, events[0].event_id).then(() => setHandoffTick((n) => n + 1)).catch(() => {});
+      }
 
       // Feature 29: If clarification is required, STOP BEFORE MATCHING
       const hasPending = events.some((ev) => ev.clarification_status === 'PENDING');
@@ -436,7 +463,7 @@ export default function ClaimIntake() {
 
   const handleSubmitFile = () => {
     if (!selectedFile) return;
-    const isExport = isScheduleExport || selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml');
+    const isExport = !IS_V2 && (isScheduleExport || selectedFile.name.endsWith('.xer') || selectedFile.name.endsWith('.xml'));
     runPipeline(
       isExport ? `P6/MSP Schedule Progress Export: ${selectedFile.name}` : `Uploaded document: ${selectedFile.name}`,
       selectedFile,
@@ -486,16 +513,34 @@ export default function ClaimIntake() {
         </div>
       </div>
 
+      {IS_V2 && (
+        <HandoffDrafts
+          refreshKey={handoffTick}
+          onUse={(h) => {
+            handoffRef.current = h.handoff_id;
+            setTextValue(String(h.draft.rawText || ''));
+            setTextError(null);
+            setActiveTab('text');
+          }}
+        />
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* LEFT COLUMN: Input Form (7 Cols) */}
-        <div className="lg:col-span-7 space-y-6">
+        <div className={cn(activeTab === 'batch' ? 'lg:col-span-12' : 'lg:col-span-7', 'space-y-6')}>
           <Tabs
             value={activeTab}
             onValueChange={(val) => setActiveTab(val as InputTab)}
             className="w-full space-y-6"
           >
             {/* Tab Selector */}
-            <TabsList className="grid grid-cols-3 w-full h-12 p-1.5 bg-white/95 dark:bg-[#071A2D]/95 border border-slate-200/80 dark:border-[#214766] rounded-2xl shadow-md backdrop-blur-md">
+            <TabsList className="grid grid-cols-4 w-full h-12 p-1.5 bg-white/95 dark:bg-[#071A2D]/95 border border-slate-200/80 dark:border-[#214766] rounded-2xl shadow-md backdrop-blur-md">
+              <TabsTrigger
+                value="batch"
+                className="text-xs font-bold gap-2 text-[#071A2D] dark:text-[#C5D2DE] data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#FF7A18] data-[state=active]:to-[#FF941F] data-[state=active]:text-white transition-all rounded-xl h-9 shadow-xs hover:text-[#FF7A18] dark:hover:text-[#F5F7FA]"
+              >
+                <Files className="w-4 h-4" /> {IS_V2 ? 'Upload Progress Report' : 'Batch upload'}
+              </TabsTrigger>
               <TabsTrigger
                 value="text"
                 className="text-xs font-bold gap-2 text-[#071A2D] dark:text-[#C5D2DE] data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#FF7A18] data-[state=active]:to-[#FF941F] data-[state=active]:text-white transition-all rounded-xl h-9 shadow-xs hover:text-[#FF7A18] dark:hover:text-[#F5F7FA]"
@@ -512,9 +557,14 @@ export default function ClaimIntake() {
                 value="file"
                 className="text-xs font-bold gap-2 text-[#071A2D] dark:text-[#C5D2DE] data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#FF7A18] data-[state=active]:to-[#FF941F] data-[state=active]:text-white transition-all rounded-xl h-9 shadow-xs hover:text-[#FF7A18] dark:hover:text-[#F5F7FA]"
               >
-                <Upload className="w-4 h-4" /> {t('intake.tabFile')}
+                <Upload className="w-4 h-4" /> {IS_V2 ? 'Single File' : t('intake.tabFile')}
               </TabsTrigger>
             </TabsList>
+
+            {/* TAB 0: MULTI-FILE BATCH (several reports / files / photos in one operation) */}
+            <TabsContent value="batch" className="mt-0 focus-visible:outline-none">
+              <BatchUploadPanel />
+            </TabsContent>
 
             {/* TAB 1: TEXT UPDATE */}
             <TabsContent value="text" className="mt-0 focus-visible:outline-none">
@@ -822,7 +872,9 @@ export default function ClaimIntake() {
                 <CardHeader className="p-6 pb-4">
                   <CardTitle className="text-base font-extrabold text-[#071A2D] dark:text-[#F5F7FA]">{t('intake.fileCardTitle')}</CardTitle>
                   <CardDescription className="text-[#334155] dark:text-[#C5D2DE] text-xs font-semibold mt-1">
-                    Ingest field progress from documents, scanned logs, or subcontractor P6/MSP schedule export files.
+                    {IS_V2
+                      ? 'Upload one progress report or piece of evidence: a document, spreadsheet, photo or scanned site report. This is not for baseline schedules; those are imported by a Project Manager.'
+                      : 'Ingest field progress from documents, scanned logs, or subcontractor P6/MSP schedule export files.'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-6 pt-0 space-y-4">
@@ -834,12 +886,19 @@ export default function ClaimIntake() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                       <div className="flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5 text-[#FF7A18] shrink-0" />
-                        <span>Daily Reports & Diaries (.pdf, .txt, .png)</span>
+                        <span>Daily Reports & Diaries (.pdf, .txt, .jpg, .png, .webp)</span>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <Upload className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                        <span>P6 / MSP Progress Exports (.xer, .xml, .csv, .xlsx)</span>
-                      </div>
+                      {IS_V2 ? (
+                        <div className="flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span>Spreadsheets & Word reports (.csv, .xlsx, .docx)</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span>P6 / MSP Progress Exports (.xer, .xml, .csv, .xlsx)</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -847,7 +906,7 @@ export default function ClaimIntake() {
                     type="file"
                     ref={fileInputRef}
                     id="doc-file-input"
-                    accept=".pdf,.xlsx,.xls,.csv,.txt,.xer,.xml,.jpg,.jpeg,.png"
+                    accept={IS_V2 ? ACCEPT_ATTR : ".pdf,.xlsx,.xls,.csv,.txt,.xer,.xml,.jpg,.jpeg,.png"}
                     onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
                     className="hidden"
                   />
@@ -877,12 +936,12 @@ export default function ClaimIntake() {
                       {selectedFile ? selectedFile.name : t('intake.clickToBrowse')}
                     </div>
                     <div className="text-[10px] text-[#475569] dark:text-[#9FB2C3] font-medium">
-                      PDF, XLSX, CSV, TXT, XER (Primavera P6), XML (MS Project), JPG/PNG
+                      {IS_V2 ? FILE_TYPES_TEXT : 'PDF, XLSX, CSV, TXT, XER (Primavera P6), XML (MS Project), JPG/PNG'}
                     </div>
                   </div>
 
                   {/* Schedule Progress Export Mode Selector */}
-                  {selectedFile && (
+                  {!IS_V2 && selectedFile && (
                     <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-between text-xs">
                       <div className="space-y-0.5">
                         <span className="font-bold text-[#071A2D] dark:text-[#F5F7FA] block text-[11px]">
@@ -925,7 +984,7 @@ export default function ClaimIntake() {
                   >
                     {isProcessing
                       ? t('intake.extractingDocument')
-                      : isScheduleExport || selectedFile?.name.endsWith('.xer') || selectedFile?.name.endsWith('.xml')
+                      : !IS_V2 && (isScheduleExport || selectedFile?.name.endsWith('.xer') || selectedFile?.name.endsWith('.xml'))
                       ? 'Ingest Schedule Progress Export Claims'
                       : t('intake.ingestDocument')}
                   </Button>
@@ -935,8 +994,8 @@ export default function ClaimIntake() {
           </Tabs>
         </div>
 
-        {/* RIGHT COLUMN: Pipeline Stepper & Result (5 Cols) */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* RIGHT COLUMN: Pipeline Stepper & Result (5 Cols); the batch tab shows its own full-width result */}
+        <div className={cn('lg:col-span-5 space-y-6', activeTab === 'batch' && 'hidden')}>
           <Card className="border-slate-200/80 dark:border-[#214766] bg-white/95 dark:bg-[#071A2D]/95 shadow-xl rounded-2xl">
             <CardHeader className="p-6 pb-4 border-b border-slate-300 dark:border-[#214766]/60">
               <CardTitle className="text-base font-extrabold text-[#071A2D] dark:text-[#F5F7FA] flex items-center justify-between">
